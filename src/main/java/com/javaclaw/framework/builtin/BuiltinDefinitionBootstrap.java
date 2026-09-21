@@ -108,6 +108,7 @@ public final class BuiltinDefinitionBootstrap {
         capabilities.put(new CapabilityId("tool.result-eviction"), enabled());
         capabilities.put(new CapabilityId("mcp.tools"), enabled());
         capabilities.put(new CapabilityId("host.tools"), enabled());
+        capabilities.put(new CapabilityId("subagent.run"), enabled());
 
         Map<String, String> ranges = new LinkedHashMap<>();
         capabilities.keySet().forEach(id -> ranges.put(id.value(), ">=2.0.0 <3.0.0"));

@@ -4,7 +4,13 @@ import java.util.Objects;
 
 /** 对话运行唯一且不可逆的终态。 */
 public sealed interface ConversationOutcome
-        permits ConversationOutcome.Completed, ConversationOutcome.Cancelled, ConversationOutcome.Failed {
+        permits ConversationOutcome.Completed, ConversationOutcome.Cancelled, ConversationOutcome.Failed,
+                ConversationOutcome.WaitingInput {
+
+    /** This delivery ended; its durable Agent turn remains open for the next user input. */
+    record WaitingInput(String turnId, String reason) implements ConversationOutcome {
+        public WaitingInput { Objects.requireNonNull(turnId, "turnId"); }
+    }
 
     /** 正常完成。 */
     record Completed() implements ConversationOutcome {}

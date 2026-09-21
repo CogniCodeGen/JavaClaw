@@ -92,8 +92,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             request.control().throwIfCancelled();
             AtomicInteger currentAttempt = new AtomicInteger(1);
             AtomicInteger responseIndex = new AtomicInteger();
+            ModelStepJournal journal = new ModelStepJournal(request, runStore, json);
             ChatModel rawModel = models.require(request.plan().descriptor().modelPolicyRef());
-            ChatModel model = new MeteredChatModel(rawModel, response -> meter(
+            ChatModel model = new MeteredChatModel(rawModel, journal, currentAttempt,
+                    () -> usageLedger.beginModelCall(request.runId()), request.control()::throwIfCancelled, response -> meter(
                     request, response, currentAttempt.get(), responseIndex.incrementAndGet()),
                     failure -> meterFailure(request, failure, currentAttempt.get(),
                             responseIndex.incrementAndGet()));
@@ -108,7 +110,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     .defaultAdvisors(customAdvisors)
                     .build();
             List<FrameworkTool> runTools = createTools(request);
-            List<ToolCallback> callbacks = createToolCallbacks(request, runTools);
+            List<ToolCallback> callbacks = createToolCallbacks(request, runTools, journal);
             String systemPrompt = buildSystemPrompt(request);
             List<Message> messages = new ArrayList<>(buildMessages(request));
 
@@ -118,16 +120,20 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             started.put("toolCallingAdvisorCount", 1);
             request.events().emit("core.model.started", 1, "framework.springai", started);
 
-            if (request.approvedToolInvocation() != null) {
-                appendApprovedToolContinuation(
-                        request, runTools, messages, request.approvedToolInvocation());
-            }
-
             ChatResponse response = null;
             Throwable callFailure = null;
             try {
-                response = callWithRetry(
-                        client, systemPrompt, messages, callbacks, request, currentAttempt);
+                ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, true);
+                if (recovered != null) {
+                    systemPrompt = recovered.systemPrompt();
+                    messages = new ArrayList<>(recovered.messages());
+                    response = recovered.finalResponse();
+                } else if (request.approvedToolInvocation() != null) {
+                    // Compatibility for runs persisted before atomic model checkpoints existed.
+                    appendApprovedToolContinuation(request, runTools, messages, request.approvedToolInvocation());
+                }
+                if (response == null) response = callWithRetry(
+                        client, systemPrompt, messages, callbacks, request, currentAttempt, journal, runTools);
             } catch (Throwable failure) {
                 callFailure = failure;
                 throw failure;
@@ -200,6 +206,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             if (cause instanceof ToolInputRequiredException input) {
                 return ReasoningResult.waitingForInput(input.context(), input.getMessage());
             }
+            if (cause instanceof ToolRecoveryRequiredException recovery) {
+                return new ReasoningResult(com.javaclaw.framework.api.RunState.PAUSED,
+                        JsonNodeFactory.instance.objectNode().put("kind", "tool.recovery_required")
+                                .put("stepId", recovery.stepId()),
+                        recovery.getMessage());
+            }
             if (cause instanceof RuntimeException runtime) throw runtime;
             throw new IllegalStateException(cause);
         }
@@ -211,7 +223,9 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             List<Message> messages,
             List<ToolCallback> callbacks,
             ReasoningRequest request,
-            AtomicInteger currentAttempt) throws Throwable {
+            AtomicInteger currentAttempt,
+            ModelStepJournal journal,
+            List<FrameworkTool> runTools) throws Throwable {
         int attempt = 1;
         while (true) {
             request.control().throwIfCancelled();
@@ -228,6 +242,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 Throwable cause = unwrap(failure);
                 if (cause instanceof ToolApprovalRequiredException
                         || cause instanceof ToolInputRequiredException
+                        || cause instanceof ToolRecoveryRequiredException
                         || cause instanceof BudgetExceededException
                         || cause instanceof com.javaclaw.framework.spi.RunCancelledException
                         || attempt >= 8) throw failure;
@@ -257,6 +272,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 request.events().emit("core.model.retrying", 1,
                         "framework.springai", retrying);
                 awaitRetry(directive.delay(), request);
+                ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, false);
+                if (recovered != null) {
+                    systemPrompt = recovered.systemPrompt();
+                    messages = recovered.messages();
+                    if (recovered.finalResponse() != null) return recovered.finalResponse();
+                }
                 attempt++;
             }
         }
@@ -399,10 +420,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     }
 
     private List<ToolCallback> createToolCallbacks(
-            ReasoningRequest request, List<FrameworkTool> runTools) {
+            ReasoningRequest request, List<FrameworkTool> runTools, ModelStepJournal journal) {
         List<ToolCallback> callbacks = new ArrayList<>();
         for (FrameworkTool tool : runTools) {
-            callbacks.add(new SpringAiToolCallback(tool, request, tools, json));
+            callbacks.add(new SpringAiToolCallback(tool, request, tools, json, journal));
         }
         long uniqueNames = callbacks.stream().map(callback ->
                 callback.getToolDefinition().name()).distinct().count();
@@ -476,6 +497,11 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
 
     private String buildSystemPrompt(ReasoningRequest request) {
         StringBuilder prompt = new StringBuilder();
+        JsonNode projectInstructions = request.runRequest().attributes().get("framework.projectInstructions");
+        if (projectInstructions != null && projectInstructions.isTextual()
+                && !projectInstructions.asText().isBlank()) {
+            prompt.append("## Project instructions\n").append(projectInstructions.asText()).append("\n\n");
+        }
         request.plan().descriptor().promptSections().entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(entry -> prompt.append("## ").append(entry.getKey()).append('\n')
@@ -584,34 +610,60 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     /** Captures every provider response before advisors can execute tools or retry. */
     private static final class MeteredChatModel implements ChatModel {
         private final ChatModel delegate;
+        private final ModelStepJournal journal;
+        private final AtomicInteger attempt;
+        private final java.util.function.Supplier<RunUsageLedger.ModelCall> admission;
+        private final Runnable cancelled;
         private final java.util.function.Consumer<ChatResponse> meter;
         private final java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
                 failureMeter;
 
         private MeteredChatModel(
-                ChatModel delegate,
+                ChatModel delegate, ModelStepJournal journal, AtomicInteger attempt,
+                java.util.function.Supplier<RunUsageLedger.ModelCall> admission, Runnable cancelled,
                 java.util.function.Consumer<ChatResponse> meter,
                 java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
                         failureMeter) {
             this.delegate = Objects.requireNonNull(delegate, "delegate");
+            this.journal = journal;
+            this.attempt = attempt;
+            this.admission = admission;
+            this.cancelled = cancelled;
             this.meter = Objects.requireNonNull(meter, "meter");
             this.failureMeter = Objects.requireNonNull(failureMeter, "failureMeter");
         }
 
         @Override
         public ChatResponse call(Prompt prompt) {
-            try {
-                ChatResponse response = delegate.call(prompt);
-                meter.accept(response);
-                return response;
-            } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+            try (var ignored = admission.get()) {
+                cancelled.run();
+                var step = journal.started(prompt, attempt.get());
+                ChatResponse response;
                 try {
-                    failureMeter.accept(failure);
-                } catch (RuntimeException meteringFailure) {
-                    meteringFailure.addSuppressed(failure);
-                    throw meteringFailure;
+                    response = delegate.call(prompt);
+                    if (response == null) throw new IllegalStateException("model returned no response");
+                } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+                    try { journal.failed(step, failure); }
+                    catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
+                    try { failureMeter.accept(failure); }
+                    catch (RuntimeException meteringFailure) { meteringFailure.addSuppressed(failure); throw meteringFailure; }
+                    throw failure;
+                } catch (RuntimeException failure) {
+                    try { journal.failed(step, failure); }
+                    catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
+                    throw failure;
                 }
-                throw failure;
+                RuntimeException journalFailure = null;
+                try { journal.completed(step, response); }
+                catch (RuntimeException failure) { journalFailure = failure; }
+                // Provider responses remain billable even if cancellation prevents publishing the step.
+                try { meter.accept(response); }
+                catch (RuntimeException failure) {
+                    if (journalFailure != null) failure.addSuppressed(journalFailure);
+                    throw failure;
+                }
+                if (journalFailure != null) throw journalFailure;
+                return response;
             }
         }
 

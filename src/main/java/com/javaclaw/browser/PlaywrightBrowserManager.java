@@ -70,6 +70,7 @@ public class PlaywrightBrowserManager {
 
     /** 是否正处于交互式登录的可见浏览器阶段。 */
     private boolean userInteractionActive;
+    private boolean permanentlyClosed;
 
     /** 本次交互式登录开始前的状态，用于用户拒绝保存时限定为当前会话内存状态。 */
     private String userInteractionBaselineState;
@@ -95,6 +96,7 @@ public class PlaywrightBrowserManager {
      * 首次调用时启动 Playwright 和 Chromium，后续调用直接返回。
      */
     public synchronized void ensureLaunched() {
+        requireOpen();
         activateRequestedScopeIfNeeded();
         if (browser != null && browser.isConnected() && context != null) {
             return;
@@ -120,7 +122,7 @@ public class PlaywrightBrowserManager {
      * @param snapshotOverride 可选的当前会话内存快照；为空时创建全新空白 Context
      */
     private void launch(boolean launchHeadless, ScopeSnapshot snapshotOverride) {
-
+        requireOpen();
         log.info("正在启动 Playwright 浏览器（headless={}）...", launchHeadless);
 
         try {
@@ -579,6 +581,7 @@ public class PlaywrightBrowserManager {
      * 避免 UI 切换聊天时直接操作由后台线程创建的浏览器对象。</p>
      */
     public synchronized void activateScope(String scopeId) {
+        requireOpen();
         requestedScopeId = normalizeScopeId(scopeId);
     }
 
@@ -634,13 +637,25 @@ public class PlaywrightBrowserManager {
      * 创建无人值守任务专属浏览器。它不继承交互会话，也不会把临时认证态写回全局状态。
      */
     public synchronized PlaywrightBrowserManager createIsolated(String scopeId) {
+        requireOpen();
         String normalized = normalizeScopeId(scopeId);
         Path isolatedDir = browserDir == null ? null
-                : browserDir.resolve("isolated").resolve(Integer.toHexString(normalized.hashCode()));
+                : browserDir.resolve("isolated").resolve(java.util.UUID.nameUUIDFromBytes(
+                        normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString());
         PlaywrightBrowserManager isolated = new PlaywrightBrowserManager(
                 true, isolatedDir, screenshotDir);
         isolated.activateScope(normalized);
         return isolated;
+    }
+
+    /** Tombstones a Thread-owned runtime so retained tool facades cannot relaunch it after deletion. */
+    public synchronized void closePermanently() {
+        permanentlyClosed = true;
+        shutdown();
+    }
+
+    private void requireOpen() {
+        if (permanentlyClosed) throw new IllegalStateException("会话浏览器已关闭，不能重新创建");
     }
 
     private void activateRequestedScopeIfNeeded() {

@@ -41,7 +41,7 @@ public final class MemoryGraphController implements MemorySectionController, Aut
     @FXML private Label nodeName;
     @FXML private VBox relatedHost;
 
-    private final MemoryApplicationService useCases;
+    private MemoryApplicationService useCases;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<MemoryGraph> loadAction;
     private final ThemeProfile themes;
@@ -64,6 +64,11 @@ public final class MemoryGraphController implements MemorySectionController, Aut
         this.themes = Objects.requireNonNull(themes, "themes");
         loadAction = new UiAsyncAction<>(tasks, fx);
     }
+
+    @Override public void setMemoryService(MemoryApplicationService service) {
+        this.useCases = Objects.requireNonNull(service);
+    }
+    @Override public boolean isBusy() { return loadAction.busyProperty().get(); }
 
     @FXML
     private void initialize() {

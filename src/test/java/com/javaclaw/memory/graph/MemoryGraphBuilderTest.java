@@ -229,6 +229,9 @@ class MemoryGraphBuilderTest {
             return open;
         }
 
+        @Override public List<Fact> allPendingFacts() { return List.of(); }
+        @Override public List<Episode> allPendingEpisodes() { return List.of(); }
+
         @Override
         public List<Fact> allFacts() {
             if (failure != null) throw failure;

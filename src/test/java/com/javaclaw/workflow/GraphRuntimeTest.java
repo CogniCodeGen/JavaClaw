@@ -104,6 +104,30 @@ class GraphRuntimeTest {
     }
 
     @Test
+    void 副作用结果不明时暂停并忽略自动重试及错误分支() throws Exception {
+        NodeExecutorRegistry registry = baseRegistry();
+        AtomicInteger calls = new AtomicInteger();
+        registry.register(executor("uncertain", ctx -> {
+            calls.incrementAndGet();
+            throw new com.javaclaw.framework.api.TurnPausedException("工具结果需要核对");
+        }));
+        MemoryStore store = new MemoryStore();
+        manager = new GraphExecutionManager(registry, store, tasks);
+        NodeDefinition work = new NodeDefinition("work", NodeType.SYSTEM, "uncertain", "待核对节点",
+                JsonNodeFactory.instance.objectNode(), 0, 0, new RetryPolicy(3, 0, 1), ResumeSafety.CONFIRM_RETRY);
+        GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"), work,
+                        node("end", NodeType.END, "end")),
+                List.of(edge("a", "start", "work"), edge("b", "work", "end"),
+                        new EdgeDefinition("fallback", "work", "end", EdgeKind.ERROR, null, 1, false)), 10);
+        CountDownLatch done = new CountDownLatch(1);
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), WorkflowExecutionServices.EMPTY);
+        assertTrue(done.await(3, TimeUnit.SECONDS));
+        assertEquals(1, calls.get());
+        assertEquals(RunStatus.RECOVERY_REQUIRED, store.loadRun(run.id()).status());
+        assertEquals("work", store.loadRun(run.id()).nextNodeId());
+    }
+
+    @Test
     void 人工节点持久化中断并以响应恢复() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);

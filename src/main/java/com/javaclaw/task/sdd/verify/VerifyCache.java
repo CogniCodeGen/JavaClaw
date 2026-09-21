@@ -44,17 +44,19 @@ public final class VerifyCache {
     private final JdbcTemplate jdbc;
     private final JsonCodec json;
     private final String workspaceId;
+    private final com.javaclaw.task.sdd.SddThreadGuard owner;
     private String fingerprint = "";
     private Map<String, String> passes = new LinkedHashMap<>();
 
     private VerifyCache(Path workDir, String workDirKey, String slug,
-                        JdbcTemplate jdbc, JsonCodec json, String workspaceId) {
+                        JdbcTemplate jdbc, JsonCodec json, String workspaceId, String ownerThreadId) {
         this.workDir = workDir;
         this.workDirKey = workDirKey;
         this.slug = slug;
         this.jdbc = jdbc;
         this.json = json;
         this.workspaceId = workspaceId;
+        this.owner = new com.javaclaw.task.sdd.SddThreadGuard(jdbc, workspaceId, ownerThreadId);
     }
 
     /**
@@ -63,16 +65,21 @@ public final class VerifyCache {
      */
     public static VerifyCache load(String workDir, String slug,
                                    JdbcTemplate jdbc, JsonCodec json, String workspaceId) {
+        return load(workDir, slug, jdbc, json, workspaceId, null);
+    }
+
+    public static VerifyCache load(String workDir, String slug,
+                                   JdbcTemplate jdbc, JsonCodec json, String workspaceId, String ownerThreadId) {
         Objects.requireNonNull(jdbc, "jdbc");
         Objects.requireNonNull(json, "json");
         Objects.requireNonNull(workspaceId, "workspaceId");
         Path wd = (workDir == null || workDir.isBlank()) ? null : Path.of(workDir).toAbsolutePath();
         if (wd == null || slug == null || slug.isBlank()) {
-            return new VerifyCache(wd, null, slug, jdbc, json, workspaceId);
+            return new VerifyCache(wd, null, slug, jdbc, json, workspaceId, ownerThreadId);
         }
-        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug, jdbc, json, workspaceId);
+        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug, jdbc, json, workspaceId, ownerThreadId);
         try {
-            jdbc.query("""
+            c.owner.ifAlive(() -> jdbc.query("""
                             SELECT fingerprint, passes_json
                             FROM sdd_verify_cache
                             WHERE workspace_id = ? AND work_dir = ? AND slug = ?
@@ -84,7 +91,7 @@ public final class VerifyCache {
                             c.passes = c.readPasses(rows.getString("passes_json"));
                         }
                         return null;
-                    }, workspaceId, c.workDirKey, slug);
+                    }, workspaceId, c.workDirKey, slug), null);
         } catch (DataAccessException e) {
             log.debug("[VerifyCache] 读取缓存失败（忽略，按空缓存处理）：{}", e.getMessage());
         }
@@ -136,7 +143,7 @@ public final class VerifyCache {
 
     /** 该场景在当前指纹下是否已通过；是则返回当时的判定依据，否则 null。 */
     public String reuse(String scenarioKey) {
-        return passes.get(scenarioKey);
+        return owner.ifAlive(() -> passes.get(scenarioKey), null);
     }
 
     /** 记录一个通过的场景。 */
@@ -148,13 +155,14 @@ public final class VerifyCache {
     public void save() {
         if (workDirKey == null || slug == null || slug.isBlank()) return;
         try {
-            jdbc.update("""
+            String encoded = json.encode(passes);
+            owner.ifAlive(() -> jdbc.update("""
                             MERGE INTO sdd_verify_cache(
                                 workspace_id, work_dir, slug, fingerprint, passes_json, updated_at
                             ) KEY(workspace_id, work_dir, slug)
                             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                             """,
-                    workspaceId, workDirKey, slug, fingerprint, json.encode(passes));
+                    workspaceId, workDirKey, slug, fingerprint, encoded), 0);
         } catch (DataAccessException | JsonProcessingException e) {
             log.debug("[VerifyCache] 写缓存失败（忽略）：{}", e.getMessage());
         }

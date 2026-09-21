@@ -29,12 +29,20 @@ public final class SpecStore {
     private final String workDir;
     private final JdbcTemplate jdbc;
     private final String workspaceId;
+    private final com.javaclaw.task.sdd.SddThreadGuard owner;
 
     public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId) {
+        this(workDir, jdbc, workspaceId, null);
+    }
+
+    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId, String ownerThreadId) {
         this.workDir = normalizeWorkDir(workDir);
         this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId);
+        this.owner = new com.javaclaw.task.sdd.SddThreadGuard(jdbc, workspaceId, ownerThreadId);
     }
+
+    public String ownerThreadId() { return owner.threadId(); }
 
     public boolean available() {
         return workDir != null && !workDir.isBlank();
@@ -91,7 +99,7 @@ public final class SpecStore {
         String prefix = SpecPaths.SPECS_DIR + "/";
         String suffix = "/" + SpecPaths.SPEC_FILE;
         try {
-            return jdbc.query("""
+            return owner.ifAlive(() -> jdbc.query("""
                             SELECT doc_path, doc_text
                             FROM sdd_spec_docs
                             WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path LIKE ?
@@ -104,7 +112,7 @@ public final class SpecStore {
                         return SpecParser.parseCapabilitySpec(row.getString("doc_text"), name);
                     }, workspaceId, workDir, slug, prefix + "%" + suffix).stream()
                     .filter(java.util.Objects::nonNull)
-                    .toList();
+                    .toList(), List.of());
         } catch (DataAccessException e) {
             log.warn("[Spec] 从 H2 列举能力规格失败 slug={}: {}", slug, e.getMessage());
             return List.of();
@@ -115,12 +123,12 @@ public final class SpecStore {
     public List<String> listChangeSlugs() {
         if (!available()) return List.of();
         try {
-            return jdbc.queryForList("""
+            return owner.ifAlive(() -> jdbc.queryForList("""
                             SELECT DISTINCT slug
                             FROM sdd_spec_docs
                             WHERE workspace_id = ? AND work_dir = ?
                             ORDER BY slug
-                            """, String.class, workspaceId, workDir);
+                            """, String.class, workspaceId, workDir), List.of());
         } catch (DataAccessException e) {
             log.warn("[Spec] 从 H2 列举变更失败: {}", e.getMessage());
             return List.of();
@@ -130,11 +138,11 @@ public final class SpecStore {
     public boolean changeExists(String slug) {
         if (!available()) return false;
         try {
-            Integer count = jdbc.queryForObject("""
+            Integer count = owner.ifAlive(() -> jdbc.queryForObject("""
                             SELECT COUNT(*)
                             FROM sdd_spec_docs
                             WHERE workspace_id = ? AND work_dir = ? AND slug = ?
-                            """, Integer.class, workspaceId, workDir, slug);
+                            """, Integer.class, workspaceId, workDir, slug), 0);
             return count != null && count > 0;
         } catch (DataAccessException e) {
             log.warn("[Spec] 检查变更存在性失败 slug={}: {}", slug, e.getMessage());
@@ -228,16 +236,18 @@ public final class SpecStore {
             return false;
         }
         try {
-            jdbc.update("""
-                            MERGE INTO sdd_spec_docs(
-                                workspace_id, work_dir, slug, doc_path, doc_text, updated_at
-                            ) KEY(workspace_id, work_dir, slug, doc_path)
-                            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                            """,
-                    workspaceId, workDir, slug, docPath, content);
-            log.info("[Spec] 已写入 H2: slug={}, path={}, bytes={}",
-                    slug, docPath, content == null ? 0 : content.getBytes(StandardCharsets.UTF_8).length);
-            return true;
+            return owner.ifAlive(() -> {
+                jdbc.update("""
+                                MERGE INTO sdd_spec_docs(
+                                    workspace_id, work_dir, slug, doc_path, doc_text, updated_at
+                                ) KEY(workspace_id, work_dir, slug, doc_path)
+                                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                """,
+                        workspaceId, workDir, slug, docPath, content);
+                log.info("[Spec] 已写入 H2: slug={}, path={}, bytes={}",
+                        slug, docPath, content == null ? 0 : content.getBytes(StandardCharsets.UTF_8).length);
+                return true;
+            }, false);
         } catch (DataAccessException e) {
             log.warn("[Spec] 写入 H2 失败 slug={}, path={}: {}", slug, docPath, e.getMessage());
             return false;
@@ -249,13 +259,13 @@ public final class SpecStore {
             return null;
         }
         try {
-            return jdbc.query("""
+            return owner.ifAlive(() -> jdbc.query("""
                             SELECT doc_text
                             FROM sdd_spec_docs
                             WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path = ?
                             """,
                     rows -> rows.next() ? rows.getString(1) : null,
-                    workspaceId, workDir, slug, docPath);
+                    workspaceId, workDir, slug, docPath), null);
         } catch (DataAccessException e) {
             log.debug("[Spec] 读取 H2 失败 slug={}, path={}: {}", slug, docPath, e.getMessage());
             return null;

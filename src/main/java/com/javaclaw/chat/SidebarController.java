@@ -152,6 +152,12 @@ public class SidebarController implements AutoCloseable {
         sessionListController.setOnDeleteSession(callback);
     }
 
+    public void setOnArchiveSession(Consumer<String> callback) { sessionListController.setOnArchiveSession(callback); }
+    public void setOnResumeSession(Consumer<String> callback) { sessionListController.setOnResumeSession(callback); }
+    public void setOnForkSession(Consumer<String> callback) { sessionListController.setOnForkSession(callback); }
+    public void setOnInspectSession(Consumer<String> callback) { sessionListController.setOnInspectSession(callback); }
+    public void updateLifecycle(ChatSession session) { sessionListController.updateLifecycle(session); }
+
     public void setOnBatchDeleteSessions(Consumer<List<String>> callback) {
         sessionListController.setOnBatchDeleteSessions(callback);
     }

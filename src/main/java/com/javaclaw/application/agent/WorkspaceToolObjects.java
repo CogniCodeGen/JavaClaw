@@ -39,7 +39,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /** Creates a fresh, permission-scoped host tool set for each framework Run. */
-public final class WorkspaceToolObjects {
+public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.framework.spi.ThreadLifecycleListener {
     private final PlaywrightBrowserManager browsers;
     private final SiteCredentialManager siteCredentials;
     private final WorkspaceContext workspace;
@@ -60,6 +60,7 @@ public final class WorkspaceToolObjects {
     private final JsonCodec json;
     private final ModelTaskGateway modelTasks;
     private final Supplier<Object> clarificationTools;
+    private final ThreadBrowserRuntimes threadBrowsers;
 
     public WorkspaceToolObjects(
             PlaywrightBrowserManager browsers,
@@ -103,11 +104,12 @@ public final class WorkspaceToolObjects {
         this.modelTasks = Objects.requireNonNull(modelTasks, "modelTasks");
         this.clarificationTools = Objects.requireNonNull(
                 clarificationTools, "clarificationTools");
+        this.threadBrowsers = new ThreadBrowserRuntimes(workspace.workspaceId(), browsers, siteCredentials);
     }
 
     public ToolObjectBundle create(ToolContext context) {
         ToolCallOrigin origin = origin(context);
-        Map<String, Object> capabilityTools = createCapabilityTools(origin);
+        Map<String, Object> capabilityTools = createCapabilityTools(origin, context);
         List<Object> objects = new ArrayList<>(capabilityTools.values());
         if (context.request().source().kind().equals("chat")
                 || context.request().source().kind().equals("plan")) {
@@ -171,19 +173,10 @@ public final class WorkspaceToolObjects {
         return List.copyOf(result);
     }
 
-    private Map<String, Object> createCapabilityTools(ToolCallOrigin origin) {
+    private Map<String, Object> createCapabilityTools(ToolCallOrigin origin, ToolContext context) {
         Map<String, Object> result = new LinkedHashMap<>();
-        if (origin.kind() == ToolCallOrigin.Kind.INTERACTIVE) {
-            // ChatService/WorkflowService already select the conversation scope on this manager.
-            // Keep the shared manager alive across approval pauses and subsequent chat turns;
-            // closing a per-reasoning tool bundle must not replace the page with about:blank.
-            result.put("web", new PlaywrightBrowserTools(
-                    browsers, siteCredentials, origin, json, false));
-        } else {
-            PlaywrightBrowserManager isolated = browsers.createIsolated(origin.browserScopeId());
-            result.put("web", new PlaywrightBrowserTools(
-                    isolated, siteCredentials, origin, json, true));
-        }
+        result.put("web", new PlaywrightBrowserTools(threadBrowsers.acquire(context.scope()),
+                siteCredentials, origin, json, false, ThreadBrowserRuntimes.scopeId(context.scope())));
         result.put("email", new EmailTools(origin, emailSettings));
         result.put("system", new SystemTools(origin, workspace.screenshotsDir()));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
@@ -196,6 +189,10 @@ public final class WorkspaceToolObjects {
         }
         return result;
     }
+
+    @Override public boolean accepts(com.javaclaw.framework.api.RunScope scope) { return threadBrowsers.accepts(scope); }
+    @Override public void deleting(com.javaclaw.framework.api.RunScope scope) { threadBrowsers.deleting(scope); }
+    @Override public void close() { threadBrowsers.close(); }
 
     private static ToolCallOrigin origin(ToolContext context) {
         String kind = context.request().source().kind();

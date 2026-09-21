@@ -24,6 +24,7 @@ public final class JdbcRunStore implements RunStore {
     private final TransactionTemplate transactions;
     private final ObjectMapper json;
     private final Clock clock;
+    private final JdbcThreadStore threads;
 
     public JdbcRunStore(
             JdbcTemplate jdbc,
@@ -35,6 +36,18 @@ public final class JdbcRunStore implements RunStore {
                 Objects.requireNonNull(transactionManager, "transactionManager"));
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.threads = new JdbcThreadStore(jdbc, transactionManager, json, clock);
+    }
+
+    public JdbcThreadStore threads() { return threads; }
+
+    @Override public boolean readable(RunScope scope) {
+        return threads.find(scope).map(thread -> thread.status() == ThreadStatus.ACTIVE
+                || thread.status() == ThreadStatus.ARCHIVED).orElse(false);
+    }
+
+    @Override public RunRequest prepare(RunRequest request) {
+        return new ThreadRequestPolicy(threads, this).prepare(request);
     }
 
     @Override
@@ -46,11 +59,19 @@ public final class JdbcRunStore implements RunStore {
         try {
             return transactions.execute(status -> {
                 if (request.idempotencyKey() != null) {
-                    Optional<StoredRun> existing = findByIdempotencyKey(
-                            request.scope().workspaceId(), request.idempotencyKey());
+                    Optional<StoredRun> existing = findByIdempotencyKey(request.scope(), request.idempotencyKey());
                     if (existing.isPresent()) return new CreateRunResult(existing.get(), false);
                 }
                 long now = clock.millis();
+                if (threads.find(request.scope()).isEmpty()) prepare(request);
+                if (threads.lock(request.scope()).status() != ThreadStatus.ACTIVE)
+                    throw new IllegalStateException("thread is not active");
+                ThreadConfiguration config = threads.require(request.scope()).configuration();
+                String model = request.attributes().getOrDefault("framework.modelPolicyRef",
+                        com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText();
+                if (config.modelPolicyRef().isBlank() && !model.isBlank()) threads.configure(request.scope(),
+                        new ThreadConfiguration(model, config.workingDirectory(), config.sandboxPolicy(), config.permissions(),
+                                config.budget(), config.projectInstructions()));
                 jdbc.update("""
                         INSERT INTO agent_runs(
                             run_id, workspace_id, user_id, session_id, idempotency_key,
@@ -62,6 +83,7 @@ public final class JdbcRunStore implements RunStore {
                         executionPlanId, RunState.CREATED.name(), now, now);
                 RunEventEnvelope envelope = envelope(id, 1, now, createdEvent);
                 insertEventAndOutbox(envelope);
+                threads.appendRun(request.scope(), envelope, request);
                 return new CreateRunResult(new StoredRun(
                         new RunSnapshot(id, RunState.CREATED, executionPlanId, 1,
                                 Instant.ofEpochMilli(now), Instant.ofEpochMilli(now),
@@ -69,7 +91,7 @@ public final class JdbcRunStore implements RunStore {
             });
         } catch (DuplicateKeyException race) {
             if (request.idempotencyKey() != null) {
-                return findByIdempotencyKey(request.scope().workspaceId(), request.idempotencyKey())
+                return findByIdempotencyKey(request.scope(), request.idempotencyKey())
                         .map(run -> new CreateRunResult(run, false)).orElseThrow(() -> race);
             }
             throw race;
@@ -82,6 +104,13 @@ public final class JdbcRunStore implements RunStore {
                 this::readStoredRun, id.value()).stream().findFirst();
     }
 
+    @Override public List<StoredRun> childRuns(RunId parentId) {
+        return find(parentId).map(parent -> jdbc.query(
+                "SELECT * FROM agent_runs WHERE workspace_id=? AND user_id=? ORDER BY created_at, run_id",
+                this::readStoredRun, parent.request().scope().workspaceId(), parent.request().scope().userId()).stream()
+                .filter(run -> parentId.equals(run.request().linkage().parentRunId())).toList()).orElse(List.of());
+    }
+
     @Override
     public Optional<StoredRun> findByIdempotencyKey(String workspaceId, String idempotencyKey) {
         if (idempotencyKey == null) return Optional.empty();
@@ -90,6 +119,70 @@ public final class JdbcRunStore implements RunStore {
                         WHERE workspace_id = ? AND idempotency_key = ?
                         """, this::readStoredRun, workspaceId, idempotencyKey)
                 .stream().findFirst();
+    }
+
+    @Override public Optional<StoredRun> findByIdempotencyKey(RunScope scope, String key) {
+        if (key == null) return Optional.empty();
+        return jdbc.query("SELECT * FROM agent_runs WHERE workspace_id=? AND user_id=? AND session_id=? AND idempotency_key=?",
+                this::readStoredRun, scope.workspaceId(), scope.userId(), scope.sessionId(), key).stream().findFirst();
+    }
+
+    @Override public boolean claim(RunId id) {
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            StoredRun run = find(id).orElseThrow();
+            RunScope scope = run.request().scope();
+            if (threads.lock(scope).status() != ThreadStatus.ACTIVE) return false;
+            if (find(id).orElseThrow().snapshot().state().terminal()) return false;
+            String current = jdbc.queryForObject("SELECT active_turn_id FROM agent_threads WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                    String.class, scope.workspaceId(), scope.userId(), scope.sessionId());
+            if (current != null && !current.equals(id.value())) return false;
+            if (current == null && !nextWaiting(scope).map(next -> next.snapshot().id().equals(id)).orElse(false)) return false;
+            jdbc.update("UPDATE agent_threads SET active_turn_id=? WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                    id.value(), scope.workspaceId(), scope.userId(), scope.sessionId());
+            return true;
+        }));
+    }
+
+    @Override public Optional<RunId> release(RunId id) {
+        return transactions.execute(status -> {
+            StoredRun run = find(id).orElse(null);
+            if (run == null) return Optional.empty();
+            RunScope scope = run.request().scope();
+            ThreadSnapshot thread = threads.lock(scope);
+            int released = jdbc.update("UPDATE agent_threads SET active_turn_id=NULL WHERE workspace_id=? AND user_id=? AND thread_id=? AND active_turn_id=?",
+                    scope.workspaceId(), scope.userId(), scope.sessionId(), id.value());
+            if (released == 0) return Optional.empty();
+            if (thread.status() != ThreadStatus.ACTIVE) return Optional.empty();
+            Optional<StoredRun> next = nextWaiting(scope);
+            next.ifPresent(value -> jdbc.update("UPDATE agent_threads SET active_turn_id=? WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                    value.snapshot().id().value(), scope.workspaceId(), scope.userId(), scope.sessionId()));
+            return next.filter(value -> value.snapshot().state() == RunState.CREATED).map(value -> value.snapshot().id());
+        });
+    }
+
+    /** Thread journal sequence breaks millisecond timestamp ties in actual enqueue order. */
+    private Optional<StoredRun> nextWaiting(RunScope scope) {
+        return jdbc.query("SELECT r.* FROM agent_runs r WHERE r.workspace_id=? AND r.user_id=? AND r.session_id=? "
+                        + "AND r.state NOT IN ('COMPLETED','FAILED','CANCELLED') ORDER BY "
+                        + "(SELECT MIN(e.event_sequence) FROM agent_thread_events e WHERE e.workspace_id=r.workspace_id "
+                        + "AND e.user_id=r.user_id AND e.thread_id=r.session_id AND e.turn_id=r.run_id AND e.type='turn/created') "
+                        + "NULLS LAST,r.created_at,r.run_id FETCH FIRST 1 ROW ONLY",
+                this::readStoredRun, scope.workspaceId(), scope.userId(), scope.sessionId()).stream().findFirst();
+    }
+
+    @Override public void recoverClaims() {
+        var scopes = jdbc.query("SELECT workspace_id,user_id,thread_id FROM agent_threads WHERE status='ACTIVE'",
+                (row, index) -> new RunScope(row.getString(1), row.getString(2), row.getString(3)));
+        for (RunScope scope : scopes) transactions.executeWithoutResult(status -> {
+            threads.lock(scope);
+            String current = jdbc.queryForObject("SELECT active_turn_id FROM agent_threads WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                    String.class, scope.workspaceId(), scope.userId(), scope.sessionId());
+            boolean valid = current != null && find(new RunId(current)).filter(run -> run.request().scope().equals(scope)
+                    && !run.snapshot().state().terminal()).isPresent();
+            if (!valid) jdbc.update("UPDATE agent_threads SET active_turn_id=? WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                    nextWaiting(scope).map(run -> run.snapshot().id().value()).orElse(null),
+                    scope.workspaceId(), scope.userId(), scope.sessionId());
+        });
     }
 
     @Override
@@ -119,6 +212,11 @@ public final class JdbcRunStore implements RunStore {
             JsonNode output,
             String error) {
         return Optional.ofNullable(transactions.execute(status -> {
+            StoredRun stored = find(id).orElse(null);
+            if (stored == null) return null;
+            ThreadSnapshot thread = threads.lock(stored.request().scope());
+            boolean deleting = thread.status() == ThreadStatus.DELETING || thread.status() == ThreadStatus.DELETED;
+            if (deleting && nextState != RunState.CANCELLED) return null;
             List<LockedRun> rows = jdbc.query("""
                     SELECT state, last_sequence, version
                     FROM agent_runs WHERE run_id = ? FOR UPDATE
@@ -145,7 +243,40 @@ public final class JdbcRunStore implements RunStore {
             }
             RunEventEnvelope envelope = envelope(id, nextSequence, now, event);
             insertEventAndOutbox(envelope);
+            if (!deleting) threads.appendRun(stored.request().scope(), envelope, null);
             return envelope;
+        }));
+    }
+
+    @Override public Optional<RunEventEnvelope> settleStep(RunId id, RunEventDraft event) {
+        if (!event.type().equals("core.step.completed") && !event.type().equals("core.step.failed")) return Optional.empty();
+        String stepId = event.payload().path("stepId").asText("");
+        if (stepId.isBlank()) return Optional.empty();
+        return Optional.ofNullable(transactions.execute(status -> {
+            StoredRun stored = find(id).orElse(null);
+            if (stored == null) return null;
+            ThreadSnapshot thread = threads.lock(stored.request().scope());
+            if (thread.status() != ThreadStatus.ACTIVE && thread.status() != ThreadStatus.ARCHIVED) return null;
+            List<LockedRun> locked = jdbc.query("SELECT state,last_sequence,version FROM agent_runs WHERE run_id=? FOR UPDATE",
+                    (row, index) -> new LockedRun(RunState.valueOf(row.getString("state")),
+                            row.getLong("last_sequence"), row.getLong("version")), id.value());
+            if (locked.isEmpty()) return null;
+            boolean started = false;
+            for (RunEventEnvelope previous : eventsAfter(id, 0)) {
+                if (!stepId.equals(previous.payload().path("stepId").asText())) continue;
+                if (previous.type().equals("core.step.started")) started = true;
+                if (previous.type().equals("core.step.completed") || previous.type().equals("core.step.failed")) return null;
+            }
+            if (!started) return null;
+            LockedRun current = locked.getFirst();
+            long next = current.lastSequence() + 1, now = clock.millis();
+            // No state/output/error update: this is the outcome of work authorized before termination.
+            if (jdbc.update("UPDATE agent_runs SET last_sequence=?,version=version+1,updated_at=? WHERE run_id=? AND version=?",
+                    next, now, id.value(), current.version()) != 1) throw new IllegalStateException("concurrent step settlement: " + id);
+            RunEventEnvelope settled = envelope(id, next, now, event);
+            insertEventAndOutbox(settled);
+            threads.appendRun(stored.request().scope(), settled, null);
+            return settled;
         }));
     }
 

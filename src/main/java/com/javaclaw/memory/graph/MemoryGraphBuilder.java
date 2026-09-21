@@ -52,22 +52,28 @@ public final class MemoryGraphBuilder {
 
     /** 从记忆库构建图谱快照；store 为空或未开则返回空图。 */
     public static MemoryGraph build(MemoryStore store, Options opt) {
+        return build(store, opt, Set.of());
+    }
+
+    public static MemoryGraph build(MemoryStore store, Options opt, Set<String> excluded) {
         if (store == null || !store.isOpen()) {
             return MemoryGraph.empty();
         }
         try {
-            return doBuild(store, opt);
+            return doBuild(store, opt, excluded);
         } catch (Exception e) {
             log.warn("构建记忆图谱失败（返回空图）: {}", e.getMessage());
             return MemoryGraph.empty();
         }
     }
 
-    private static MemoryGraph doBuild(MemoryStore store, Options opt) {
+    private static MemoryGraph doBuild(MemoryStore store, Options opt, Set<String> excluded) {
         // 排除被取代的软删除事实（不作为活跃节点参与构图；语义近邻边亦经 searchFacts 自动过滤）
         List<Fact> allFacts = store.allFacts().stream()
                 .filter(f -> !f.superseded && !f.contested)
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        store.allPendingFacts().stream().filter(f -> !f.superseded && !f.contested).forEach(allFacts::add);
+        allFacts.removeIf(f -> excluded.contains("fact:" + f.id));
         // 按更新时间倒序，取前 maxNodes 个事实参与构图
         allFacts.sort((a, b) -> Long.compare(b.updatedAt, a.updatedAt));
         List<Fact> facts = allFacts.size() > opt.maxNodes()
@@ -88,8 +94,10 @@ public final class MemoryGraphBuilder {
                     nodeId,
                     truncate(f.text, opt.labelMaxChars()),
                     "fact",
-                    blankToDefault(f.section, "未分类"),
-                    f.text == null ? "" : f.text,
+                    f.pending ? "待索引 / 复核" : blankToDefault(f.section, "未分类"),
+                    (f.text == null ? "" : f.text) + (f.evidenceKeys == null || f.evidenceKeys.isEmpty()
+                            ? "" : "\n来源：" + String.join(", ", f.evidenceKeys))
+                            + (f.evidenceDeleted ? "\n来源会话已删除" : ""),
                     Math.max(1, f.hitCount + f.mergeCount)));
         }
 
@@ -97,7 +105,7 @@ public final class MemoryGraphBuilder {
         Map<String, String> episodeKeyToNodeId = new HashMap<>();
         for (Fact f : facts) {
             Episode ep = f.source;
-            if (ep == null) continue;
+            if (ep == null || excluded.contains("episode:" + ep.id)) continue;
             String epKey = episodeKey(ep);
             String epNodeId = episodeKeyToNodeId.get(epKey);
             if (epNodeId == null) {
@@ -156,6 +164,7 @@ public final class MemoryGraphBuilder {
         // 场景：对话产生了实体却没沉淀出事实（如闲聊类），否则「有实体零事实」时图谱全空。
         // 此类节点无边，呈独立散点，weight 按被引用度缺省 1。
         for (EntityNode en : store.allEntities()) {
+            if (!excluded.isEmpty()) break; // Legacy view only exposes entities of remaining facts.
             if (nodes.size() >= opt.maxNodes()) break;
             if (en == null || en.name == null || en.name.isBlank()) continue;
             String enKey = entityKey(en);
@@ -172,9 +181,11 @@ public final class MemoryGraphBuilder {
         }
 
         // 孤立情景兜底：把已落库但未被任何纳入事实 source 引用到的情景也纳入图（同上，独立散点）。
-        for (Episode ep : store.allEpisodes()) {
+        List<Episode> allEpisodes = new ArrayList<>(store.allEpisodes());
+        allEpisodes.addAll(store.allPendingEpisodes());
+        for (Episode ep : allEpisodes) {
+            if (ep == null || excluded.contains("episode:" + ep.id)) continue;
             if (nodes.size() >= opt.maxNodes()) break;
-            if (ep == null) continue;
             String epKey = episodeKey(ep);
             if (episodeKeyToNodeId.containsKey(epKey)) continue;
             String epNodeId = "episode:" + epKey;

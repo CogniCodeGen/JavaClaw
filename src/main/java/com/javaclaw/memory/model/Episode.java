@@ -17,6 +17,23 @@ public class Episode {
     public String userInput;
     public String assistantReply;
 
+    /** Stable source identity survives fork copies; repeated delivery is not new evidence. */
+    public String turnId;
+    public String originThreadId;
+    public String originTurnId;
+    public String ownerRunId;
+    public long sourceEventSequence;
+    public boolean distilled;
+    /** completed, failed or cancelled; unsuccessful output is history, never a confirmed fact. */
+    public String terminalStatus = "completed";
+    /** Only an actual user-input turn can become independent personal-habit evidence. */
+    public boolean habitEvidence;
+
+    public String evidenceKey() {
+        return (originThreadId == null ? sessionId : originThreadId) + ":"
+                + (originTurnId == null ? (turnId == null ? id : turnId) : originTurnId);
+    }
+
     /** 工具调用轨迹摘要（JSON 文本），便于回溯"当时做了什么" */
     public String toolTraceJson;
 
@@ -31,6 +48,7 @@ public class Episode {
     public Episode() {}
 
     public Episode(String sessionId, String userInput, String assistantReply) {
+        this.id = java.util.UUID.randomUUID().toString();
         this.sessionId = sessionId;
         this.userInput = userInput;
         this.assistantReply = assistantReply;

@@ -116,7 +116,6 @@ final class ChatTurnController {
                 this::updateMetrics,
                 clarification -> {
                     host.appendClarification(clarification.reason(), clarification.question());
-                    stop(CancellationReason.MODE_SWITCH, false, StopPolicy.DISCARD_AND_INVALIDATE);
                 },
                 () -> streamingSession != null && streamingSession != host.currentSession());
     }
@@ -213,7 +212,7 @@ final class ChatTurnController {
         setInputEnabled(false);
         streamingSession = session;
         composer.setThinkingVisible(true);
-        int turnGeneration = generation;
+        int turnGeneration = ++generation;
         ChatActiveTurn turn = new ChatActiveTurn(turnGeneration, targetModeId);
         activeTurn = turn;
         thinking.startNewStream();
@@ -284,6 +283,8 @@ final class ChatTurnController {
         ChatSession target = targetSession();
         TurnMetrics metrics = metrics();
         switch (outcome) {
+            case ConversationOutcome.WaitingInput ignored -> outcomes.awaitInput(
+                    plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
             case ConversationOutcome.Completed ignored -> outcomes.complete(
                     plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
             case ConversationOutcome.Cancelled value -> {
@@ -300,6 +301,7 @@ final class ChatTurnController {
     }
 
     private void finishUi(ChatActiveTurn turn, CompletionKind kind) {
+        generation++;
         DeliveryState state = turn == null ? DeliveryState.COMPLETE : turn.deliveryState;
         renderer.clear(turn == null ? TurnMetrics.ZERO : turn.metrics(), state);
         switch (kind) {

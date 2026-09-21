@@ -12,7 +12,9 @@ public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
         super("memory.recall", "Memory Recall", "EclipseStore graph and vector recall",
                 schema(), com.javaclaw.framework.builtin.BuiltinSchemas.ui("Memory", 20),
                 List.of(new ExtensionDependency("memory.graph", ">=2.0.0 <3.0.0", false)),
-                registrar -> registrar.promptContributor((request, state) -> {
+                registrar -> {
+                    registrar.tool(context -> new MemoryRecallTool(recall, context));
+                    registrar.promptContributor((request, state) -> {
                     String query = request.inputs().stream()
                             .filter(block -> block.type().equals("core.text"))
                             .map(block -> block.data().path("text").asText())
@@ -20,7 +22,8 @@ public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
                     int topK = com.javaclaw.framework.api.CapabilityRuntime.configuration(
                             request, "memory.recall").path("topK").asInt(8);
                     return Objects.requireNonNull(recall, "recall").recall(request, query, topK);
-                }));
+                    });
+                });
     }
 
     private static ObjectNode schema() {

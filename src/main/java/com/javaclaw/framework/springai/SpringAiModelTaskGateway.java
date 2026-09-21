@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.spi.JsonSchemaValidator;
 import com.javaclaw.framework.core.RunUsageLedger;
+import com.javaclaw.framework.core.ReasoningEventSink;
+import com.javaclaw.framework.core.StepEvents;
+import com.javaclaw.framework.api.AgentStep;
+import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.spi.*;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -64,30 +68,46 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
     @Override
     public CompletionStage<ModelTaskResult> execute(ModelTaskRequest request) {
         request.cancellation().throwIfCancelled();
+        if (runs != null) {
+            var owner = runs.find(request.ownerRunId()).orElseThrow(() ->
+                    new IllegalStateException("model task owner does not exist: " + request.ownerRunId()));
+            if (owner.snapshot().state() != com.javaclaw.framework.api.RunState.RUNNING) throw new IllegalStateException(
+                    "model task requires an active owner turn: " + request.ownerRunId());
+        }
         String cacheKey = cacheKey(request);
+        audit.started(request);
         if (request.cacheAllowed()) {
             ModelTaskResult cached = cache.get(cacheKey);
             if (cached != null) {
                 ModelTaskResult hit = new ModelTaskResult(cached.output(), cached.model(),
                         0, 0, true, cached.metadata());
+                if (runs != null) {
+                    StepId step = StepId.random();
+                    ReasoningEventSink events = StepEvents.durableSink(runs, request.ownerRunId());
+                    var input = json.createObjectNode().put("purpose", request.purpose()).put("cacheHit", true);
+                    input.set("input", request.input());
+                    StepEvents.started(events, step, AgentStep.Kind.MODEL_TASK, input, null);
+                    var output = json.createObjectNode().put("model", hit.model()).put("cacheHit", true);
+                    output.set("value", hit.output());
+                    StepEvents.completed(events, step, output,
+                            json.createObjectNode().put("inputTokens", 0).put("outputTokens", 0));
+                }
                 audit.completed(request, hit);
                 return CompletableFuture.completedFuture(hit);
             }
         }
-        audit.started(request);
         Duration timeout = effectiveTimeout(request);
         CompletableFuture<ModelTaskResult> task =
                 com.javaclaw.framework.core.CancellableTaskStages.submit(
                         executor, "model-task-" + request.purpose(), timeout,
                         request.cancellation(), () -> executeWithRetry(request));
-        task.whenComplete((result, failure) -> {
+        return task.whenComplete((result, failure) -> {
             if (failure != null) audit.failed(request, unwrap(failure));
             else {
                 if (request.cacheAllowed()) cache.putIfAbsent(cacheKey, result);
                 audit.completed(request, result);
             }
         });
-        return task;
     }
 
     private ModelTaskResult executeWithRetry(ModelTaskRequest request) {
@@ -107,6 +127,13 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
     }
 
     private ModelTaskResult call(ModelTaskRequest request, int attempt) {
+        try (var ignored = usageLedger.beginModelCall(request.ownerRunId())) {
+            request.cancellation().throwIfCancelled();
+            return callAdmitted(request, attempt);
+        }
+    }
+
+    private ModelTaskResult callAdmitted(ModelTaskRequest request, int attempt) {
         String workspaceId = workspaceId(request);
         String modelPolicy = workspaceId == null
                 ? models.policyFor(request.tier())
@@ -116,13 +143,24 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                 The response must conform to this JSON Schema:
                 """ + request.outputSchema();
         UserMessage user = buildUserMessage(request);
+        Prompt prompt = new Prompt(List.of(new SystemMessage(system), user));
+        StepId step = StepId.random();
+        ReasoningEventSink events = runs == null ? (type, version, producer, payload) -> { }
+                : StepEvents.durableSink(runs, request.ownerRunId());
+        var stepInput = json.createObjectNode().put("purpose", request.purpose())
+                .put("attempt", attempt).put("modelPolicy", modelPolicy);
+        stepInput.set("messages", StepMessageCodec.messages(prompt.getInstructions()));
+        stepInput.set("outputSchema", request.outputSchema());
+        StepEvents.started(events, step, AgentStep.Kind.MODEL_TASK, stepInput, null);
         ChatResponse response;
         try {
             response = (workspaceId == null
                     ? models.require(request.tier())
-                    : models.require(workspaceId, request.tier())).call(new Prompt(List.of(
-                    new SystemMessage(system), user)));
+                    : models.require(workspaceId, request.tier())).call(prompt);
+            if (response == null) throw new IllegalStateException("model task returned no result");
         } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+            try { StepEvents.failed(events, step, failure, StepMessageCodec.failureUsage(failure)); }
+            catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
             BigDecimal estimatedCost = BigDecimal.valueOf(
                     com.javaclaw.agent.PricingTable.estimateCostCny(failure.model(),
                             failure.usage().promptTokens(), failure.usage().completionTokens()));
@@ -133,6 +171,10 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                 meteringFailure.addSuppressed(failure);
                 throw meteringFailure;
             }
+            throw failure;
+        } catch (RuntimeException failure) {
+            try { StepEvents.failed(events, step, failure); }
+            catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
             throw failure;
         }
         if (response == null) {
@@ -146,7 +188,15 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         BigDecimal estimatedCost = BigDecimal.valueOf(
                 com.javaclaw.agent.PricingTable.estimateCostCny(
                         actualModel, inputTokens, outputTokens));
-        recordUsage(request, actualModel, attempt, inputTokens, outputTokens, estimatedCost);
+        RuntimeException journalFailure = null;
+        try { StepEvents.completed(events, step, StepMessageCodec.response(response), StepMessageCodec.usage(response)); }
+        catch (RuntimeException failure) { journalFailure = failure; }
+        try { recordUsage(request, actualModel, attempt, inputTokens, outputTokens, estimatedCost); }
+        catch (RuntimeException failure) {
+            if (journalFailure != null) failure.addSuppressed(journalFailure);
+            throw failure;
+        }
+        if (journalFailure != null) throw journalFailure;
         if (response.getResult() == null) {
             throw new IllegalStateException("model task returned no result");
         }

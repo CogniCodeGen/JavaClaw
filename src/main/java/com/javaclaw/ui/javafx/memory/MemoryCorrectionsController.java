@@ -27,7 +27,7 @@ public final class MemoryCorrectionsController
         implements MemoryHostedSection, AutoCloseable {
     @FXML private VBox rows;
     @FXML private Label empty;
-    private final MemoryApplicationService useCases;
+    private MemoryApplicationService useCases;
     private final DialogService dialogs;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<OperationResult> action;
@@ -46,6 +46,11 @@ public final class MemoryCorrectionsController
         action = new UiAsyncAction<>(tasks, fx);
     }
 
+    @Override public void setMemoryService(MemoryApplicationService service) {
+        this.useCases = Objects.requireNonNull(service);
+    }
+    @Override public boolean isBusy() { return action.busyProperty().get(); }
+
     @Override public void configure(MemorySectionHost host) { this.host = host; }
 
     @Override
@@ -62,7 +67,8 @@ public final class MemoryCorrectionsController
         empty.setManaged(matches.isEmpty());
         for (CorrectionItem item : matches) {
             MemoryChildView<javafx.scene.layout.HBox> child = components.correction(
-                    item, this::revoke, this::delete);
+                    item, this::revoke, this::delete, useCases.scope() != null
+                            && useCases.scope().kind() == com.javaclaw.memory.MemoryGraphScope.Kind.LEGACY);
             children.add(child);
             rows.getChildren().add(child.root());
         }

@@ -58,7 +58,11 @@ public final class ExecutionPlan implements AutoCloseable {
         descriptor.compiledCapabilities().entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(entry -> configurations.set(entry.getKey().value(), entry.getValue()));
-        return request.withAttribute("framework.capabilities", capabilities)
+        var effective = new com.javaclaw.framework.api.RunRequest(request.agent(), request.profile(), request.source(),
+                request.scope(), request.inputs(), request.linkage(), descriptor.permissions(), descriptor.budget(),
+                request.idempotencyKey(), request.attributes());
+        return effective.withAttribute("framework.capabilities", capabilities)
+                .withAttribute("framework.modelPolicyRef", com.fasterxml.jackson.databind.node.TextNode.valueOf(descriptor.modelPolicyRef()))
                 .withAttribute("framework.compiledCapabilities", configurations);
     }
 

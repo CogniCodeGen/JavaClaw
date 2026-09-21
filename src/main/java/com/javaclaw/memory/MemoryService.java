@@ -29,21 +29,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/**
- * 记忆服务门面 —— 上层（ChatService 等）唯一入口，整合存储基座 + 嵌入 + 召回 + 蒸馏。
- *
- * <p>取代旧 {@code WorkspaceContextFiles} + {@code MemoryCurator} 双件：</p>
- * <ul>
- *   <li>{@link #recall(String)} 每轮注入（人格 + 相关事实 + 相关情景），替代 buildContextInjection</li>
- *   <li>{@link #rememberTurn} 轮后落情景 + 异步蒸馏事实，替代 distillFromTurn/consolidate</li>
- *   <li>人格/检查点/变更日志 透传 {@link MemoryStore}</li>
- *   <li>{@link #reload(Path)} 切工作区时重开库</li>
- * </ul>
- *
- * <p>全流程失败静默、降级不阻塞主对话。</p>
- *
- * @author JavaClaw
- */
+/** Scoped memory lifecycle, durable raw-turn projection and bounded asynchronous curation. */
 public class MemoryService implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryService.class);
@@ -66,6 +52,20 @@ public class MemoryService implements AutoCloseable {
     private Distiller distiller;
     private HabitReviewer habitReviewer;
     private CorrectionEngine correctionEngine;
+    private Path graphRoot;
+    private MemoryGraphScope graphScope;
+    private MemoryService graphOwner;
+    private volatile boolean catalogAccepting;
+    private final java.util.concurrent.ConcurrentMap<MemoryGraphScope, MemoryService> graphs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> activeTurns = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<MemoryGraphScope> replayScopes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.AtomicBoolean resumedPending = new java.util.concurrent.atomic.AtomicBoolean();
+    private MemoryGraphJournal graphJournal;
+    private volatile boolean replayingFork;
+    private MemoryHistoryRecovery historyRecovery;
+    private java.util.function.BiConsumer<com.javaclaw.framework.api.ThreadSnapshot,
+            List<com.javaclaw.framework.api.ThreadEvent>> historyReplayer, historyCatchup;
 
     public MemoryService(ModelTaskGateway modelTasks, EmbeddingGateway gateway,
                          TaskScope tasks, AgentConfig settings) {
@@ -75,15 +75,11 @@ public class MemoryService implements AutoCloseable {
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
-    /**
-     * 设置嵌入降级通知回调（首次失败触发一次）。
-     * 嵌入端点配错/失效时记忆全链路静默降级，若无此通知用户可能长期毫无感知。
-     */
+    /** Surface the first embedding degradation without blocking a conversation. */
     public void setOnEmbeddingDegraded(java.util.function.Consumer<String> callback) {
         gate.setOnDegraded(callback);
     }
 
-    // ==================== 生命周期 ====================
 
     /** 打开指定工作区的记忆库文件资产目录（例如 data/memory-stores/{workspace_id}）。 */
     public synchronized void open(Path memoryDir) {
@@ -119,6 +115,244 @@ public class MemoryService implements AutoCloseable {
         }
     }
 
+    /** Production entry point: the old mixed store is retained solely as unassigned history. */
+    public synchronized void open(Path memoryDir, String workspaceId, String userId) {
+        if (store != null) return;
+        graphRoot = memoryDir.toAbsolutePath().normalize();
+        graphScope = new MemoryGraphScope(workspaceId, userId, "", MemoryGraphScope.Kind.WORKSPACE_HABITS);
+        graphOwner = this;
+        open(graphScope.directory(graphRoot));
+        catalogAccepting = true;
+    }
+
+    public int migrateLegacy(com.fasterxml.jackson.databind.ObjectMapper json,
+                             java.util.function.Predicate<String> knownThread) {
+        return LegacyMemoryMigration.migrate(this, java.util.Objects.requireNonNull(json),
+                java.util.Objects.requireNonNull(knownThread));
+    }
+
+    public MemoryGraphScope defaultScope() { return graphScope; }
+    public void onHistoryRecovery(java.util.function.BiConsumer<com.javaclaw.framework.api.ThreadSnapshot,
+            List<com.javaclaw.framework.api.ThreadEvent>> replay,
+            java.util.function.BiConsumer<com.javaclaw.framework.api.ThreadSnapshot, List<com.javaclaw.framework.api.ThreadEvent>> catchup) {
+        historyReplayer = replay; historyCatchup = catchup;
+    }
+    public void bindThreadJournal(com.fasterxml.jackson.databind.ObjectMapper json,
+            com.javaclaw.framework.spi.ThreadJournal journal, com.javaclaw.framework.spi.ThreadStore history) {
+        historyRecovery = new MemoryHistoryRecovery(history, () -> historyReplayer, () -> historyCatchup);
+        bindThreadJournal(json, journal);
+    }
+
+    public void bindThreadJournal(com.fasterxml.jackson.databind.ObjectMapper json,
+                                  com.javaclaw.framework.spi.ThreadJournal journal) {
+        graphJournal = new MemoryGraphJournal(json, journal);
+        graphs.forEach((scope, view) -> graphJournal.bind(scope, view.store));
+    }
+
+    public void beginForkReplay(MemoryGraphScope scope) {
+        (graphOwner == null ? this : graphOwner).replayScopes.add(scope);
+        MemoryService target = inScope(scope);
+        target.replayingFork = true;
+        target.store.observeMutations(null);
+    }
+
+    public void restoreForkSnapshot(MemoryGraphScope scope, com.javaclaw.memory.graph.MemoryGraphSnapshot snapshot) {
+        MemoryService target = inScope(scope);
+        if (!target.replayingFork) throw new IllegalStateException("只能在分支回放时恢复图谱快照");
+        target.store.restoreSnapshot(snapshot);
+    }
+
+    public void endForkReplay(MemoryGraphScope scope) {
+        MemoryService target = inScope(scope);
+        target.store.root().historyRecovered = true;
+        target.store.persistProjectionState();
+        (graphOwner == null ? this : graphOwner).replayScopes.remove(scope);
+        target.replayingFork = false;
+        if (graphJournal != null) graphJournal.bind(scope, target.store);
+        target.resumedPending.set(false);
+        inScope(scope);
+    }
+
+    /** Immutable scoped view; never changes a shared current-session field. */
+    public MemoryService inScope(MemoryGraphScope scope) {
+        java.util.Objects.requireNonNull(scope, "scope");
+        MemoryService owner = graphOwner == null ? this : graphOwner;
+        if (owner.graphRoot == null) throw new IllegalStateException("记忆服务尚未配置分图根目录");
+        if (!scope.workspaceId().equals(owner.graphScope.workspaceId())
+                || !scope.userId().equals(owner.graphScope.userId())) {
+            throw new IllegalArgumentException("不能访问其他工作区或用户的记忆图谱");
+        }
+        if (scope.kind() == MemoryGraphScope.Kind.LEGACY && !"local-user".equals(scope.userId()))
+            throw new IllegalArgumentException("历史待归属记忆仅属于桌面本地用户");
+        if (!owner.catalogAccepting) throw new IllegalStateException("记忆服务正在关闭");
+        if (scope.equals(owner.graphScope)) return owner;
+        Path path = scope.directory(owner.graphRoot);
+        if (scope.kind() == MemoryGraphScope.Kind.THREAD && owner.historyRecovery != null) owner.historyRecovery.validate(scope);
+        if (scope.kind() == MemoryGraphScope.Kind.THREAD && MemoryStoreRegistry.isDeleted(path)) {
+            throw new IllegalStateException("会话记忆已删除: " + scope.threadId());
+        }
+        MemoryService selected = owner.graphs.computeIfAbsent(scope, key -> {
+            MemoryService child = new MemoryService(owner.modelTasks, owner.gate, owner.tasks, owner.settings);
+            child.graphRoot = owner.graphRoot;
+            child.graphScope = key;
+            child.graphOwner = owner;
+            child.replayingFork = owner.replayScopes.contains(key);
+            try {
+                child.open(path);
+                if (owner.graphJournal != null && !child.replayingFork) owner.graphJournal.bind(key, child.store);
+            } catch (RuntimeException | Error failure) { child.close(); throw failure; }
+            if (key.kind() == MemoryGraphScope.Kind.THREAD) {
+                child.habitReviewer = new HabitReviewer(owner.modelTasks, owner.store, owner.gate,
+                        owner.settings, () -> owner.habitEvidence(key.userId()),
+                        action -> MemoryStoreRegistry.withLiveGraph(path, action), owner::hasLiveEvidence);
+            }
+            return child;
+        });
+        if (owner.replayScopes.contains(scope)) selected.replayingFork = true;
+        if (!selected.replayingFork && scope.kind() == MemoryGraphScope.Kind.THREAD && owner.historyRecovery != null) owner.historyRecovery.recover(scope, selected);
+        if (!selected.replayingFork && scope.kind() == MemoryGraphScope.Kind.THREAD && selected.resumedPending.compareAndSet(false, true)) {
+            for (Episode pending : selected.episodes()) {
+                if (!pending.distilled && pending.ownerRunId != null) {
+                    selected.rememberEpisode(new RunId(pending.ownerRunId), pending, true);
+                }
+            }
+        }
+        return selected;
+    }
+
+    public List<MemoryGraphScope> scopes() {
+        MemoryService owner = graphOwner == null ? this : graphOwner;
+        if (owner.graphScope == null) return List.of();
+        java.util.LinkedHashSet<MemoryGraphScope> result = new java.util.LinkedHashSet<>();
+        result.add(owner.graphScope);
+        Path threads = owner.graphScope.directory(owner.graphRoot).getParent().resolve("threads");
+        if (java.nio.file.Files.isDirectory(threads)) {
+            try (var paths = java.nio.file.Files.list(threads)) {
+                paths.filter(java.nio.file.Files::isDirectory).sorted().forEach(path -> {
+                    if (MemoryStoreRegistry.isDeleted(path)) return;
+                    try {
+                        result.add(new MemoryGraphScope(owner.graphScope.workspaceId(),
+                                owner.graphScope.userId(), MemoryGraphScope.decode(path.getFileName().toString()),
+                                MemoryGraphScope.Kind.THREAD));
+                    } catch (IllegalArgumentException ignored) { /* unrelated directory */ }
+                });
+            } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+        }
+        if ("local-user".equals(owner.graphScope.userId()) && java.nio.file.Files.exists(owner.graphRoot.resolve("channel_0"))) {
+            result.add(new MemoryGraphScope(owner.graphScope.workspaceId(), owner.graphScope.userId(),
+                    "", MemoryGraphScope.Kind.LEGACY));
+        }
+        return List.copyOf(result);
+    }
+
+    private List<Episode> habitEvidence(String userId) {
+        java.util.LinkedHashMap<String, Episode> evidence = new java.util.LinkedHashMap<>();
+        for (MemoryGraphScope scope : scopes()) {
+            if (scope.kind() != MemoryGraphScope.Kind.THREAD || !scope.userId().equals(userId)) continue;
+            try {
+                for (Episode episode : inScope(scope).episodes()) {
+                    if (episode.habitEvidence) evidence.putIfAbsent(episode.evidenceKey(), episode);
+                }
+            } catch (IllegalStateException ignored) { /* deleted during review */ }
+        }
+        return evidence.values().stream().sorted(java.util.Comparator.comparingLong(e -> e.timestamp)).toList();
+    }
+
+    private boolean hasLiveEvidence(Episode episode) {
+        var scope = new MemoryGraphScope(graphScope.workspaceId(), graphScope.userId(),
+                episode.sessionId, MemoryGraphScope.Kind.THREAD);
+        MemoryService source = graphs.get(scope);
+        return !MemoryStoreRegistry.isDeleted(scope.directory(graphRoot)) && source != null
+                && source.store != null && source.store.findTurn(episode.turnId) != null;
+    }
+
+    public String recall(MemoryGraphScope scope, String query, int topK) {
+        if (scope.kind() == MemoryGraphScope.Kind.LEGACY) return "";
+        MemoryService selected = inScope(scope);
+        if (scope.kind() == MemoryGraphScope.Kind.WORKSPACE_HABITS) return selected.recall(query);
+        return Recaller.recallGraphs(List.of(selected.store, inScope(scope.habits()).store),
+                gate, settings, query, topK);
+    }
+
+    public CorrectionTurnContext prepareCorrectionTurn(MemoryGraphScope scope,
+                                                       String input, String previousReply) {
+        var correction = com.javaclaw.memory.correction.CorrectionDetector.detect(input);
+        if (correction.isPresent() && correction.get().scope()
+                == com.javaclaw.memory.model.CorrectionRecord.Scope.USER) {
+            return inScope(scope.habits()).prepareCorrectionTurn(input, previousReply);
+        }
+        return inScope(scope).prepareCorrectionTurn(input, previousReply);
+    }
+
+    /** Explicit, first-person preferences need no model inference or embedding to be durable. */
+
+
+    public void rememberExplicitPreference(MemoryGraphScope scope, String turnId, String input) {
+        MemoryPreferenceWriter.remember(this, scope, scope.directory(graphRoot), turnId, input);
+    }
+
+    public List<com.javaclaw.memory.model.CorrectionRecord> corrections(MemoryGraphScope scope) {
+        java.util.ArrayList<com.javaclaw.memory.model.CorrectionRecord> records =
+                new java.util.ArrayList<>(inScope(scope).corrections());
+        if (scope.kind() == MemoryGraphScope.Kind.THREAD) records.addAll(inScope(scope.habits()).corrections());
+        return List.copyOf(records);
+    }
+
+    public void rememberTurn(MemoryGraphScope scope, RunId runId, String turnId,
+                             long eventSequence, String input, String reply, String trace,
+                             boolean reviewHabits) {
+        rememberTurn(scope, runId, turnId, eventSequence, input, reply, trace, reviewHabits,
+                scope.threadId(), turnId);
+    }
+
+    public void rememberTurn(MemoryGraphScope scope, RunId runId, String turnId,
+                             long eventSequence, String input, String reply, String trace,
+                             boolean reviewHabits, String originThreadId, String originTurnId) {
+        rememberTerminal(scope, runId, turnId, eventSequence, input, reply, trace, reviewHabits,
+                originThreadId, originTurnId, "completed");
+    }
+
+    public void rememberTerminal(MemoryGraphScope scope, RunId runId, String turnId, long sequence,
+            String input, String reply, String trace, boolean reviewHabits,
+            String originThreadId, String originTurnId, String status) {
+        MemoryTurnWriter.remember(this, scope, runId, turnId, sequence, input, reply, trace,
+                reviewHabits, originThreadId, originTurnId, status);
+    }
+
+    /** Idempotent lifecycle projection. The tombstone is permanent even after files are removed. */
+    public void deleteThread(MemoryGraphScope scope) {
+        if (scope.kind() != MemoryGraphScope.Kind.THREAD) throw new IllegalArgumentException("仅可删除会话图谱");
+        MemoryService owner = graphOwner == null ? this : graphOwner;
+        owner.validateOwner(scope);
+        Path path = scope.directory(owner.graphRoot);
+        MemoryStoreRegistry.delete(path);
+        MemoryService child = owner.graphs.remove(scope);
+        if (child != null) child.close();
+        LegacyMemoryMigration.hideThread(owner, scope);
+        // Keep promoted habits, but do not retain deleted conversation text as evidence.
+        for (var fact : owner.facts()) {
+            if (fact.evidenceKeys != null && fact.evidenceKeys.stream()
+                    .anyMatch(key -> key.startsWith(scope.threadId() + ":"))) {
+                if (fact.pending) owner.store.updatePendingFact(fact, f -> f.evidenceDeleted = true, "thread.delete");
+                else owner.store.updateFact(fact, f -> f.evidenceDeleted = true, "thread.delete");
+            }
+        }
+    }
+
+    private void validateOwner(MemoryGraphScope scope) {
+        if (graphScope == null || !graphScope.workspaceId().equals(scope.workspaceId())
+                || !graphScope.userId().equals(scope.userId())) {
+            throw new IllegalArgumentException("记忆图谱所有者不匹配");
+        }
+    }
+
+    /** Rebuild a fork from immutable source episodes, never copy a later mutable fact state. */
+    public void forkThread(MemoryGraphScope source, MemoryGraphScope target, long cutoffEventSequence) {
+        validateOwner(source);
+        validateOwner(target);
+        MemoryForkSnapshots.copy(this, graphRoot, source, target, cutoffEventSequence);
+    }
+
     /** 切工作区：关闭旧库、打开新库。 */
     public synchronized void reload(Path memoryDir) {
         close();
@@ -127,6 +361,11 @@ public class MemoryService implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        if (graphOwner == this) {
+            catalogAccepting = false;
+            graphs.values().forEach(MemoryService::close);
+            graphs.clear();
+        }
         MemoryTaskTracker closingWork = backgroundWork;
         closingWork.stopAccepting();
 
@@ -170,16 +409,17 @@ public class MemoryService implements AutoCloseable {
     }
 
     private void seedDefaultPersona() {
+        if (graphScope != null && graphScope.kind() != MemoryGraphScope.Kind.WORKSPACE_HABITS) return;
         if (store.getPersona() == null) {
             store.setPersona(MemoryPrompts.DEFAULT_AGENTS_SKELETON, "system");
             log.info("已写入默认人格骨架");
         }
     }
 
-    // ==================== 召回（注入） ====================
 
     /** 构建本轮注入上下文；服务未就绪时返回空串。 */
     public String recall(String query) {
+        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY) return "";
         if (recaller == null) {
             return "";
         }
@@ -255,7 +495,10 @@ public class MemoryService implements AutoCloseable {
     /** 全部显式纠错（含已撤销项），供诊断/测试/记忆中心展示。 */
     public List<com.javaclaw.memory.model.CorrectionRecord> corrections() {
         MemoryStore current = store;
-        return current == null ? List.of() : current.allCorrections();
+        if (current == null) return List.of();
+        return current.allCorrections().stream().filter(c -> graphScope == null
+                || graphScope.kind() != MemoryGraphScope.Kind.LEGACY
+                || !current.root().migratedIds.contains("correctionrecord:" + c.id)).toList();
     }
 
     /**
@@ -284,7 +527,6 @@ public class MemoryService implements AutoCloseable {
         current.restoreFact(f, "user");
     }
 
-    // ==================== 记忆写入（轮后） ====================
 
     /**
      * 轮后记忆：先把情景快速落入 pending 暂存区，再异步嵌入、迁入索引并蒸馏事实。
@@ -294,10 +536,6 @@ public class MemoryService implements AutoCloseable {
         rememberTurn(null, sessionId, userInput, reply, toolTraceJson);
     }
 
-    /**
-     * Framework-owned turn write. Model-assisted distillation is charged to {@code ownerRunId};
-     * callers without a Run may still persist the episode but cannot launch auxiliary model work.
-     */
     public void rememberTurn(RunId ownerRunId, String sessionId, String userInput,
                              String reply, String toolTraceJson) {
         rememberTurn(ownerRunId, sessionId, userInput, reply, toolTraceJson, true);
@@ -305,14 +543,27 @@ public class MemoryService implements AutoCloseable {
 
     public void rememberTurn(RunId ownerRunId, String sessionId, String userInput,
                              String reply, String toolTraceJson, boolean reviewHabits) {
+        Episode episode = new Episode(sessionId, userInput, reply);
+        episode.turnId = ownerRunId == null ? null : ownerRunId.value();
+        episode.originThreadId = sessionId;
+        episode.originTurnId = episode.turnId;
+        episode.ownerRunId = ownerRunId == null ? null : ownerRunId.value();
+        episode.toolTraceJson = toolTraceJson;
+        rememberEpisode(ownerRunId, episode, reviewHabits);
+    }
+
+    void rememberEpisode(RunId ownerRunId, Episode ep, boolean reviewHabits) {
+        String userInput = ep.userInput;
+        String reply = ep.assistantReply;
+        String toolTraceJson = ep.toolTraceJson;
+        String sessionId = ep.sessionId;
         if (SensitiveDataRedactor.containsLikelyCredential(userInput)
                 || SensitiveDataRedactor.containsLikelyCredential(reply)
                 || SensitiveDataRedactor.containsLikelyCredential(toolTraceJson)) {
             log.warn("本轮包含疑似凭据，已跳过长期记忆与情景索引写入");
             return;
         }
-        Episode ep = new Episode(sessionId, userInput, reply);
-        ep.toolTraceJson = toolTraceJson;
+        if (replayingFork || ep.distilled) { store.addTurnOnce(ep, "thread.terminal"); return; }
         MemoryStore turnStore;
         Distiller turnDistiller;
         HabitReviewer reviewer;
@@ -330,21 +581,34 @@ public class MemoryService implements AutoCloseable {
 
         try {
             // durable-first：这一小段本地写入完成后才把租约交给可取消工作线程。
-            turnStore.addPendingEpisode(ep, "system");
+            synchronized (activeTurns) {
+                if (!turnStore.addTurnOnce(ep, "system")) {
+                    Episode persisted = turnStore.findTurn(ep.turnId);
+                    if (persisted == null || persisted.distilled || activeTurns.contains(ep.turnId)) {
+                        lease.close();
+                        return;
+                    }
+                    ep = persisted;
+                }
+                if (ep.turnId != null) activeTurns.add(ep.turnId);
+            }
+            Episode source = ep;
             TaskHandle<Void> handle = tasks.submit(
                     TaskSpec.io("memory-turn-" + taskName(sessionId)), context -> {
                 try {
                     rememberTurn(context, lease, turnStore, turnDistiller, reviewer,
-                            ownerRunId, ep, userInput, reply, reviewHabits);
+                            ownerRunId, source, userInput, reply, reviewHabits);
                 } catch (RuntimeException e) {
                     log.warn("rememberTurn 失败（静默）: {}", e.getMessage());
                 } finally {
+                    if (source.turnId != null) activeTurns.remove(source.turnId);
                     lease.close();
                 }
                 return null;
             });
             lease.onCancel(handle::cancel);
         } catch (RuntimeException e) {
+            if (ep.turnId != null) activeTurns.remove(ep.turnId);
             lease.close();
             log.warn("rememberTurn 调度失败（静默）: {}", e.getMessage());
         } catch (Error e) {
@@ -382,7 +646,9 @@ public class MemoryService implements AutoCloseable {
         if (cancelled(context, lease)) return;
         if (ownerRunId != null) {
             lastOwnerRun.set(ownerRunId);
-            turnDistiller.distillNow(ownerRunId, episode);
+            if (turnDistiller.distillWithStatus(ownerRunId, episode) && !cancelled(context, lease)) {
+                turnStore.markDistilled(episode);
+            }
             if (reviewHabits && !cancelled(context, lease)) reviewer.maybeReviewNow(ownerRunId);
         }
     }
@@ -400,69 +666,33 @@ public class MemoryService implements AutoCloseable {
         return normalized.length() > 48 ? normalized.substring(0, 48) : normalized;
     }
 
-    // ==================== 人格 / 检查点 / 审计 透传 ====================
 
     public Persona getPersona() {
-        return store != null ? store.getPersona() : null;
+        return store == null || (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY
+                && store.root().migratedIds.contains("persona")) ? null : store.getPersona();
     }
 
     public void setPersona(String content, String actor) {
         if (store != null) store.setPersona(content, actor);
     }
 
-    /** 保存结构化人格：组装为 markdown 正文（实际注入文本）并持久化结构化字段。 */
-    public void setPersonaStructured(String identity, String tone,
-                                     List<String> preferences, List<String> taboos) {
-        if (store == null) return;
-        List<String> prefs = preferences == null ? List.of() : preferences;
-        List<String> tabs = taboos == null ? List.of() : taboos;
-        String content = assemblePersona(identity, tone, prefs, tabs);
-        store.updatePersona(p -> {
-            p.structured = true;
-            p.identity = identity;
-            p.tone = tone;
-            p.preferences = new java.util.ArrayList<>(prefs);
-            p.taboos = new java.util.ArrayList<>(tabs);
-            p.content = content;
-        }, "user");
-    }
-
-    /** 把结构化人格字段组装成注入用 markdown 正文。 */
-    public static String assemblePersona(String identity, String tone,
-                                         List<String> preferences, List<String> taboos) {
-        StringBuilder sb = new StringBuilder("# 人格\n");
-        if (identity != null && !identity.isBlank()) {
-            sb.append("\n## 身份\n").append(identity.strip()).append('\n');
-        }
-        if (tone != null && !tone.isBlank()) {
-            sb.append("\n## 语气\n").append(tone.strip()).append('\n');
-        }
-        if (preferences != null && !preferences.isEmpty()) {
-            sb.append("\n## 偏好\n");
-            for (String p : preferences) {
-                if (p != null && !p.isBlank()) sb.append("- ").append(p.strip()).append('\n');
-            }
-        }
-        if (taboos != null && !taboos.isEmpty()) {
-            sb.append("\n## 禁忌\n");
-            for (String t : taboos) {
-                if (t != null && !t.isBlank()) sb.append("- ").append(t.strip()).append('\n');
-            }
-        }
-        return sb.toString();
-    }
-
     public List<ChangeLogEntry> recentChangeLog(int limit) {
-        return store != null ? store.recentChangeLog(limit) : List.of();
+        if (store == null) return List.of();
+        if (graphScope == null || graphScope.kind() != MemoryGraphScope.Kind.LEGACY) return store.recentChangeLog(limit);
+        return store.recentChangeLog(Integer.MAX_VALUE).stream().filter(change ->
+                !store.root().migratedIds.contains(change.type.toLowerCase(java.util.Locale.ROOT) + ":" + change.targetId)
+                        && !("Persona".equals(change.type) && store.root().migratedIds.contains("persona")))
+                .limit(limit).toList();
     }
 
-    // ==================== 记忆中心 UI 便捷方法 ====================
 
     /** 全部事实：正式（已索引）+ pending（降级暂存）合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Fact> facts() {
         if (store == null) return List.of();
         List<com.javaclaw.memory.model.Fact> out = new java.util.ArrayList<>(store.allFacts());
         out.addAll(store.allPendingFacts());
+        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY)
+            out.removeIf(f -> store.root().migratedIds.contains("fact:" + f.id));
         return out;
     }
 
@@ -479,71 +709,16 @@ public class MemoryService implements AutoCloseable {
         else store.updateFact(f, x -> x.pinned = !x.pinned, "user");
     }
 
-    /**
-     * 编辑事实正文：重新嵌入并置 userEdited 保护位（蒸馏不得再静默覆盖）。
-     * pending 事实编辑时若嵌入已恢复 → 顺带迁入正式索引；否则仍留暂存区。
-     */
-    public void editFact(com.javaclaw.memory.model.Fact f, String newText) {
-        if (store == null) return;
-        float[] vec = gate.embed(newText, EmbeddingPurpose.BACKGROUND_INDEX);
-        if (f.pending) {
-            if (vec != null) {
-                // 嵌入恢复：迁入正式索引
-                f.text = newText;
-                f.embedding = vec;
-                f.userEdited = true;
-                f.userAsserted = true;
-                f.sourceKind = "USER_MANUAL";
-                f.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实
-                f.contested = false;
-                f.pending = false;
-                store.removePendingFact(f, "user");
-                store.addFact(f, "user");
-            } else {
-                store.updatePendingFact(f, x -> {
-                    x.text = newText;
-                    x.userEdited = true;
-                    x.userAsserted = true;
-                    x.sourceKind = "USER_MANUAL";
-                    x.superseded = false;
-                    x.contested = false;
-                }, "user");
-            }
-            return;
-        }
-        store.updateFact(f, x -> {
-            x.text = newText;
-            if (vec != null) x.embedding = vec;
-            x.userEdited = true;
-            x.userAsserted = true;
-            x.sourceKind = "USER_MANUAL";
-            x.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实（userEdited 保护契约优先于软删除）
-            x.contested = false;
-        }, "user");
-    }
-
-    /** 新增一条事实：先嵌入再入库（嵌入不可用则降级落 pending 暂存区，仍可见）。 */
-    public void addFact(String section, String text) {
-        if (store == null || text == null || text.isBlank()) return;
-        float[] vec = gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
-        com.javaclaw.memory.model.Fact f = new com.javaclaw.memory.model.Fact(
-                section == null || section.isBlank() ? "其它" : section.trim(), text.trim(), vec);
-        f.userEdited = true; // 手动新增等同用户保护，蒸馏不得静默覆盖
-        f.userAsserted = true;
-        f.sourceKind = "USER_MANUAL";
-        if (vec != null) store.addFact(f, "user");
-        else store.addPendingFact(f, "user");
-    }
-
     /** 全部情景：正式 + pending 合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Episode> episodes() {
         if (store == null) return List.of();
         List<com.javaclaw.memory.model.Episode> out = new java.util.ArrayList<>(store.allEpisodes());
         out.addAll(store.allPendingEpisodes());
+        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY)
+            out.removeIf(e -> store.root().migratedIds.contains("episode:" + e.id));
         return out;
     }
 
-    // ==================== 降级暂存：状态与迁回 ====================
 
     /** 最近一次嵌入失败原因；嵌入健康时为 null（供 UI 降级横幅）。 */
     public String embeddingError() {
@@ -622,7 +797,13 @@ public class MemoryService implements AutoCloseable {
     }
 
     public List<com.javaclaw.memory.model.EntityNode> entities() {
-        return store != null ? store.allEntities() : List.of();
+        if (store == null) return List.of();
+        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY) {
+            var referenced = facts().stream().filter(f -> f.about != null).flatMap(f -> f.about.stream())
+                    .filter(java.util.Objects::nonNull).map(e -> e.id).collect(java.util.stream.Collectors.toSet());
+            return store.allEntities().stream().filter(e -> referenced.contains(e.id)).toList();
+        }
+        return store.allEntities();
     }
 
     public List<com.javaclaw.memory.model.KnowledgeChunk> knowledge() {
@@ -657,11 +838,7 @@ public class MemoryService implements AutoCloseable {
         return store != null && store.root() != null ? store.root().stats : null;
     }
 
-    /**
-     * 物化一张记忆图谱快照（事实/情景/实体节点 + source/about/semantic 边）供 UI 渲染。
-     * 纯读、含向量近邻即时检索；建议在后台线程调用（不阻塞 JavaFX 线程）。
-     * 服务未就绪时返回空图。
-     */
+    /** Read-only graph visualization for this explicitly selected scope. */
     public com.javaclaw.memory.graph.MemoryGraph graph() {
         if (store == null) {
             return com.javaclaw.memory.graph.MemoryGraph.empty();
@@ -670,7 +847,9 @@ public class MemoryService implements AutoCloseable {
         int maxNodes = settings.getMemoryGraphMaxNodes();
         var opt = new com.javaclaw.memory.graph.MemoryGraphBuilder.Options(
                 maxNodes, semThreshold, 3, true, 36);
-        return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt);
+        return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt,
+                graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY
+                        ? store.root().migratedIds : java.util.Set.of());
     }
 
     public MemoryStore store() {
@@ -691,6 +870,19 @@ public class MemoryService implements AutoCloseable {
         try (lease) {
             return reviewer.reviewNow(lastOwnerRun.get());
         }
+    }
+
+    public void editFact(com.javaclaw.memory.model.Fact fact, String text) {
+        MemoryFactEditor.editFact(store, gate, fact, text);
+    }
+    public void addFact(String section, String text) {
+        MemoryFactEditor.addFact(store, gate, section, text);
+    }
+    public void setPersonaStructured(String identity, String tone, List<String> preferences, List<String> taboos) {
+        MemoryFactEditor.setPersonaStructured(store, identity, tone, preferences, taboos);
+    }
+    public static String assemblePersona(String identity, String tone, List<String> preferences, List<String> taboos) {
+        return MemoryFactEditor.assemblePersona(identity, tone, preferences, taboos);
     }
 
     private static String cap(String s) {

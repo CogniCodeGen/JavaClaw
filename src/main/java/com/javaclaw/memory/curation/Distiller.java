@@ -60,11 +60,19 @@ public final class Distiller {
 
     /** Runs one bounded distillation task. A missing owner Run deliberately disables model use. */
     public void distillNow(RunId ownerRunId, Episode episode) {
-        if (!eligible(episode) || ownerRunId == null) return;
+        distillWithStatus(ownerRunId, episode);
+    }
+
+    /** False leaves the durable source pending for retry; no successful watermark on failure. */
+    public boolean distillWithStatus(RunId ownerRunId, Episode episode) {
+        if (!eligible(episode)) return true;
+        if (ownerRunId == null) return false;
         try {
             distillSync(ownerRunId, episode);
+            return true;
         } catch (RuntimeException failure) {
             log.warn("记忆蒸馏失败（已隔离，不影响主 Run）: {}", failure.getMessage());
+            return false;
         }
     }
 
@@ -120,9 +128,11 @@ public final class Distiller {
             float[] vector = embeddings.embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vector == null || confidence < PROMOTION_CONFIDENCE || !evidence) {
                 Fact review = new Fact(null, text, null);
+                identify(review, episode);
                 review.source = episode;
                 review.about = matchEntities(text, entities);
-                review.sourceKind = evidence ? "DISTILLED_LOW_CONFIDENCE" : "DISTILLED_UNVERIFIED";
+                review.sourceKind = evidence && confidence >= PROMOTION_CONFIDENCE ? "DISTILLED"
+                        : evidence ? "DISTILLED_LOW_CONFIDENCE" : "DISTILLED_UNVERIFIED";
                 store.addPendingFact(review, "memory.distillation");
                 pending++;
                 continue;
@@ -131,12 +141,14 @@ public final class Distiller {
             List<MemoryStore.Scored<Fact>> duplicate = store.searchFacts(vector, 1, dedup);
             if (!duplicate.isEmpty() && !duplicate.getFirst().entity().userEdited
                     && !duplicate.getFirst().entity().userAsserted) {
-                store.mergeFact(duplicate.getFirst().entity(), "memory.distillation", text);
+                store.mergeFactFromSource(duplicate.getFirst().entity(), "memory.distillation", text,
+                        episode.evidenceKey());
                 merged++;
                 continue;
             }
             supersedeStale(ownerRunId, text, vector, dedup);
             Fact fact = new Fact(null, text, vector);
+            identify(fact, episode);
             fact.source = episode;
             fact.about = matchEntities(text, entities);
             fact.sourceKind = "DISTILLED";
@@ -145,6 +157,12 @@ public final class Distiller {
         }
         log.info("记忆蒸馏完成：晋级 {}，合并 {}，待复核 {}，实体 {}",
                 added, merged, pending, entities.size());
+    }
+
+    private static void identify(Fact fact, Episode episode) {
+        fact.id = java.util.UUID.nameUUIDFromBytes((episode.evidenceKey() + "\n" + fact.text)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        fact.evidenceKeys.add(episode.evidenceKey());
     }
 
     private List<EntityNode> materializeEntities(JsonNode values) {

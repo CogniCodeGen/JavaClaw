@@ -30,12 +30,14 @@ public class ChatSession {
 
     /** 会话内的聊天消息列表 */
     private final List<ChatMessage> messages;
+    private boolean archived;
+    private String parentThreadId;
 
     /**
      * 创建新会话
      */
     public ChatSession(String title) {
-        this.id = UUID.randomUUID().toString().substring(0, 8);
+        this.id = UUID.randomUUID().toString();
         this.title = title;
         this.createdAt = LocalDateTime.now();
         this.messages = new ArrayList<>();
@@ -54,6 +56,11 @@ public class ChatSession {
     public String getId() {
         return id;
     }
+
+    public boolean isArchived() { return archived; }
+    public void setArchived(boolean value) { archived = value; }
+    public String getParentThreadId() { return parentThreadId; }
+    public void setParentThreadId(String value) { parentThreadId = value; }
 
     public String getTitle() {
         return title;

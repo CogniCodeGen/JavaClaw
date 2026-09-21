@@ -15,6 +15,12 @@ public final class MemoryUseCase implements MemoryApplicationService {
         this.memory = Objects.requireNonNull(memory, "memory");
     }
 
+    @Override public List<com.javaclaw.memory.MemoryGraphScope> scopes() { return memory.scopes(); }
+    @Override public com.javaclaw.memory.MemoryGraphScope scope() { return memory.scope(); }
+    @Override public MemoryApplicationService inScope(com.javaclaw.memory.MemoryGraphScope scope) {
+        return new MemoryUseCase(memory.inScope(scope));
+    }
+
     @Override
     public Snapshot snapshot() {
         return memory.load();

@@ -57,6 +57,10 @@ public class Fact {
     /** 若来自显式纠错，指向对应 CorrectionRecord.id；否则为空。 */
     public String correctionId;
 
+    /** Original user event identities only; no raw conversation copies in the habits graph. */
+    public List<String> evidenceKeys = new ArrayList<>();
+    public boolean evidenceDeleted;
+
     /** 置顶 —— 钉住重要事实（UI 排序靠前；语义上等同强保护，不被淘汰） */
     public boolean pinned;
 

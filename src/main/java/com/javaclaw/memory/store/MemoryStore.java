@@ -32,18 +32,9 @@ import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * 记忆存储基座 —— 一个目录对应一个 EclipseStore 对象图(一个工作区库或全局库)。
- *
- * <p>统一承载语义/情景/知识/实体/变更日志/工作记忆检查点/人格,各 GigaMap 挂 JVector 向量索引。</p>
- *
- * <p><b>并发模型</b>：所有写操作经公平锁串行化，由调用方选择的托管虚拟线程执行；
- * 读取在调用线程执行（GigaMap 读安全）。关闭会等待当前写操作退出，再释放对象存储。</p>
- *
- * <p><b>变更日志</b>:每次结构性变更追加 {@link ChangeLogEntry},作为备份的替代审计轨。</p>
- *
- * <p>嵌入向量由上层(服务层)预计算后写入实体字段;本类的向量器只读取该字段,不调用嵌入 API。</p>
- *
- * @author JavaClaw
+ * One directory owns one EclipseStore graph and its vector indexes.
+ * A fair reentrant write lock serializes graph mutations, journal snapshots and shutdown;
+ * embedding/model calls belong to the service layer, never to this storage primitive.
  */
 public class MemoryStore implements AutoCloseable {
 
@@ -60,6 +51,8 @@ public class MemoryStore implements AutoCloseable {
 
     private EmbeddedStorageManager mgr;
     private MemoryRoot root;
+    private volatile boolean invalidated;
+    private java.util.function.Consumer<MemoryStore> mutationObserver;
 
     private VectorIndex<Fact> factIndex;
     private VectorIndex<Episode> episodeIndex;
@@ -124,6 +117,7 @@ public class MemoryStore implements AutoCloseable {
     public void open() {
         writeLock.lock();
         try {
+            if (invalidated) throw new IllegalStateException("记忆图谱已删除");
             if (mgr != null) return;
             EmbeddedStorageManager started = null;
             try {
@@ -159,21 +153,7 @@ public class MemoryStore implements AutoCloseable {
         }
     }
 
-    private void completeSchema() {
-        boolean changed = false;
-        if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); changed = true; }
-        if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); changed = true; }
-        if (root.corrections == null) { root.corrections = GigaMap.New(); changed = true; }
-        if (root.working == null) { root.working = new java.util.HashMap<>(); changed = true; }
-        if (root.stats == null) {
-            root.stats = new com.javaclaw.memory.model.MemoryStats();
-            changed = true;
-        }
-        if (changed) {
-            mgr.store(root);
-            log.info("[{}] 已补建新增记忆字段（schema 补齐）", label);
-        }
-    }
+    private void completeSchema() { MemoryStoreSchema.complete(root, mgr); }
 
     // ==================== working-memory checkpoints ====================
 
@@ -276,7 +256,7 @@ public class MemoryStore implements AutoCloseable {
     }
 
     /** 串行执行有返回值的原子读改写。 */
-    private <T> T writeCall(java.util.concurrent.Callable<T> task) {
+    <T> T writeCall(java.util.concurrent.Callable<T> task) {
         writeLock.lock();
         try {
             requireOpen();
@@ -294,15 +274,46 @@ public class MemoryStore implements AutoCloseable {
     }
 
     private void requireOpen() {
-        if (mgr == null || root == null) {
+        if (invalidated || mgr == null || root == null) {
             throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
         }
+    }
+
+    /** Close the write gate atomically with respect to all current writers. */
+    public void invalidate() {
+        writeLock.lock();
+        try { invalidated = true; }
+        finally { writeLock.unlock(); }
+    }
+
+    /** Pending raw text is persisted before any cancellable embedding/model work. */
+    public boolean addTurnOnce(Episode episode, String actor) {
+        return writeCall(() -> {
+            if (episode.turnId != null && findTurn(episode.turnId) != null) return false;
+            addPendingEpisode(episode, actor);
+            return true;
+        });
+    }
+
+    public Episode findTurn(String turnId) {
+        if (turnId == null) return null;
+        requireOpen();
+        Episode[] found = {null};
+        root.episodes.iterate(e -> { if (turnId.equals(e.turnId)) found[0] = e; });
+        if (found[0] == null) root.pendingEpisodes.iterate(e -> { if (turnId.equals(e.turnId)) found[0] = e; });
+        return found[0];
+    }
+
+    public void markDistilled(Episode episode) {
+        write(() -> { episode.distilled = true; mgr.store(episode);
+            logInternal("DISTILLED", "Episode", episode.id, "memory", ""); });
     }
 
     /** 已持有写锁，直接追加审计。 */
     private void logInternal(String op, String type, String id, String actor, String detail) {
         root.changeLog.add(new ChangeLogEntry(System.currentTimeMillis(), op, type, id, actor, detail));
         root.changeLog.store();
+        if (mutationObserver != null) mutationObserver.accept(this);
     }
 
     private static String trunc(String s) {
@@ -315,6 +326,7 @@ public class MemoryStore implements AutoCloseable {
     /** 新增事实(嵌入须已写入 {@link Fact#embedding})。 */
     public void addFact(Fact f, String actor) {
         write(() -> {
+            if (f.id != null && containsFactId(f.id)) return;
             CorrectionRecord blockedBy = unsafeModelFact(f, actor);
             if (blockedBy != null) {
                 logInternal("BLOCK_REINTRODUCE_ERROR", "Fact", blockedBy.id,
@@ -329,6 +341,17 @@ public class MemoryStore implements AutoCloseable {
             root.facts.store();
             logInternal("ADD", "Fact", f.id, actor, trunc(f.text));
         });
+    }
+
+    private boolean containsFactId(String id) {
+        boolean[] found = {false};
+        root.facts.iterate(f -> { if (id.equals(f.id)) found[0] = true; });
+        root.pendingFacts.iterate(f -> { if (id.equals(f.id)) found[0] = true; });
+        return found[0];
+    }
+
+    public void mergeFactFromSource(Fact fact, String actor, String text, String evidenceKey) {
+        MemorySourceOperations.mergeFact(this, fact, actor, evidenceKey);
     }
 
     /** 原地更新事实(通过 GigaMap.update 通知索引重建),mutator 内修改字段。 */
@@ -410,6 +433,8 @@ public class MemoryStore implements AutoCloseable {
      * 避免有效事实被挤到窗口外导致召回静默不足 topK。
      */
     public List<Scored<Fact>> searchFacts(float[] query, int topK, double threshold) {
+        if (invalidated) requireOpen();
+        if (!isOpen()) return List.of();
         if (factIndex == null || query == null || topK <= 0) return new ArrayList<>();
         int fetch = topK + SUPERSEDE_OVERFETCH;
         for (int attempt = 0; ; attempt++) {
@@ -428,6 +453,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部事实(只读快照,供 UI/蒸馏去重遍历)。 */
     public List<Fact> allFacts() {
+        requireOpen();
         List<Fact> out = new ArrayList<>();
         root.facts.iterate(out::add);
         return out;
@@ -494,6 +520,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部纠错记录（只读快照，含已撤销项，调用方按状态过滤）。 */
     public List<CorrectionRecord> allCorrections() {
+        requireOpen();
         List<CorrectionRecord> out = new ArrayList<>();
         root.corrections.iterate(out::add);
         return out;
@@ -504,6 +531,7 @@ public class MemoryStore implements AutoCloseable {
     /** 降级新增事实到 pending 暂存区(嵌入不可用时,纯文本落库、不进向量索引)。 */
     public void addPendingFact(Fact f, String actor) {
         write(() -> {
+            if (f.id != null && containsFactId(f.id)) return;
             CorrectionRecord blockedBy = unsafeModelFact(f, actor);
             if (blockedBy != null) {
                 logInternal("BLOCK_REINTRODUCE_ERROR", "Fact", blockedBy.id,
@@ -547,6 +575,8 @@ public class MemoryStore implements AutoCloseable {
     public boolean promotePendingFact(Fact f, float[] embedding, String actor) {
         return writeCall(() -> {
             if (!f.pending) return false; // 并发迁回时保持幂等，避免同一对象重复入正式索引
+            if (!f.userEdited && !f.userAsserted && ("DISTILLED_LOW_CONFIDENCE".equals(f.sourceKind)
+                    || "DISTILLED_UNVERIFIED".equals(f.sourceKind))) return false;
             CorrectionRecord blockedBy = unsafeModelFact(f, actor);
             if (blockedBy != null) {
                 root.pendingFacts.removeById(f.entityId);
@@ -568,6 +598,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部 pending 事实(只读快照)。 */
     public List<Fact> allPendingFacts() {
+        requireOpen();
         List<Fact> out = new ArrayList<>();
         root.pendingFacts.iterate(out::add);
         return out;
@@ -603,6 +634,8 @@ public class MemoryStore implements AutoCloseable {
     }
 
     public List<Scored<Episode>> searchEpisodes(float[] query, int topK, double threshold) {
+        if (invalidated) requireOpen();
+        if (!isOpen()) return List.of();
         return search(episodeIndex, query, topK, threshold);
     }
 
@@ -611,6 +644,7 @@ public class MemoryStore implements AutoCloseable {
      * 供习惯回顾蒸馏批量归纳"上次回顾之后"的新对话。
      */
     public List<Episode> episodesSince(long since, int limit) {
+        requireOpen();
         List<Episode> out = new ArrayList<>();
         root.episodes.iterate(e -> { if (e.timestamp > since) out.add(e); });
         root.pendingEpisodes.iterate(e -> { if (e.timestamp > since) out.add(e); });
@@ -620,6 +654,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 上次习惯回顾时间戳(0 = 从未回顾)。 */
     public long lastHabitReviewAt() {
+        requireOpen();
         return root.stats.lastHabitReviewAt;
     }
 
@@ -634,6 +669,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部情景(只读快照,供记忆图谱构建/列举)。 */
     public List<Episode> allEpisodes() {
+        requireOpen();
         List<Episode> out = new ArrayList<>();
         root.episodes.iterate(out::add);
         return out;
@@ -680,6 +716,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部 pending 情景(只读快照)。 */
     public List<Episode> allPendingEpisodes() {
+        requireOpen();
         List<Episode> out = new ArrayList<>();
         root.pendingEpisodes.iterate(out::add);
         return out;
@@ -715,6 +752,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部实体节点(只读快照,供记忆图谱构建/列举)。 */
     public List<EntityNode> allEntities() {
+        requireOpen();
         List<EntityNode> out = new ArrayList<>();
         root.entities.iterate(out::add);
         return out;
@@ -737,6 +775,7 @@ public class MemoryStore implements AutoCloseable {
 
     /** 全部知识分块(只读快照,供关键词降级检索/列举)。 */
     public List<KnowledgeChunk> allKnowledge() {
+        requireOpen();
         List<KnowledgeChunk> out = new ArrayList<>();
         root.knowledge.iterate(out::add);
         return out;
@@ -781,6 +820,7 @@ public class MemoryStore implements AutoCloseable {
     // ==================== 人格 ====================
 
     public Persona getPersona() {
+        requireOpen();
         return root.persona;
     }
 
@@ -818,6 +858,7 @@ public class MemoryStore implements AutoCloseable {
     }
 
     public List<ChangeLogEntry> recentChangeLog(int limit) {
+        requireOpen();
         List<ChangeLogEntry> all = new ArrayList<>();
         root.changeLog.iterate(all::add);
         all.sort((a, b) -> Long.compare(b.timestamp, a.timestamp));
@@ -842,7 +883,20 @@ public class MemoryStore implements AutoCloseable {
 
     public MemoryRoot root() { return root; }
 
-    public boolean isOpen() { return mgr != null; }
+    public void observeMutations(java.util.function.Consumer<MemoryStore> observer) { mutationObserver = observer; }
+    public void withProjectionLock(Runnable operation) { write(operation); }
+    public void persistProjectionState() { write(() -> { mgr.store(root); mgr.store(root.pendingGraphSnapshots); mgr.store(root.migratedIds); }); }
+    public void restoreSnapshot(com.javaclaw.memory.graph.MemoryGraphSnapshot snapshot) {
+        writeCall(() -> { MemorySnapshotStore.restore(this, snapshot); return null; });
+    }
+    EmbeddedStorageManager manager() { return mgr; }
+    void replaceRoot(MemoryRoot replacement) { root = replacement; mgr.setRoot(root); mgr.storeRoot();
+        completeSchema(); ensureIdentityIndex(root.facts, FACT_ID); ensureIdentityIndex(root.pendingFacts, FACT_ID);
+        ensureIdentityIndex(root.corrections, CORRECTION_ID); ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
+        factIndex = ensureIndex(root.facts, new FactVectorizer()); episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
+        knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer()); }
+
+    public boolean isOpen() { return mgr != null && !invalidated; }
 
     public String label() { return label; }
 }

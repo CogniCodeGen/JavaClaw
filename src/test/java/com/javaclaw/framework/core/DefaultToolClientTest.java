@@ -18,8 +18,71 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class DefaultToolClientTest {
+
+    @Test
+    void persistedNodeInvocationReplaysCompletedResultAndBlocksUnknownSideEffects() throws Exception {
+        Clock clock = Clock.systemUTC();
+        var json = new ObjectMapper().findAndRegisterModules();
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:tool-replay-" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
+        new com.javaclaw.platform.data.SchemaInitializer(source).initialize();
+        var runs = new com.javaclaw.framework.store.JdbcRunStore(new org.springframework.jdbc.core.JdbcTemplate(source),
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(source), json, clock);
+        RunId owner = RunId.random();
+        RunScope scope = new RunScope("workspace", "workflow", "thread");
+        RunRequest request = RunRequest.builder().agent(AgentDefinitionRef.latest("system.default"))
+                .profile(RunProfileRef.latest("chat")).source(InvocationSource.workflow("graph"))
+                .scope(scope).input(InputBlock.text("execute node")).permissionCeiling(PermissionSet.UNRESTRICTED).build();
+        var empty = JsonNodeFactory.instance.objectNode();
+        runs.create(owner, request, "plan", new RunEventDraft("core.run.created", 1, "test", null, null, empty));
+        runs.append(owner, Set.of(RunState.CREATED), RunState.RUNNING,
+                new RunEventDraft("core.run.started", 1, "test", null, null, empty), null, null);
+        var events = StepEvents.durableSink(runs, owner);
+        String invocation = "graph:node:save:visit:1";
+        var arguments = JsonNodeFactory.instance.objectNode().put("value", 1);
+        var input = JsonNodeFactory.instance.objectNode().put("tool", "save").put("invocationId", invocation);
+        input.set("arguments", arguments);
+        StepId first = StepId.tool(owner, invocation);
+        StepEvents.started(events, first, AgentStep.Kind.TOOL, input, null);
+        var output = JsonNodeFactory.instance.objectNode().put("durationMillis", 3);
+        output.set("rawOutput", JsonNodeFactory.instance.objectNode().put("secret", "raw"));
+        output.set("modelOutput", JsonNodeFactory.instance.objectNode().put("summary", "saved"));
+        StepEvents.completed(events, first, output, null);
+        var extensions = new ExtensionManager(new ExtensionContext(clock, Runnable::run,
+                ignored -> CompletableFuture.failedFuture(new AssertionError("no model task"))));
+        try {
+            AgentDefinitionResolver definitions = new AgentDefinitionResolver() {
+                @Override public AgentDefinition resolveAgent(String workspace, AgentDefinitionRef ref) {
+                    throw new AssertionError("replay must not compile or execute a new plan");
+                }
+                @Override public RunProfile resolveProfile(String workspace, RunProfileRef ref) {
+                    throw new AssertionError("replay must not compile a profile");
+                }
+            };
+            DefaultToolClient client = new DefaultToolClient(ignored -> {
+                throw new AssertionError("completed or ambiguous side effects must not execute again");
+            }, new AgentCompiler(definitions, extensions, json), clock,
+                    (challenge, run) -> CompletableFuture.failedFuture(new AssertionError("no approval")), runs, null);
+            ToolCallRequest call = new ToolCallRequest(scope, InvocationSource.workflow("graph"), "save", arguments,
+                    PermissionSet.UNRESTRICTED, RunBudget.UNBOUNDED, "graph", () -> false, Set.of("test"), owner, invocation);
+            var result = client.invoke(call).toCompletableFuture().get();
+            assertEquals("saved", result.output().path("summary").asText());
+            String unknown = "graph:node:save:visit:2";
+            StepEvents.started(events, StepId.tool(owner, unknown), AgentStep.Kind.TOOL, input, null);
+            var next = new ToolCallRequest(scope, call.source(), "save", arguments, call.permissionCeiling(),
+                    call.budget(), "graph", () -> false, Set.of("test"), owner, unknown);
+            var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> client.invoke(next).toCompletableFuture().get());
+            assertInstanceOf(ToolRecoveryRequiredException.class, failure.getCause());
+        } finally {
+            extensions.close();
+        }
+    }
 
     @Test
     void cancellingPublishedStageCannotSkipRunResourceCleanup() {

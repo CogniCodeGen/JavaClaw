@@ -39,4 +39,6 @@ public interface GraphCheckpointStore {
     GraphState loadThreadState(String workflowId, String threadId);
     void saveThreadState(String workflowId, String threadId, GraphState state);
     int markRunningAsRecoveryRequired();
+    /** Permanently removes one exact coordinator's runs, checkpoints and reusable state. */
+    default void deleteThread(String threadId) { }
 }

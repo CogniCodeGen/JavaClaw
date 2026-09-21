@@ -47,6 +47,17 @@ public class MemoryRoot {
     /** Working-memory checkpoints keyed by conversation or agent id. */
     public Map<String, AgentCheckpoint> working = new HashMap<>();
 
+    /** Durable idempotency ledger for completed source turns and maintenance operations. */
+    public java.util.Set<String> appliedOperations = new java.util.HashSet<>();
+    /** Migration assignments hide copied source text from the live legacy viewer. */
+    public java.util.Set<String> migratedIds = new java.util.HashSet<>();
+    /** Durable bridge outbox; values are immutable graph snapshots pending the H2 journal. */
+    public Map<String, String> pendingGraphSnapshots = new HashMap<>();
+    public long graphVersion;
+    public boolean historyRecovered;
+    /** Highest authoritative thread event inspected before serving graph recall. */
+    public long observedThreadSequence;
+
     /** 人格(可空,未设置时由上层注入默认) */
     public Persona persona;
 

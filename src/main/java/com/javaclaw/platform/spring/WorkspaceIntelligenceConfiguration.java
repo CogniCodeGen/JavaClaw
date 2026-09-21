@@ -196,10 +196,12 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.framework.api.AgentClient agents,
             com.javaclaw.memory.MemoryService memory,
             com.javaclaw.runtime.WorkspaceContext workspace,
-            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
+            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor,
+            com.javaclaw.framework.api.ThreadClient threads,
+            com.javaclaw.framework.api.StepClient steps) {
         return new ChatService(options.browserManager(), workflows, siteCredentials,
                 skillCurator, taskScope,
-                agents, memory, workspace, executor);
+                agents, memory, workspace, executor, threads).bindStepClient(steps);
     }
 
     @Bean(destroyMethod = "close")
@@ -208,7 +210,9 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.memory.embed.EmbeddingGateway embeddings,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             com.javaclaw.config.AgentConfig settings,
-            WorkspaceContext workspace) {
+            WorkspaceContext workspace,
+            ObjectMapper json,
+            com.javaclaw.framework.store.JdbcThreadStore threadStore) {
         var memory = new com.javaclaw.memory.MemoryService(
                 modelTasks, embeddings, tasks, settings);
         memory.setOnEmbeddingDegraded(reason -> {
@@ -220,7 +224,12 @@ class WorkspaceIntelligenceConfiguration {
             }
         });
         memory.open(workspace.globalDataRoot().resolve("memory-stores")
-                .resolve(workspace.workspaceId()));
+                .resolve(workspace.workspaceId()), workspace.workspaceId(), "local-user");
+        memory.bindThreadJournal(json, threadStore, threadStore);
+        memory.migrateLegacy(json, id -> threadStore.find(new com.javaclaw.framework.api.RunScope(
+                        workspace.workspaceId(), "local-user", id))
+                .filter(thread -> thread.status() == com.javaclaw.framework.api.ThreadStatus.ACTIVE
+                        || thread.status() == com.javaclaw.framework.api.ThreadStatus.ARCHIVED).isPresent());
         return memory;
     }
 
@@ -368,8 +377,9 @@ class WorkspaceIntelligenceConfiguration {
     com.javaclaw.schedule.FrameworkScheduledTaskRunner scheduledTaskRunner(
             com.javaclaw.framework.api.AgentClient agents,
             com.javaclaw.runtime.WorkspaceContext workspace,
-            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
-        return new com.javaclaw.schedule.FrameworkScheduledTaskRunner(agents, workspace, executor);
+            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor,
+            com.javaclaw.framework.api.StepClient steps) {
+        return new com.javaclaw.schedule.FrameworkScheduledTaskRunner(agents, workspace, executor).bindStepClient(steps);
     }
 
     @Bean(destroyMethod = "shutdown")

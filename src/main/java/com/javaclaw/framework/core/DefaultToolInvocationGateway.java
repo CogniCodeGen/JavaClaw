@@ -10,6 +10,8 @@ import com.javaclaw.framework.spi.ToolPolicyDecision;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
 import com.javaclaw.framework.api.ToolApprovalGrant;
 import com.javaclaw.framework.api.ToolApprovalScope;
+import com.javaclaw.framework.api.AgentStep;
+import com.javaclaw.framework.api.StepId;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -96,6 +98,12 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
         started.put("invocationId", request.context().invocationId());
         started.put("fingerprint", fingerprint);
         started.set("arguments", request.arguments());
+        StepId stepId = StepId.tool(request.context().runId(), request.context().invocationId());
+        String invocationId = request.context().invocationId();
+        String causation = request.context().causationStepId();
+        if (causation == null && invocationId.startsWith("model/") && invocationId.indexOf('/', 6) > 6)
+            causation = invocationId.substring(6, invocationId.indexOf('/', 6));
+        StepEvents.started(request.events(), stepId, AgentStep.Kind.TOOL, started, causation);
         request.events().emit("core.tool.started", 1, "framework.core", started);
         Instant startedAt = clock.instant();
 
@@ -148,7 +156,13 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
                         completed.put("invocationId", request.context().invocationId());
                         completed.put("durationMillis", value.duration().toMillis());
                         completed.set("output", value.rawOutput());
+                        completed.set("modelOutput", value.output());
                         completed.put("modelViewChanged", !value.rawOutput().equals(value.output()));
+                        ObjectNode stepOutput = JsonNodeFactory.instance.objectNode();
+                        stepOutput.set("rawOutput", value.rawOutput());
+                        stepOutput.set("modelOutput", value.output());
+                        stepOutput.put("durationMillis", value.duration().toMillis());
+                        StepEvents.completed(request.events(), stepId, stepOutput, null);
                         request.events().emit("core.tool.completed", 1, "framework.core", completed);
                     }
                     published.complete(new ToolInvocationResult(value.output(), value.duration()));
@@ -162,6 +176,11 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
                         completed.put("waitingInput", true);
                         completed.set("output", input.context());
                         completed.put("modelViewChanged", false);
+                        ObjectNode stepOutput = JsonNodeFactory.instance.objectNode();
+                        stepOutput.set("rawOutput", input.context());
+                        stepOutput.set("modelOutput", input.context());
+                        stepOutput.put("waitingInput", true);
+                        StepEvents.completed(request.events(), stepId, stepOutput, null);
                         request.events().emit(
                                 "core.tool.completed", 1, "framework.core", completed);
                     }
@@ -185,13 +204,17 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
     }
 
     private static JsonNode executeTool(ToolInvocationRequest request) throws Exception {
-        return Objects.requireNonNull(
+        String directory = request.runRequest().attributes().getOrDefault("workDir",
+                com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText();
+        return com.javaclaw.util.ProjectAccessPolicy.withWorkingDirectory(directory, () -> Objects.requireNonNull(
                 request.tool().execute(request.arguments(), request.context()),
-                "tool output").deepCopy();
+                "tool output").deepCopy());
     }
 
     private static void emitFailure(
             ToolInvocationRequest request, String toolName, Throwable failure) {
+        StepEvents.failed(request.events(),
+                StepId.tool(request.context().runId(), request.context().invocationId()), failure);
         ObjectNode payload = JsonNodeFactory.instance.objectNode();
         payload.put("tool", toolName);
         payload.put("invocationId", request.context().invocationId());

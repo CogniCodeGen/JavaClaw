@@ -51,7 +51,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -70,8 +69,9 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
     private final SddTokenSink tokens;
     private final com.fasterxml.jackson.databind.ObjectMapper json;
     private final Set<RunId> activeRuns = ConcurrentHashMap.newKeySet();
-    private final AtomicInteger sequence = new AtomicInteger();
     private volatile RunId lastRunId;
+    private volatile RunId ownerRunId;
+    private com.javaclaw.framework.api.ManagedTurn coordinator;
     private volatile long structuredTimeoutSec = 120;
     private volatile long execTimeoutSec = 300;
     private volatile int execMaxIters = 12;
@@ -109,6 +109,49 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
 
     public RunId lastRunId() {
         return lastRunId;
+    }
+
+    public RunId ownerRunId() { return ownerRunId; }
+
+    public void closeCoordinator() { if (coordinator != null) coordinator.close(); }
+
+    public void pauseCoordinator(String reason) { if (coordinator != null) coordinator.pause(reason); }
+
+    public void bindOwner(RunId value) { ownerRunId = value; }
+
+    public void beginCoordinator(TaskContext ctx) {
+        if (!agents.supportsManagedTurns()) return;
+        coordinator = agents.beginTurn(RunRequest.builder()
+                .agent(AgentDefinitionRef.latest("system.default"))
+                .profile(RunProfileRef.latest("sdd"))
+                .source(InvocationSource.sdd(ctx.id()))
+                .scope(new RunScope(workspace.workspaceId(), "local-user", "sdd:" + ctx.id()))
+                .input(InputBlock.text(ctx.description()))
+                .permissionCeiling(PermissionSet.UNRESTRICTED)
+                .idempotencyKey("sdd:" + ctx.id() + ":coordinator")
+                .attributes(Map.of("framework.managedTaskId", JsonNodeFactory.instance.textNode(ctx.id())))
+                .build());
+        ownerRunId = coordinator.id();
+        try {
+            coordinator.ready().toCompletableFuture().join();
+            if (coordinator.completion().toCompletableFuture().isDone()) {
+                throw new IllegalStateException("SDD 协调轮次已经结束");
+            }
+        } catch (RuntimeException | Error failure) {
+            coordinator.close();
+            throw failure;
+        }
+    }
+
+    public void finishCoordinator(com.javaclaw.task.sdd.SddOutcome outcome) {
+        if (coordinator == null) return;
+        var output = JsonNodeFactory.instance.objectNode().put("text", outcome.message());
+        switch (outcome.result()) {
+            case COMPLETED -> coordinator.complete(output);
+            case FAILED -> coordinator.fail(new IllegalStateException(outcome.message()));
+            case CANCELLED -> agents.cancel(coordinator.id(), new CancelReason("SDD_CANCELLED", outcome.message()));
+            case NEEDS_HUMAN -> coordinator.waitingInput(output, outcome.message());
+        }
     }
 
     public boolean cancelled() {
@@ -255,7 +298,8 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
             TaskContext ctx, String phase, String system, String user,
             long timeoutSeconds, boolean toolsEnabled) {
         if (closed) throw new IllegalStateException("SDD agent adapter is closed");
-        int call = sequence.incrementAndGet();
+        String operation = java.util.UUID.nameUUIDFromBytes((phase + "\0" + user)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         Duration timeout = Duration.ofSeconds(Math.max(1, timeoutSeconds));
         ObjectNode systemNode = JsonNodeFactory.instance.objectNode();
         Map<String, JsonNode> attributes = new java.util.LinkedHashMap<>();
@@ -267,23 +311,24 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
                 .agent(AgentDefinitionRef.latest("system.default"))
                 .profile(RunProfileRef.latest("sdd"))
                 .source(InvocationSource.sdd(ctx.id()))
-                .scope(new RunScope(workspace.workspaceId(), "local-user", "sdd:" + ctx.id()))
+                .scope(new RunScope(workspace.workspaceId(), "local-user",
+                        "sdd:" + ctx.id() + ":" + phase))
                 .input(InputBlock.text(user))
-                .linkage(new RunLinkage(null, ctx.id(), ctx.id()))
+                .linkage(new RunLinkage(ownerRunId, ctx.id(), ctx.id()))
                 .permissionCeiling(toolsEnabled ? PermissionSet.UNRESTRICTED : PermissionSet.NONE)
                 .budget(new RunBudget(timeout, Long.MAX_VALUE, Long.MAX_VALUE,
                         Math.max(1, execMaxIters * 8), new BigDecimal("1E+100")))
-                .idempotencyKey("sdd:" + ctx.id() + ":" + phase + ":" + call)
+                .idempotencyKey("sdd:" + ctx.id() + ":" + ownerRunId + ":" + operation)
                 .attributes(attributes)
                 .build();
-        RunHandle handle = agents.start(request);
+        RunHandle handle = com.javaclaw.application.agent.ChildTurnContinuation.start(agents, request);
         lastRunId = handle.id();
         activeRuns.add(handle.id());
         Usage usage = new Usage();
         Disposable events = handle.events(0).subscribe(event -> onEvent(ctx, handle, usage, event));
         try {
-            RunOutcome outcome = handle.completion().toCompletableFuture()
-                    .get(timeout.plusSeconds(5).toMillis(), TimeUnit.MILLISECONDS);
+            RunOutcome outcome = com.javaclaw.application.agent.ChildTurnContinuation.await(
+                    agents, handle, timeout.plusSeconds(5), () -> { });
             if (outcome.state() != RunState.COMPLETED) {
                 throw new IllegalStateException("SDD " + phase + " run " + outcome.state()
                         + ": " + outcome.error());
@@ -297,6 +342,8 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
             if (output == null) return "";
             String text = output.path("text").asText("");
             return text.isBlank() ? output.path("value").asText("") : text;
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            throw paused;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             agents.cancel(handle.id(), new CancelReason("SDD_INTERRUPTED", phase));

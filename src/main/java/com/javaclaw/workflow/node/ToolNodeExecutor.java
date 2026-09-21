@@ -85,12 +85,13 @@ public final class ToolNodeExecutor implements NodeExecutor {
                 ? PermissionSet.of("tool.read", "tool.execute")
                 : PermissionSet.of("tool.read");
         ToolCallRequest request = new ToolCallRequest(
-                new RunScope(workspace.workspaceId(), "workflow", context.threadId()),
+                new RunScope(workspace.workspaceId(), "local-user", context.threadId()),
                 InvocationSource.workflow(context.runId()), toolName, arguments, permissions,
                 new RunBudget(Duration.ofSeconds(timeoutSeconds), 0, 0, 1,
                         new BigDecimal("10")), context.runId(),
                 context.cancellation(),
-                Set.copyOf(WorkflowToolGroupPolicy.read(config.path("toolGroups"))));
+                Set.copyOf(WorkflowToolGroupPolicy.read(config.path("toolGroups"))),
+                context.ownerRunId(), context.invocationId(), context.orchestrationStepId());
         ToolCallOutcome outcome;
         try {
             // The ToolClient stage settles only after its managed task has really terminated
@@ -98,6 +99,7 @@ public final class ToolNodeExecutor implements NodeExecutor {
             outcome = tools.invoke(request).toCompletableFuture().join();
         } catch (CompletionException failure) {
             Throwable cause = unwrap(failure);
+            if (cause instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
             if (cause instanceof TimeoutException timeout) {
                 throw new IllegalStateException("工具节点执行超时: " + toolName, timeout);
             }

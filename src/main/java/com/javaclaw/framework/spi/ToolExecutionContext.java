@@ -8,4 +8,9 @@ public record ToolExecutionContext(
         RunId runId,
         String invocationId,
         CancellationToken cancellation,
-        Instant deadline) {}
+        Instant deadline,
+        String causationStepId) {
+    public ToolExecutionContext(RunId runId, String invocationId, CancellationToken cancellation, Instant deadline) {
+        this(runId, invocationId, cancellation, deadline, null);
+    }
+}

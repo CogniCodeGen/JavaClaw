@@ -16,6 +16,10 @@
     <fx:define>
         <ContextMenu fx:id="rowMenu">
             <items>
+                <MenuItem fx:id="resumeItem" text="恢复会话" onAction="#onResumeRequested"/>
+                <MenuItem fx:id="forkItem" text="从最后一轮创建分支" onAction="#onForkRequested"/>
+                <MenuItem fx:id="archiveItem" text="归档会话" onAction="#onArchiveRequested"/>
+                <MenuItem fx:id="inspectItem" text="查看执行轮次与步骤" onAction="#onInspectRequested"/>
                 <MenuItem fx:id="deleteItem" text="删除会话" onAction="#onDeleteRequested"
                           styleClass="menu-item-danger"/>
             </items>

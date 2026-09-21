@@ -156,6 +156,9 @@ public final class AgentCompiler {
             }
 
             String modelPolicyRef = definition.modelPolicyRef();
+            String threadModel = request.attributes().getOrDefault("framework.threadModelPolicy",
+                    com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText();
+            if (!threadModel.isBlank()) modelPolicyRef = threadModel;
             for (OwnedContribution<ModelPolicy> owned : selectedContributions.modelPolicies()) {
                 if (!selectedIds.contains(owned.extensionId())) continue;
                 var modelContext = json.createObjectNode();

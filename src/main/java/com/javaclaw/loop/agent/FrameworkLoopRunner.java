@@ -60,10 +60,13 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
     private final String workDir;
     private final Duration iterationTimeout;
     private final ToolCallOrigin origin;
+    private final RunId ownerRunId;
+    private final com.javaclaw.framework.api.ManagedTurn coordinator;
     private final AtomicInteger iteration = new AtomicInteger();
     private final AtomicReference<RunHandle> active = new AtomicReference<>();
     private volatile RunId lastRunId;
     private volatile boolean closed;
+    private volatile boolean suspended;
 
     public FrameworkLoopRunner(
             AgentClient agents,
@@ -73,21 +76,59 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
             String systemPrompt,
             String workDir,
             long iterationTimeoutSeconds) {
+        this(agents, workspace, sessionId, loopId, systemPrompt, workDir,
+                iterationTimeoutSeconds, null);
+    }
+
+    public FrameworkLoopRunner(AgentClient agents, WorkspaceContext workspace, String sessionId,
+            String loopId, String systemPrompt, String workDir, long iterationTimeoutSeconds,
+            RunId parentRunId) {
         this.agents = Objects.requireNonNull(agents, "agents");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
-        this.sessionId = sessionId == null || sessionId.isBlank() ? loopId : sessionId;
+        this.sessionId = "loop:" + loopId + ":worker";
         this.loopId = Objects.requireNonNull(loopId, "loopId");
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
         this.workDir = workDir;
         this.iterationTimeout = Duration.ofSeconds(Math.max(1, iterationTimeoutSeconds));
         this.origin = ToolCallOrigin.managedTask(loopId, workDir);
+        this.coordinator = parentRunId == null && agents.supportsManagedTurns()
+                ? agents.beginTurn(RunRequest.builder()
+                        .agent(AgentDefinitionRef.latest("system.default"))
+                        .profile(RunProfileRef.latest("loop"))
+                        .source(InvocationSource.loop(loopId))
+                        .scope(new RunScope(workspace.workspaceId(), "local-user", "loop:" + loopId))
+                        .input(InputBlock.text(this.systemPrompt))
+                        .permissionCeiling(PermissionSet.UNRESTRICTED)
+                        .idempotencyKey("loop:" + loopId + ":coordinator")
+                        .attributes(Map.of("framework.managedTaskId",
+                                JsonNodeFactory.instance.textNode(loopId)))
+                        .build()) : null;
+        this.ownerRunId = parentRunId != null ? parentRunId
+                : coordinator == null ? null : coordinator.id();
+        if (coordinator != null) {
+            try {
+                coordinator.ready().toCompletableFuture().join();
+                if (coordinator.completion().toCompletableFuture().isDone()) {
+                    throw new IllegalStateException("循环协调轮次已经结束");
+                }
+            } catch (RuntimeException | Error failure) {
+                coordinator.close();
+                throw failure;
+            }
+        }
     }
 
     @Override
     public IterationResult runOnce(String prompt, ConversationCallbacks callbacks) {
         if (closed) return IterationResult.failed();
         int number = iteration.incrementAndGet();
-        RunHandle handle = agents.start(request(prompt, number));
+        RunHandle handle;
+        try {
+            handle = com.javaclaw.application.agent.ChildTurnContinuation.start(agents, request(prompt, number));
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            suspended = true;
+            throw paused;
+        }
         lastRunId = handle.id();
         if (!active.compareAndSet(null, handle)) {
             agents.cancel(handle.id(), new CancelReason("LOOP_CONCURRENT_ITERATION", loopId));
@@ -99,8 +140,8 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                 event -> onEvent(handle, callbacks, capture, event),
                 failure -> capture.failure.compareAndSet(null, failure));
         try {
-            RunOutcome outcome = handle.completion().toCompletableFuture().get(
-                    iterationTimeout.plusSeconds(5).toMillis(), TimeUnit.MILLISECONDS);
+            RunOutcome outcome = com.javaclaw.application.agent.ChildTurnContinuation.await(
+                    agents, handle, iterationTimeout.plusSeconds(5), () -> { });
             if (outcome.state() != RunState.COMPLETED) {
                 log.warn("循环第 {} 轮 Run {} 未成功：{} {}", number, handle.id(),
                         outcome.state(), outcome.error());
@@ -121,6 +162,9 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                     capture.inputTokens, capture.outputTokens));
             return IterationResult.ok(reply, capture.inputTokens, capture.outputTokens,
                     List.copyOf(capture.toolCalls), capture.report.get());
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            suspended = true;
+            throw paused;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             agents.cancel(handle.id(), new CancelReason("LOOP_INTERRUPTED", loopId));
@@ -151,7 +195,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                 .source(InvocationSource.loop(loopId))
                 .scope(new RunScope(workspace.workspaceId(), "local-user", sessionId))
                 .input(InputBlock.text(prompt == null ? "" : prompt))
-                .linkage(new RunLinkage(null, loopId, loopId))
+                .linkage(new RunLinkage(ownerRunId, loopId, loopId))
                 .permissionCeiling(PermissionSet.UNRESTRICTED)
                 .budget(budget)
                 .idempotencyKey(loopId + ":iteration:" + number)
@@ -230,6 +274,29 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
         if (handle != null) {
             agents.cancel(handle.id(), new CancelReason("LOOP_CANCELLED", loopId));
         }
+        if (coordinator != null && !suspended && !coordinator.completion().toCompletableFuture().isDone()) {
+            agents.cancel(coordinator.id(), new CancelReason("LOOP_CANCELLED", loopId));
+        }
+    }
+
+    public RunId ownerRunId() { return ownerRunId; }
+
+    public void finish(com.javaclaw.api.conversation.ConversationOutcome outcome) {
+        if (coordinator == null) return;
+        switch (outcome) {
+            case com.javaclaw.api.conversation.ConversationOutcome.WaitingInput waiting ->
+                    coordinator.waitingInput(JsonNodeFactory.instance.objectNode(), waiting.reason());
+            case com.javaclaw.api.conversation.ConversationOutcome.Completed ignored ->
+                    coordinator.complete(JsonNodeFactory.instance.objectNode().put("text", "循环已完成"));
+            case com.javaclaw.api.conversation.ConversationOutcome.Failed failure -> {
+                if (failure.error() instanceof com.javaclaw.framework.api.TurnPausedException) {
+                    suspended = true;
+                    coordinator.pause(failure.error().getMessage());
+                } else coordinator.fail(failure.error());
+            }
+            case com.javaclaw.api.conversation.ConversationOutcome.Cancelled ignored ->
+                    agents.cancel(coordinator.id(), new CancelReason("LOOP_CANCELLED", loopId));
+        }
     }
 
     /** Owner used by post-iteration ModelTaskGateway critic calls. */
@@ -244,6 +311,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
     @Override
     public void close() {
         shutdown();
+        if (coordinator != null) coordinator.close();
     }
 
     private static final class Capture {

@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** 自定义工作流门面：定义、发布、会话 thread、运行及聊天事件桥。 */
-public final class WorkflowService implements AutoCloseable {
+public final class WorkflowService implements AutoCloseable, com.javaclaw.framework.spi.ThreadLifecycleListener {
     private static final Logger log = LoggerFactory.getLogger(WorkflowService.class);
     private final String workspaceId;
     private final PlaywrightBrowserManager browsers;
@@ -51,6 +51,36 @@ public final class WorkflowService implements AutoCloseable {
     private final ConcurrentHashMap<String, PendingRecovery> pendingRecoveryByThread = new ConcurrentHashMap<>();
     /** 自定义工作流 thread 对应的浏览器会话；避免它继承最近一次聊天的账号状态。 */
     private final ConcurrentHashMap<String, String> browserScopeByThread = new ConcurrentHashMap<>();
+    private com.javaclaw.framework.api.ThreadClient threads;
+
+    public WorkflowService bindThreadClient(com.javaclaw.framework.api.ThreadClient client) {
+        threads = Objects.requireNonNull(client, "client");
+        return this;
+    }
+
+    @Override public boolean accepts(com.javaclaw.framework.api.RunScope scope) {
+        return workspaceId.equals(scope.workspaceId()) && "local-user".equals(scope.userId());
+    }
+
+    @Override public void deleting(com.javaclaw.framework.api.RunScope scope) {
+        if (!accepts(scope)) return;
+        String thread = scope.sessionId();
+        PendingRecovery pending = pendingRecoveryByThread.remove(thread);
+        if (pending != null) {
+            pending.cancelled().set(true);
+            pending.cancelConfirmationTask();
+            if (pending.terminalSent().compareAndSet(false, true)) sendCancelled(pending.callbacks());
+        }
+        executions.deleteThread(thread);
+        activeByThread.remove(thread);
+        browserScopeByThread.remove(thread);
+    }
+
+    /** Binds framework lifecycle accounting after workspace services have been assembled. */
+    public WorkflowService bindAgentClient(com.javaclaw.framework.api.AgentClient agents) {
+        executions.bindAgentClient(agents, workspaceId);
+        return this;
+    }
 
     public WorkflowService(String workspaceId, PlaywrightBrowserManager browsers,
                            com.javaclaw.site.SiteCredentialManager siteCredentials,
@@ -88,6 +118,7 @@ public final class WorkflowService implements AutoCloseable {
             throw new IllegalStateException("工作流未发布或已归档: " + workflowId);
         }
         String thread = threadId(sessionId, workflowId);
+        ownConversationThread(sessionId, thread, record.published().name());
         activateBrowserScope(thread, PlaywrightBrowserManager.conversationScopeId(sessionId));
         requireIdleThread(thread);
         GraphRun waiting = checkpoints.findWaitingRun(workflowId, thread);
@@ -137,6 +168,13 @@ public final class WorkflowService implements AutoCloseable {
                                            ConversationCallbacks callbacks, SystemPipeline pipeline) {
         return runSystem(graph, sessionId, input, callbacks, pipeline,
                 SystemRecoveryPolicy.RESUME_THEN_START);
+    }
+
+    /** An interactive Loop belongs to the chat task; independently managed system tasks do not. */
+    public synchronized GraphRun runConversationSystem(GraphDefinition graph, String sessionId,
+            GraphState invocation, ConversationCallbacks callbacks, SystemPipeline pipeline) {
+        ownConversationThread(sessionId, threadId(sessionId, graph.id()), graph.name());
+        return runSystem(graph, sessionId, invocation, callbacks, pipeline);
     }
 
     public synchronized GraphRun runSystem(GraphDefinition graph, String sessionId, String input,
@@ -270,6 +308,8 @@ public final class WorkflowService implements AutoCloseable {
             } else if (event instanceof GraphEvent.RunFinished e) {
                 activeByThread.remove(thread, e.runId());
                 if (e.status() == RunStatus.FAILED) sendError(callbacks, new IllegalStateException(e.error()));
+                else if (e.status() == RunStatus.RECOVERY_REQUIRED)
+                    sendError(callbacks, new com.javaclaw.framework.api.TurnPausedException(e.error()));
                 else if (e.status() == RunStatus.CANCELLED) sendCancelled(callbacks);
                 else sendComplete(callbacks);
             }
@@ -479,6 +519,15 @@ public final class WorkflowService implements AutoCloseable {
     private String threadId(String sessionId, String workflowId) {
         String session = sessionId == null || sessionId.isBlank() ? "anonymous" : sessionId;
         return workspaceId + ":" + session + ":" + workflowId;
+    }
+
+    private void ownConversationThread(String sessionId, String coordinatorId, String title) {
+        if (threads == null) return;
+        var parentScope = new com.javaclaw.framework.api.RunScope(workspaceId, "local-user", sessionId);
+        var parent = threads.start(com.javaclaw.framework.api.ThreadStartRequest.root(parentScope, "新的对话"));
+        threads.start(new com.javaclaw.framework.api.ThreadStartRequest(
+                new com.javaclaw.framework.api.RunScope(workspaceId, "local-user", coordinatorId),
+                title, parent.configuration(), parentScope, null));
     }
 
     @Override public void close() {

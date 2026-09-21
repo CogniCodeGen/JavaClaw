@@ -81,9 +81,14 @@ public final class MemoryComponentFactory {
 
     MemoryChildView<HBox> correction(
             CorrectionItem item, Consumer<String> revoke, Consumer<String> delete) {
+        return correction(item, revoke, delete, false);
+    }
+
+    MemoryChildView<HBox> correction(CorrectionItem item, Consumer<String> revoke,
+                                    Consumer<String> delete, boolean readOnly) {
         return configured("memory-correction-row.fxml", HBox.class,
                 MemoryCorrectionRowController.class,
-                controller -> controller.configure(item, revoke, delete));
+                controller -> controller.configure(item, revoke, delete, readOnly));
     }
 
     MemoryChildView<HBox> change(ChangeItem item, boolean first) {

@@ -40,7 +40,7 @@ public final class MemoryFactsController
     @FXML private VBox groups;
     @FXML private Label empty;
 
-    private final MemoryApplicationService useCases;
+    private MemoryApplicationService useCases;
     private final DialogService dialogs;
     private final MemoryFactDialogFactory factDialog;
     private final MemoryComponentFactory components;
@@ -78,6 +78,15 @@ public final class MemoryFactsController
                 .noneMatch(item -> item.section().equals(section)));
         render();
     }
+
+    @Override public void setMemoryService(MemoryApplicationService service) {
+        this.useCases = Objects.requireNonNull(service);
+        selected.clear(); expandedGroups.clear(); batchMode = false;
+    }
+    @Override public boolean readOnly() {
+        return useCases.scope() != null && useCases.scope().kind() == com.javaclaw.memory.MemoryGraphScope.Kind.LEGACY;
+    }
+    @Override public boolean isBusy() { return action.busyProperty().get(); }
 
     @FXML
     private void toggleBatchMode() {
@@ -155,6 +164,8 @@ public final class MemoryFactsController
     private void render() {
         if (snapshot == null) return;
         closeChildren();
+        addButton.setDisable(readOnly());
+        batchButton.setDisable(readOnly());
         selectedCount.setText("已选 " + selected.size() + " 条");
         batchBar.setVisible(batchMode);
         batchBar.setManaged(batchMode);

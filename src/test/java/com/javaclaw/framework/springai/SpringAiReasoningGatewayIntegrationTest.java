@@ -16,6 +16,7 @@ import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -44,6 +45,165 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SpringAiReasoningGatewayIntegrationTest {
+
+    @Test
+    void successiveApprovalResumesRetainEarlierToolMessagesAndAtomicSteps() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        AtomicInteger tools = new AtomicInteger();
+        AtomicReference<Prompt> finalPrompt = new AtomicReference<>();
+        ChatModel model = prompt -> {
+            int number = calls.incrementAndGet();
+            if (number <= 2) return namedToolCallResponse("test_mutate", "{\"value\":" + number + "}", 2, 1);
+            finalPrompt.set(prompt);
+            return textResponse("done", 2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, tools)) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            for (int number = 1; number <= 2; number++) {
+                assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
+                if (number == 2) fixture.restart();
+                var approval = JsonNodeFactory.instance.objectNode().put("approved", true)
+                        .put("fingerprint", ToolInvocationFingerprint.create("test_mutate",
+                                JsonNodeFactory.instance.objectNode().put("value", number)));
+                handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval", approval));
+            }
+            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(2, tools.get());
+            assertEquals(3, calls.get());
+            assertEquals(2, finalPrompt.get().getInstructions().stream().filter(ToolResponseMessage.class::isInstance).count());
+            var steps = new RunStepQuery(fixture.runs).steps(handle.id());
+            assertEquals(3, steps.stream().filter(step -> step.kind() == AgentStep.Kind.MODEL).count());
+            assertEquals(2, steps.stream().filter(step -> step.kind() == AgentStep.Kind.TOOL).count());
+            assertTrue(steps.stream().allMatch(step -> step.state() == AgentStep.State.COMPLETED));
+            org.junit.jupiter.api.Assertions.assertNull(steps.getFirst().causationStepId());
+            for (int index = 1; index < steps.size(); index++)
+                assertEquals(steps.get(index - 1).id().value(), steps.get(index).causationStepId());
+            assertTrue(steps.stream().filter(step -> step.kind() == AgentStep.Kind.TOOL)
+                    .allMatch(step -> step.causationStepId() != null && step.output().has("modelOutput")));
+            assertTrue(steps.stream().filter(step -> step.kind() == AgentStep.Kind.MODEL)
+                    .allMatch(step -> step.input().path("messages").isArray() && step.output().has("message")));
+        }
+    }
+
+    @Test void controlOnlyRecoveryUsesPersistedFinalResponseWithoutAnotherModelRequest() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            modelCalls.incrementAndGet(); return toolCallResponse(2, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger())) {
+            RunHandle turn = fixture.engine.start(fixture.request());
+            // Simulate a provider response durably written immediately before the process died.
+            var events = StepEvents.durableSink(fixture.runs, turn.id());
+            StepId finalStep = StepId.random();
+            StepEvents.started(events, finalStep, AgentStep.Kind.MODEL,
+                    JsonNodeFactory.instance.objectNode().set("messages", StepMessageCodec.messages(List.of(new org.springframework.ai.chat.messages.SystemMessage("test"), new UserMessage("task")))), null);
+            ChatResponse finalResponse = textResponse("already finished", 3, 1);
+            StepEvents.completed(events, finalStep, StepMessageCodec.response(finalResponse), StepMessageCodec.usage(finalResponse));
+            fixture.runs.append(turn.id(), Set.of(RunState.WAITING_APPROVAL), RunState.PAUSED,
+                    new com.javaclaw.framework.spi.RunEventDraft("core.run.paused", 1, "test", null, null,
+                            JsonNodeFactory.instance.objectNode().put("reason", "PROCESS_RESTART_REQUIRES_RESUME")), null, null);
+            fixture.restart();
+            var resumed = fixture.engine.resume(turn.id(), new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
+            assertEquals(RunState.COMPLETED, resumed.completion().toCompletableFuture().get().state());
+            assertEquals(1, modelCalls.get());
+            assertEquals("already finished", fixture.engine.get(turn.id()).output().path("text").asText());
+        }
+    }
+
+    @Test void lateProviderResponseAfterCancellationSettlesOnceAndItsParentBudgetSurvivesRestart() {
+        AtomicReference<Fixture> active = new AtomicReference<>();
+        AtomicInteger modelCalls = new AtomicInteger();
+        ChatModel ignoresCancellation = prompt -> {
+            modelCalls.incrementAndGet();
+            Fixture fixture = active.get();
+            RunId child = fixture.runs.nonTerminalRuns().stream()
+                    .filter(run -> run.request().scope().sessionId().equals("late-child"))
+                    .findFirst().orElseThrow().snapshot().id();
+            fixture.engine.cancel(child, new CancelReason("TEST", "provider still returning"));
+            return textResponse("late but billable", 7, 2);
+        };
+        try (Fixture fixture = new Fixture(ignoresCancellation, RunBudget.UNBOUNDED, new AtomicInteger())) {
+            active.set(fixture);
+            ManagedTurn parent = fixture.engine.beginTurn(fixture.request());
+            RunRequest childRequest = RunRequest.builder()
+                    .agent(AgentDefinitionRef.latest("test.agent")).profile(RunProfileRef.latest("test.profile"))
+                    .source(new InvocationSource("subagent", "late-child"))
+                    .scope(new RunScope("workspace", "user", "late-child"))
+                    .linkage(new RunLinkage(parent.id(), null, "late-charge"))
+                    .input(InputBlock.text("finish once")).permissionCeiling(PermissionSet.UNRESTRICTED).build();
+            RunHandle child = fixture.engine.start(childRequest);
+            assertEquals(RunState.CANCELLED, fixture.engine.get(child.id()).state());
+            var step = new RunStepQuery(fixture.runs).steps(child.id()).getFirst();
+            assertEquals(AgentStep.State.COMPLETED, step.state());
+            assertEquals("late but billable", step.output().path("message").path("text").asText());
+            assertEquals(7, step.usage().path("inputTokens").asLong());
+            assertEquals(7, fixture.ledger.aggregateSnapshot(parent.id()).inputTokens());
+            var events = fixture.runs.eventsAfter(child.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type().equals("core.run.cancelled")).count());
+            assertEquals(0, events.stream().filter(event -> event.type().equals("core.run.completed")).count());
+            assertEquals(1, events.stream().filter(event -> event.type().equals("core.step.completed")).count());
+            assertEquals(0, events.stream().filter(event -> event.type().equals("core.model.usage")).count());
+            parent.close();
+            fixture.restart();
+            assertEquals(7, fixture.ledger.snapshot(child.id()).inputTokens());
+            assertEquals(7, fixture.ledger.aggregateSnapshot(parent.id()).inputTokens());
+            assertEquals(1, modelCalls.get());
+        }
+    }
+
+    @Test void redactedPendingArgumentsPauseButCompletedToolsReplayWithoutParsingCredentials() throws Exception {
+        for (boolean toolCompleted : List.of(false, true)) {
+            AtomicInteger calls = new AtomicInteger(), tools = new AtomicInteger();
+            try (Fixture fixture = new Fixture(prompt -> calls.incrementAndGet() == 1
+                    ? toolCallResponse(2, 1) : textResponse("done", 2, 1), RunBudget.UNBOUNDED, tools)) {
+                RunHandle turn = fixture.engine.start(fixture.request());
+                StepId modelStep = StepId.random();
+                var events = StepEvents.durableSink(fixture.runs, turn.id());
+                StepEvents.started(events, modelStep, AgentStep.Kind.MODEL,
+                        JsonNodeFactory.instance.objectNode().set("messages", StepMessageCodec.messages(List.of(new org.springframework.ai.chat.messages.SystemMessage("test"), new UserMessage("task")))), null);
+                ChatResponse response = namedToolCallResponse("test_mutate", "{\"value\":1,\"token\":\"sk-testcredential123456789\"}", 2, 1);
+                StepEvents.completed(events, modelStep, StepMessageCodec.response(response), StepMessageCodec.usage(response));
+                assertTrue(fixture.runs.eventsAfter(turn.id(), 0).getLast().payload().path("credentialRedacted").asBoolean());
+                if (toolCompleted) {
+                    StepId tool = StepId.tool(turn.id(), "model/" + modelStep.value() + "/provider-call");
+                    StepEvents.started(events, tool, AgentStep.Kind.TOOL, JsonNodeFactory.instance.objectNode(), modelStep.value());
+                    StepEvents.completed(events, tool, JsonNodeFactory.instance.objectNode()
+                            .set("modelOutput", JsonNodeFactory.instance.objectNode().put("success", true)), null);
+                }
+                fixture.runs.append(turn.id(), Set.of(RunState.WAITING_APPROVAL), RunState.PAUSED,
+                        new RunEventDraft("core.run.paused", 1, "test", null, null,
+                                JsonNodeFactory.instance.objectNode().put("reason", "PROCESS_RESTART_REQUIRES_RESUME")), null, null);
+                fixture.restart();
+                fixture.engine.resume(turn.id(), new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
+                assertEquals(toolCompleted ? RunState.COMPLETED : RunState.PAUSED, fixture.engine.get(turn.id()).state());
+                assertEquals(toolCompleted ? 2 : 1, calls.get());
+                assertEquals(0, tools.get(), "redacted credentials must never be sent to a tool");
+                if (!toolCompleted) assertEquals("tool.recovery_required", fixture.engine.get(turn.id()).output().path("kind").asText());
+            }
+        }
+    }
+
+    @Test
+    void interruptedToolWithUnknownOutcomeIsPausedAndNeverAutomaticallyRepeated() {
+        AtomicInteger tools = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> toolCallResponse(2, 1), RunBudget.UNBOUNDED, tools)) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            AgentStep model = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.MODEL).findFirst().orElseThrow();
+            String invocation = "model/" + model.id().value() + "/provider-call";
+            StepId toolId = StepId.tool(handle.id(), invocation);
+            StepEvents.started(StepEvents.durableSink(fixture.runs, handle.id()), toolId, AgentStep.Kind.TOOL,
+                    JsonNodeFactory.instance.objectNode().put("tool", "test_mutate").put("invocationId", invocation),
+                    model.id().value());
+            var approval = JsonNodeFactory.instance.objectNode().put("approved", true)
+                    .put("fingerprint", ToolInvocationFingerprint.create("test_mutate",
+                            JsonNodeFactory.instance.objectNode().put("value", 1)));
+            fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval", approval));
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals(0, tools.get());
+            assertEquals("tool.recovery_required", fixture.engine.get(handle.id()).output().path("kind").asText());
+            assertEquals(AgentStep.State.RUNNING, new RunStepQuery(fixture.runs).step(handle.id(), toolId).orElseThrow().state());
+        }
+    }
 
     @Test
     void approvedCallExecutesExactlyOnceBeforeTheNextModelRequest() throws Exception {
@@ -207,8 +367,9 @@ class SpringAiReasoningGatewayIntegrationTest {
         private final Clock clock = Clock.systemUTC();
         private final ExtensionManager extensions;
         private final JdbcRunStore runs;
-        private final RunUsageLedger ledger = new RunUsageLedger();
-        private final AgentEngine engine;
+        private RunUsageLedger ledger = new RunUsageLedger();
+        private AgentEngine engine;
+        private final java.util.function.Function<RunUsageLedger, AgentEngine> engineFactory;
 
         private Fixture(ChatModel model, RunBudget budget, AtomicInteger toolCalls) {
             this(model, budget, toolCalls, false);
@@ -259,14 +420,22 @@ class SpringAiReasoningGatewayIntegrationTest {
                             ? ToolApprovalDecision.ALLOW
                             : ToolApprovalDecision.REQUIRE_HUMAN_APPROVAL,
                     executor, clock);
-            SpringAiReasoningGateway reasoning = new SpringAiReasoningGateway(
-                    models, new SpringAiAdvisorRegistry(), toolGateway,
-                    ExtensionStateStore.disabled(), ledger,
-                    request -> CompletableFuture.failedFuture(
-                            new AssertionError("model task not expected")),
-                    runs, json, executor, ObservationRegistry.NOOP);
-            engine = new AgentEngine(new AgentCompiler(definitions, extensions, json),
-                    runs, plans, reasoning, Runnable::run, json, clock, ledger);
+            engineFactory = currentLedger -> {
+                SpringAiReasoningGateway reasoning = new SpringAiReasoningGateway(
+                        models, new SpringAiAdvisorRegistry(), toolGateway,
+                        ExtensionStateStore.disabled(), currentLedger,
+                        request -> CompletableFuture.failedFuture(new AssertionError("model task not expected")),
+                        runs, json, executor, ObservationRegistry.NOOP);
+                return new AgentEngine(new AgentCompiler(definitions, extensions, json),
+                        runs, plans, reasoning, Runnable::run, json, clock, currentLedger);
+            };
+            engine = engineFactory.apply(ledger);
+        }
+
+        private void restart() {
+            engine.close();
+            ledger = new RunUsageLedger();
+            engine = engineFactory.apply(ledger);
         }
 
         private static ChatModel toolCapable(ChatModel delegate) {

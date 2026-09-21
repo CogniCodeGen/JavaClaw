@@ -28,6 +28,8 @@ public final class FrameworkScheduledTaskRunner implements ScheduledTaskRunner {
 
     private final AgentConversationRunner runs;
     private final RunRequestFactory requests;
+    private final AgentClient agents;
+    private com.javaclaw.framework.api.StepClient steps;
     private volatile boolean closed;
 
     public FrameworkScheduledTaskRunner(
@@ -35,7 +37,13 @@ public final class FrameworkScheduledTaskRunner implements ScheduledTaskRunner {
             WorkspaceContext workspace,
             Executor executor) {
         this.runs = new AgentConversationRunner(agents, executor);
+        this.agents = agents;
         this.requests = new RunRequestFactory(workspace);
+    }
+
+    public FrameworkScheduledTaskRunner bindStepClient(com.javaclaw.framework.api.StepClient value) {
+        steps = Objects.requireNonNull(value, "stepClient");
+        return this;
     }
 
     @Override
@@ -56,9 +64,24 @@ public final class FrameworkScheduledTaskRunner implements ScheduledTaskRunner {
                 return;
             }
             ToolCallOrigin effectiveOrigin = origin == null ? ToolCallOrigin.SCHEDULED : origin;
-            handle = runs.start(requests.text(prompt, control.runId(), "schedule",
+            var request = requests.text(prompt, "schedule:" + control.taskId(), "schedule",
                             InvocationSource.schedule(control.taskId()), PermissionSet.UNRESTRICTED,
-                            null), effectiveOrigin, new ConversationCallbacks() {
+                            "schedule:" + control.taskId() + ":trigger:" + control.runId());
+            var existing = agents.activeTurn(request.scope()).orElse(null);
+            if (existing != null) {
+                boolean safeToResume = existing.state() == com.javaclaw.framework.api.RunState.PAUSED
+                        && steps != null && steps.steps(existing.id()).stream().noneMatch(step ->
+                        step.kind() == com.javaclaw.framework.api.AgentStep.Kind.TOOL
+                                && step.state() != com.javaclaw.framework.api.AgentStep.State.COMPLETED);
+                if (!safeToResume) {
+                    throw new IllegalStateException("定时任务存在未完成轮次 " + existing.id()
+                            + "，需要先处理输入、审批或核对执行结果后恢复");
+                }
+                request = request.withAttribute("framework.resumeSafeSchedule",
+                        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.booleanNode(true));
+            }
+            handle = runs.start(request,
+                    effectiveOrigin, new ConversationCallbacks() {
                 @Override
                 public void onEvent(com.javaclaw.api.conversation.ConversationEvent event) {
                     if (!control.isCancelled()) terminal.onEvent(event);

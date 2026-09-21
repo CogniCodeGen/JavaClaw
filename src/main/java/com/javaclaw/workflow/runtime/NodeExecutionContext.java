@@ -14,10 +14,17 @@ public final class NodeExecutionContext {
     private final CancellationToken cancellation;
     private final GraphListener listener;
     private final WorkflowExecutionServices services;
+    private final long visit;
 
     public NodeExecutionContext(String runId, String threadId, NodeDefinition node,
                                 GraphState state, CancellationToken cancellation,
                                 GraphListener listener, WorkflowExecutionServices services) {
+        this(runId, threadId, node, state, cancellation, listener, services, 0);
+    }
+
+    public NodeExecutionContext(String runId, String threadId, NodeDefinition node,
+                               GraphState state, CancellationToken cancellation,
+                               GraphListener listener, WorkflowExecutionServices services, long visit) {
         this.runId = runId;
         this.threadId = threadId;
         this.node = Objects.requireNonNull(node);
@@ -25,6 +32,7 @@ public final class NodeExecutionContext {
         this.cancellation = Objects.requireNonNull(cancellation);
         this.listener = listener == null ? GraphListener.NOOP : listener;
         this.services = services == null ? WorkflowExecutionServices.EMPTY : services;
+        this.visit = visit;
     }
 
     public String runId() { return runId; }
@@ -33,6 +41,14 @@ public final class NodeExecutionContext {
     public GraphState state() { return state; }
     public CancellationToken cancellation() { return cancellation; }
     public GraphListener listener() { return listener; }
+    public String invocationId() { return runId + ":node:" + node.id() + ":visit:" + visit; }
+    public String orchestrationStepId() { return "graph:" + runId + ":visit:" + (visit + 1); }
+
+    /** Persisted owner shared by direct tools and child Agent turns. */
+    public com.javaclaw.framework.api.RunId ownerRunId() {
+        String value = state.get(GraphAgentTurn.OWNER_KEY).asText("");
+        return value.isBlank() ? null : new com.javaclaw.framework.api.RunId(value);
+    }
 
     public com.javaclaw.api.conversation.ConversationCallbacks callbacks() {
         return services.callbacks();

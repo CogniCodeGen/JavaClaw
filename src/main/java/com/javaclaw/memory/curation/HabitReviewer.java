@@ -39,12 +39,30 @@ public final class HabitReviewer {
     private final EmbeddingGateway embeddings;
     private final AgentConfig settings;
     private final AtomicBoolean reviewing = new AtomicBoolean();
+    private final java.util.function.Supplier<List<Episode>> evidenceSource;
+    private final java.util.function.Consumer<Runnable> writeGuard;
+    private final java.util.function.Predicate<Episode> evidenceStillLive;
 
     public HabitReviewer(
             ModelTaskGateway modelTasks,
             MemoryStore store,
             EmbeddingGateway embeddings,
             AgentConfig settings) {
+        this(modelTasks, store, embeddings, settings, () -> store.episodesSince(0, Integer.MAX_VALUE), Runnable::run);
+    }
+
+    public HabitReviewer(ModelTaskGateway modelTasks, MemoryStore store, EmbeddingGateway embeddings,
+                         AgentConfig settings, java.util.function.Supplier<List<Episode>> evidenceSource,
+                         java.util.function.Consumer<Runnable> writeGuard) {
+        this(modelTasks, store, embeddings, settings, evidenceSource, writeGuard, episode -> true);
+    }
+
+    public HabitReviewer(ModelTaskGateway modelTasks, MemoryStore store, EmbeddingGateway embeddings,
+                         AgentConfig settings, java.util.function.Supplier<List<Episode>> evidenceSource,
+                         java.util.function.Consumer<Runnable> writeGuard, java.util.function.Predicate<Episode> evidenceStillLive) {
+        this.evidenceStillLive = Objects.requireNonNull(evidenceStillLive, "evidenceStillLive");
+        this.evidenceSource = Objects.requireNonNull(evidenceSource, "evidenceSource");
+        this.writeGuard = Objects.requireNonNull(writeGuard, "writeGuard");
         this.modelTasks = Objects.requireNonNull(modelTasks, "modelTasks");
         this.store = Objects.requireNonNull(store, "store");
         this.embeddings = Objects.requireNonNull(embeddings, "embeddings");
@@ -87,8 +105,13 @@ public final class HabitReviewer {
         if (!force && now - last < settings.getMemoryHabitReviewIntervalHours() * 3_600_000L) {
             return "未到回顾间隔，本次跳过";
         }
-        List<Episode> episodes = store.episodesSince(
-                last, settings.getMemoryHabitReviewMaxEpisodes());
+        java.util.LinkedHashMap<String, Episode> originals = new java.util.LinkedHashMap<>();
+        evidenceSource.get().stream().filter(e -> e.timestamp > last)
+                .sorted(java.util.Comparator.comparingLong(e -> e.timestamp))
+                .forEach(e -> originals.putIfAbsent(e.evidenceKey(), e));
+        List<Episode> all = List.copyOf(originals.values());
+        int maxEpisodes = settings.getMemoryHabitReviewMaxEpisodes();
+        List<Episode> episodes = all.subList(Math.max(0, all.size() - maxEpisodes), all.size());
         if (episodes.size() < settings.getMemoryHabitReviewMinEpisodes()) {
             return "自上次回顾以来仅 " + episodes.size() + " 轮情景，未达最小归纳量，跳过";
         }
@@ -103,11 +126,18 @@ public final class HabitReviewer {
                         () -> Thread.currentThread().isInterrupted(), false))
                 .toCompletableFuture().join().output();
 
+        int[] counts = new int[3];
+        writeGuard.accept(() -> applyHabits(output, episodes, counts));
+        String summary = "回顾 " + episodes.size() + " 轮：归纳新增 " + counts[0]
+                + "、合并 " + counts[1] + "、暂存 " + counts[2];
+        writeGuard.accept(() -> store.markHabitReview(now, "memory.habit", summary));
+        log.info("习惯回顾完成：{}", summary);
+        return summary;
+    }
+
+    private void applyHabits(JsonNode output, List<Episode> episodes, int[] counts) {
         double dedup = settings.getMemoryDistillDedupThreshold();
         List<CorrectionRecord> corrections = store.allCorrections();
-        int added = 0;
-        int merged = 0;
-        int pending = 0;
         for (JsonNode candidate : output.path("habits")) {
             String text = candidate.path("text").asText("").strip();
             double confidence = candidate.path("confidence").asDouble(0);
@@ -115,34 +145,33 @@ public final class HabitReviewer {
             if (!hasRepeatedEvidence(candidate.path("evidence"), episodes.size())
                     || confidence < PROMOTION_CONFIDENCE) continue;
             if (CorrectionGuard.findUnsafeMemoryClaim(text, corrections).isPresent()) continue;
-
-            float[] vector = embeddings.embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
-            if (vector == null) {
-                Fact fact = new Fact("习惯偏好", text, null);
-                fact.sourceKind = "HABIT_REVIEW";
-                store.addPendingFact(fact, "memory.habit");
-                pending++;
-                continue;
+            java.util.LinkedHashSet<String> evidence = new java.util.LinkedHashSet<>();
+            for (JsonNode index : candidate.path("evidence")) {
+                int n = index.asInt(0) - 1;
+                if (n >= 0 && n < episodes.size() && evidenceStillLive.test(episodes.get(n)))
+                    evidence.add(episodes.get(n).evidenceKey());
             }
-            List<MemoryStore.Scored<Fact>> duplicate = store.searchFacts(vector, 1, dedup);
+            if (evidence.size() < 2) continue;
+            float[] vector = embeddings.embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
+            List<MemoryStore.Scored<Fact>> duplicate = vector == null ? List.of()
+                    : store.searchFacts(vector, 1, dedup);
             if (!duplicate.isEmpty()) {
                 Fact existing = duplicate.getFirst().entity();
+                // Inferred habits cannot revise explicitly declared preferences.
                 if (!existing.userEdited && !existing.userAsserted) {
-                    store.mergeFact(existing, "memory.habit", text);
-                    merged++;
+                    for (String key : evidence) store.mergeFactFromSource(existing, "memory.habit", text, key);
+                    counts[1]++;
                 }
-            } else {
-                Fact fact = new Fact("习惯偏好", text, vector);
-                fact.sourceKind = "HABIT_REVIEW";
-                store.addFact(fact, "memory.habit");
-                added++;
+                continue;
             }
+            Fact fact = new Fact("习惯偏好", text, vector);
+            fact.id = java.util.UUID.nameUUIDFromBytes(("habit:" + text + ":" + String.join(",", evidence))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+            fact.sourceKind = "HABIT_REVIEW";
+            fact.evidenceKeys.addAll(evidence);
+            if (vector == null) { store.addPendingFact(fact, "memory.habit"); counts[2]++; }
+            else { store.addFact(fact, "memory.habit"); counts[0]++; }
         }
-        String summary = "回顾 " + episodes.size() + " 轮：归纳新增 " + added
-                + "、合并 " + merged + "、暂存 " + pending;
-        store.markHabitReview(now, "memory.habit", summary);
-        log.info("习惯回顾完成：{}", summary);
-        return summary;
     }
 
     private static boolean hasRepeatedEvidence(JsonNode evidence, int episodeCount) {
@@ -160,9 +189,6 @@ public final class HabitReviewer {
         int index = 1;
         for (Episode episode : episodes) {
             result.append('#').append(index++).append(" 用户：").append(snip(episode.userInput));
-            if (episode.assistantReply != null && !episode.assistantReply.isBlank()) {
-                result.append("｜助手：").append(snip(episode.assistantReply));
-            }
             result.append('\n');
         }
         return result.toString();

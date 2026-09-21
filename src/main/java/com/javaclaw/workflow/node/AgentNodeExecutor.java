@@ -102,6 +102,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
                 250_000, 80_000, maxToolCalls, new BigDecimal("100"));
 
         Map<String, JsonNode> attributes = new LinkedHashMap<>();
+        attributes.put("framework.parentStepId", JsonNodeFactory.instance.textNode(context.orchestrationStepId()));
         attributes.put("workflowNodeId", JsonNodeFactory.instance.textNode(context.node().id()));
         attributes.put("modelProfile", JsonNodeFactory.instance.textNode(
                 config.path("modelProfile").asText("default")));
@@ -117,15 +118,17 @@ public final class AgentNodeExecutor implements NodeExecutor {
                 .agent(AgentDefinitionRef.latest(agentId))
                 .profile(RunProfileRef.latest(profile))
                 .source(InvocationSource.workflow(context.runId()))
-                .scope(new RunScope(workspace.workspaceId(), "workflow", context.threadId()))
+                .scope(new RunScope(workspace.workspaceId(), "local-user",
+                        context.threadId() + ":agent:" + context.node().id()))
                 .input(InputBlock.text(input))
-                .linkage(new RunLinkage(null, context.runId(), context.runId()))
+                .linkage(new RunLinkage(context.ownerRunId(), context.runId(), context.runId()))
                 .permissionCeiling(permissions(config))
                 .budget(budget)
+                .idempotencyKey(context.invocationId())
                 .attributes(attributes)
                 .build();
 
-        var handle = agents.start(request);
+        var handle = com.javaclaw.application.agent.ChildTurnContinuation.start(agents, request);
         ConversationCallbacks callbacks = context.callbacks();
         ToolCallOrigin approvalOrigin = ToolCallOrigin.managedTask(
                 context.runId(), workDir.isTextual() ? workDir.asText() : null);
@@ -133,8 +136,8 @@ public final class AgentNodeExecutor implements NodeExecutor {
                 event, callbacks, agents, handle, approvalOrigin));
         try (AutoCloseable ignored = context.cancellation().onCancel(() -> agents.cancel(
                 handle.id(), new CancelReason("WORKFLOW_CANCELLED", context.runId())))) {
-            RunOutcome outcome = await(handle.completion().toCompletableFuture(), context,
-                    timeoutSeconds, handle.id());
+            RunOutcome outcome = com.javaclaw.application.agent.ChildTurnContinuation.await(
+                    agents, handle, Duration.ofSeconds(timeoutSeconds), context.cancellation()::throwIfCancelled);
             if (!outcome.successful()) {
                 throw new IllegalStateException(outcome.error() == null
                         ? "Agent child run ended in " + outcome.state() : outcome.error());
@@ -145,31 +148,12 @@ public final class AgentNodeExecutor implements NodeExecutor {
             text = com.javaclaw.util.ChineseOutputGuard.enforceUserVisibleReply(text);
             String outputKey = config.path("outputKey").asText("agent.output");
             return NodeResult.output(StatePatch.builder().set(outputKey, text).build(), text);
+        } catch (TimeoutException timeout) {
+            agents.cancel(handle.id(), new CancelReason("WORKFLOW_NODE_TIMEOUT", context.node().id()));
+            throw timeout;
         } finally {
             events.dispose();
         }
-    }
-
-    private RunOutcome await(
-            java.util.concurrent.CompletableFuture<RunOutcome> completion,
-            NodeExecutionContext context,
-            long timeoutSeconds,
-            com.javaclaw.framework.api.RunId runId) throws Exception {
-        long remaining = timeoutSeconds * 10;
-        while (remaining-- > 0) {
-            context.cancellation().throwIfCancelled();
-            try {
-                return completion.get(100, TimeUnit.MILLISECONDS);
-            } catch (TimeoutException ignored) {
-                // Observe workflow cancellation between waits.
-            } catch (ExecutionException failure) {
-                Throwable cause = failure.getCause() == null ? failure : failure.getCause();
-                if (cause instanceof Exception checked) throw checked;
-                throw new IllegalStateException(cause);
-            }
-        }
-        agents.cancel(runId, new CancelReason("WORKFLOW_NODE_TIMEOUT", context.node().id()));
-        throw new TimeoutException("Agent workflow node timed out");
     }
 
     private static PermissionSet permissions(JsonNode config) {

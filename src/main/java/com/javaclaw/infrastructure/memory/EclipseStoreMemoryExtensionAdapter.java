@@ -11,6 +11,7 @@ import com.javaclaw.framework.spi.ModelTaskGateway;
 import com.javaclaw.framework.spi.ModelTaskRequest;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.memory.MemoryService;
+import com.javaclaw.memory.MemoryGraphScope;
 import com.javaclaw.memory.correction.CorrectionEngine;
 import com.javaclaw.memory.correction.CorrectionGuard;
 import com.javaclaw.memory.correction.CorrectionTurnContext;
@@ -31,13 +32,20 @@ public final class EclipseStoreMemoryExtensionAdapter
 
     @Override
     public String recall(RunRequest request, String query, int topK) {
-        return memory.recall(query);
+        return memory.recall(MemoryGraphScope.thread(request.scope()), query, topK);
     }
 
     @Override
     public JsonNode applyCorrection(
             RunId runId, RunRequest request, String userInput, String previousReply) {
-        CorrectionTurnContext context = memory.prepareCorrectionTurn(userInput, previousReply);
+        MemoryGraphScope scope = MemoryGraphScope.thread(request.scope());
+        boolean userTurn = java.util.Set.of("chat", "plan").contains(request.source().kind())
+                && !request.attributes().containsKey("memory.originThreadId");
+        if (userTurn) {
+            memory.rememberExplicitPreference(scope, runId.value(), userInput);
+        }
+        CorrectionTurnContext context = userTurn ? memory.prepareCorrectionTurn(scope, userInput, previousReply)
+                : memory.inScope(scope).prepareCorrectionTurn(userInput, previousReply);
         if (!context.hasCorrections()) return null;
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         result.put("prompt", context.toPrompt());
@@ -51,10 +59,11 @@ public final class EclipseStoreMemoryExtensionAdapter
         String reply = output.path("text").asText("");
         if (reply.isBlank()) return output;
         String query = textInput(request);
-        var relevant = CorrectionEngine.selectRelevant(memory.corrections(), query, 6);
+        MemoryGraphScope scope = MemoryGraphScope.thread(request.scope());
+        var relevant = CorrectionEngine.selectRelevant(memory.corrections(scope), query, 6);
         var violation = CorrectionGuard.findViolation(reply, relevant);
         if (violation.isEmpty()) return output;
-        memory.recordCorrectionGuardViolation(violation.get());
+        memory.inScope(scope).recordCorrectionGuardViolation(violation.get());
 
         ObjectNode input = JsonNodeFactory.instance.objectNode();
         input.put("candidateReply", reply);
@@ -85,14 +94,8 @@ public final class EclipseStoreMemoryExtensionAdapter
 
     @Override
     public void distill(RunId runId, RunRequest request, JsonNode completedOutput) {
-        String reply = completedOutput.path("text").asText("");
-        if (reply.isBlank()) return;
-        String toolTrace = request.attributes().containsKey("framework.toolTrace")
-                ? request.attributes().get("framework.toolTrace").toString() : null;
-        boolean reviewHabits = com.javaclaw.framework.api.CapabilityRuntime.enabled(
-                request, "memory.habit");
-        memory.rememberTurn(runId, request.scope().sessionId(),
-                textInput(request), reply, toolTrace, reviewHabits);
+        // The transactional Thread outbox projects terminal turns. A lifecycle callback executes
+        // before that commit and must never create memory for a turn that may still fail.
     }
 
     private static JsonNode withText(JsonNode output, String text, boolean corrected) {

@@ -9,6 +9,9 @@ import java.util.List;
 
 /** 记忆对象存储、知识库索引和原子文件写入的工作区端口。 */
 public interface MemoryPort {
+    default List<com.javaclaw.memory.MemoryGraphScope> scopes() { return List.of(); }
+    default com.javaclaw.memory.MemoryGraphScope scope() { return null; }
+    default MemoryPort inScope(com.javaclaw.memory.MemoryGraphScope scope) { return this; }
     Snapshot load();
     String probeEmbedding();
     int promoteAllPending();

@@ -57,19 +57,40 @@ public final class AgentConversationRunner implements AutoCloseable {
         }
 
         final RunHandle handle;
+        long afterSequence = 0;
         try {
-            handle = agents.start(request);
+            boolean resumeSchedule = request.source().kind().equals("schedule")
+                    && request.attributes().getOrDefault("framework.resumeSafeSchedule",
+                    com.fasterxml.jackson.databind.node.BooleanNode.FALSE).asBoolean();
+            var waiting = interactive(request) || resumeSchedule
+                    ? agents.activeTurn(request.scope()).orElse(null) : null;
+            if (waiting != null && (waiting.state() == RunState.WAITING_INPUT
+                    || waiting.state() == RunState.PAUSED)) {
+                afterSequence = waiting.lastSequence();
+                var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+                var inputs = payload.putArray("inputs");
+                request.inputs().stream().filter(input -> !resumeSchedule && !input.type().equals("core.message"))
+                        .forEach(input -> {
+                            inputs.addObject().put("type", input.type()).set("data", input.data());
+                            if (input.type().equals("core.text")) payload.put("text", input.data().path("text").asText());
+                        });
+                handle = agents.resume(waiting.id(), new com.javaclaw.framework.api.ResumeCommand(
+                        resumeSchedule ? "schedule.continue" : "input", payload));
+            } else {
+                handle = agents.start(request);
+            }
         } catch (Throwable failure) {
             guarded.onTerminal(ConversationOutcome.failed(failure));
             return new DefaultConversationHandle(guarded, ignored -> false);
         }
 
-        Active current = new Active(handle, request.scope().sessionId(), guarded);
+        Active current = new Active(handle, request.scope().sessionId(), guarded, interactive(request));
         runs.put(handle.id(), current);
         try {
-            current.events = handle.events(0).subscribe(
+            current.events = handle.events(afterSequence).subscribe(
                     event -> onEvent(current, effectiveOrigin, guarded, event),
                     failure -> guarded.onTerminal(ConversationOutcome.failed(failure)));
+            if (guarded.isTerminal()) current.disposeEvents();
             handle.completion().whenCompleteAsync((outcome, failure) -> {
                 runs.remove(handle.id(), current);
                 current.disposeEvents();
@@ -151,6 +172,12 @@ public final class AgentConversationRunner implements AutoCloseable {
             case "core.tool.failed" -> callbacks.onEvent(new ConversationEvent.Hint(
                     "工具执行失败：" + payload.path("message").asText("unknown error")));
             case "core.run.waiting_input" -> waitingForInput(current, callbacks, payload);
+            case "core.run.paused" -> {
+                runs.remove(current.handle.id(), current);
+                current.disposeEvents();
+                callbacks.onTerminal(ConversationOutcome.failed(new com.javaclaw.framework.api.TurnPausedException(
+                        payload.path("reason").asText("执行已暂停，请核对结果后继续"))));
+            }
             case "core.run.waiting_approval" -> requestApproval(current, origin, callbacks, payload);
             case "core.run.completed" -> {
                 String reply = payload.path("output").path("text").asText("");
@@ -174,12 +201,20 @@ public final class AgentConversationRunner implements AutoCloseable {
         if ("clarify_request".equals(output.path("kind").asText())) {
             callbacks.onEvent(new ConversationEvent.Custom(
                     "clarify_request", output.path("payload")));
-            agents.cancel(current.handle.id(), new CancelReason(
-                    "CLARIFICATION_REQUESTED", "conversation will continue in the next user turn"));
-            return;
+        } else {
+            callbacks.onEvent(new ConversationEvent.Hint(
+                    payload.path("reason").asText("Agent 正在等待输入")));
         }
-        callbacks.onEvent(new ConversationEvent.Hint(
-                payload.path("reason").asText("Agent 正在等待输入")));
+        if (current.interactive) {
+            runs.remove(current.handle.id(), current);
+            current.disposeEvents();
+            callbacks.onTerminal(new ConversationOutcome.WaitingInput(
+                    current.handle.id().value(), payload.path("reason").asText("等待补充输入")));
+        }
+    }
+
+    private static boolean interactive(RunRequest request) {
+        return request.profile().id().equals("chat") || request.profile().id().equals("plan");
     }
 
     private void requestApproval(
@@ -265,13 +300,15 @@ public final class AgentConversationRunner implements AutoCloseable {
         private final RunHandle handle;
         private final String sessionId;
         private final TerminalCallbackGuard callbacks;
+        private final boolean interactive;
         private volatile Disposable events;
         private volatile Throwable terminalFailure;
 
-        private Active(RunHandle handle, String sessionId, TerminalCallbackGuard callbacks) {
+        private Active(RunHandle handle, String sessionId, TerminalCallbackGuard callbacks, boolean interactive) {
             this.handle = handle;
             this.sessionId = sessionId;
             this.callbacks = callbacks;
+            this.interactive = interactive;
         }
 
         private void disposeEvents() {

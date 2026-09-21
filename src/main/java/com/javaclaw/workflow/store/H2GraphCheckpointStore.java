@@ -42,10 +42,13 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                          output_text,error_text,interrupt_json,extension_locks_json,created_at,updated_at)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      """)) {
+            c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             bindRun(ps, run);
             if (ps.executeUpdate() != 1) {
                 throw new IllegalStateException("INSERT 未写入运行记录: " + run.id());
             }
+            c.commit();
         } catch (Exception e) {
             logPersistenceFailure("create", run, e);
             throw new IllegalStateException("创建工作流运行记录失败", e);
@@ -59,6 +62,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         }
         try (Connection c = database.open()) {
             c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             try {
                 try (PreparedStatement ps = c.prepareStatement("""
                         INSERT INTO workflow_runs(workspace_id,id,workflow_id,workflow_version,thread_id,
@@ -93,6 +97,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         }
         try (Connection c = database.open()) {
             c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE workflow_runs SET state_json=?,status=?,current_node_id=?,next_node_id=?,
                         step_count=?,output_text=?,error_text=?,interrupt_json=?,updated_at=?
@@ -130,10 +135,13 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                          step_count=?,output_text=?,error_text=?,interrupt_json=?,updated_at=?
                      WHERE workspace_id=? AND id=?
                      """)) {
+            c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             bindMutableRun(ps, run);
             if (ps.executeUpdate() != 1) {
                 throw new WorkflowRunMissingException("运行记录不存在: " + run.id());
             }
+            c.commit();
         } catch (Exception e) {
             logPersistenceFailure("update", run, e);
             if (e instanceof WorkflowRunMissingException missing) throw missing;
@@ -146,6 +154,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         int seq = run.nextCheckpointSeq();
         try (Connection c = database.open()) {
             c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             try (PreparedStatement cp = c.prepareStatement("""
                     INSERT INTO workflow_checkpoints(workspace_id,run_id,seq,node_id,phase,state_json,created_at)
                     VALUES(?,?,?,?,?,?,?)
@@ -178,7 +187,9 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      """)) {
             ps.setString(1, workspaceId);
             ps.setString(2, runId);
-            try (ResultSet rs = ps.executeQuery()) { return rs.next() ? readRun(rs) : null; }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && !GraphThreadFence.deleted(c, workspaceId, rs.getString("thread_id")) ? readRun(rs) : null;
+            }
         } catch (Exception e) {
             throw new IllegalStateException("读取工作流运行记录失败", e);
         }
@@ -199,7 +210,9 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
             ps.setString(1, workspaceId);
             if (workflowId == null) ps.setInt(2, capped);
             else { ps.setString(2, workflowId); ps.setInt(3, capped); }
-            try (ResultSet rs = ps.executeQuery()) { while (rs.next()) out.add(readRun(rs)); }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) if (!GraphThreadFence.deleted(c, workspaceId, rs.getString("thread_id"))) out.add(readRun(rs));
+            }
             return List.copyOf(out);
         } catch (Exception e) {
             throw new IllegalStateException("列出工作流运行记录失败", e);
@@ -216,7 +229,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                 """)) {
             ps.setString(1, workspaceId);
             try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) out.add(readRun(rs));
+                while (rs.next()) if (!GraphThreadFence.deleted(c, workspaceId, rs.getString("thread_id"))) out.add(readRun(rs));
             }
             return List.copyOf(out);
         } catch (Exception e) {
@@ -233,7 +246,9 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      ORDER BY updated_at DESC LIMIT 1
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
-            try (ResultSet rs = ps.executeQuery()) { return rs.next() ? readRun(rs) : null; }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && !GraphThreadFence.deleted(c, workspaceId, threadId) ? readRun(rs) : null;
+            }
         } catch (Exception e) {
             throw new IllegalStateException("查找待输入工作流失败", e);
         }
@@ -249,7 +264,9 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      ORDER BY updated_at DESC LIMIT 1
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
-            try (ResultSet rs = ps.executeQuery()) { return rs.next() ? readRun(rs) : null; }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && !GraphThreadFence.deleted(c, workspaceId, threadId) ? readRun(rs) : null;
+            }
         } catch (Exception e) {
             throw new IllegalStateException("查找待恢复工作流失败", e);
         }
@@ -262,6 +279,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      SELECT state_json FROM workflow_threads WHERE workspace_id=? AND workflow_id=? AND thread_id=?
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
+            if (GraphThreadFence.deleted(c, workspaceId, threadId)) return new GraphState();
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? GraphState.fromJson(rs.getString(1), json) : new GraphState();
             }
@@ -277,12 +295,39 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      MERGE INTO workflow_threads(workspace_id,workflow_id,thread_id,state_json,updated_at)
                      KEY(workspace_id,workflow_id,thread_id) VALUES(?,?,?,?,?)
                      """)) {
+            c.setAutoCommit(false);
+            GraphThreadFence.requireLive(c, workspaceId, threadId);
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
             ps.setString(4, state.toJson()); ps.setLong(5, System.currentTimeMillis());
             ps.executeUpdate();
+            c.commit();
         } catch (Exception e) {
             throw new IllegalStateException("保存工作流 thread 状态失败", e);
         }
+    }
+
+    @Override
+    public void deleteThread(String threadId) {
+        try (Connection c = database.open()) {
+            c.setAutoCommit(false);
+            try {
+                GraphThreadFence.lock(c, workspaceId, threadId);
+                try (var fence = c.prepareStatement("UPDATE workflow_thread_lifecycle SET deleted=TRUE WHERE workspace_id=? AND thread_id=?")) {
+                    fence.setString(1, workspaceId); fence.setString(2, threadId); fence.executeUpdate();
+                }
+                try (var checkpoints = c.prepareStatement("DELETE FROM workflow_checkpoints WHERE workspace_id=? AND run_id IN "
+                        + "(SELECT id FROM workflow_runs WHERE workspace_id=? AND thread_id=?)")) {
+                    checkpoints.setString(1, workspaceId); checkpoints.setString(2, workspaceId);
+                    checkpoints.setString(3, threadId); checkpoints.executeUpdate();
+                }
+                for (String table : List.of("workflow_runs", "workflow_threads")) {
+                    try (var rows = c.prepareStatement("DELETE FROM " + table + " WHERE workspace_id=? AND thread_id=?")) {
+                        rows.setString(1, workspaceId); rows.setString(2, threadId); rows.executeUpdate();
+                    }
+                }
+                c.commit();
+            } catch (Exception failure) { rollbackQuietly(c); throw failure; }
+        } catch (Exception failure) { throw new IllegalStateException("删除工作流会话检查点失败", failure); }
     }
 
     @Override
@@ -291,7 +336,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
              PreparedStatement ps = c.prepareStatement("""
                      UPDATE workflow_runs SET status='RECOVERY_REQUIRED', updated_at=?
                      WHERE workspace_id=? AND status IN ('CREATED','RUNNING')
-                     """)) {
+                     """ + " AND " + GraphThreadFence.readablePredicate("workflow_runs"))) {
             ps.setLong(1, System.currentTimeMillis()); ps.setString(2, workspaceId);
             return ps.executeUpdate();
         } catch (Exception e) {

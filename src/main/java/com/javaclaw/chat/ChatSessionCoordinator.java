@@ -111,9 +111,26 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 .map(ChatSessionCoordinator::sessionFrom)
                 .toList();
         sessions.clear();
-        List<ChatSession> valid = loaded.stream()
+        List<ChatSession> valid = new ArrayList<>(loaded.stream()
                 .filter(session -> history.hasMessages(workspace, session.getId()))
-                .toList();
+                .toList());
+        var durable = chatService.get().sessions();
+        for (var thread : durable) {
+            if (valid.stream().noneMatch(session -> session.getId().equals(thread.scope().sessionId()))) {
+                valid.add(new ChatSession(thread.scope().sessionId(), thread.title(),
+                        java.time.LocalDateTime.ofInstant(thread.createdAt(), java.time.ZoneId.systemDefault()),
+                        List.of()));
+            }
+        }
+        valid.forEach(session -> durable.stream()
+                .filter(thread -> thread.scope().sessionId().equals(session.getId()))
+                .findFirst().ifPresent(thread -> {
+                    session.setArchived(thread.status() == com.javaclaw.framework.api.ThreadStatus.ARCHIVED);
+                    session.setParentThreadId(thread.parentThreadId() == null
+                            ? null : thread.parentThreadId().value());
+        }));
+        valid.sort(java.util.Comparator.comparing(ChatSession::isArchived)
+                .thenComparing(ChatSession::getCreatedAt, java.util.Comparator.reverseOrder()));
         if (valid.isEmpty()) {
             currentSession = new ChatSession("新的对话");
             sessions.add(currentSession);
@@ -129,13 +146,14 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 sidebar.addSession(sessions.get(index), index == 0);
             }
             currentSession = sessions.getFirst();
-            List<ChatMessage> messages = history.messages(
-                            workspace, currentSession.getId()).stream()
+            List<ChatMessage> messages = savedMessages(currentSession.getId()).stream()
                     .map(ChatSessionCoordinator::messageFrom)
                     .toList();
             currentSession.getMessages().addAll(messages);
             messages.forEach(this::renderPersistedMessage);
         }
+        if (currentSession.isArchived()) newSession();
+        else chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
         status.refreshTitle();
     }
 
@@ -156,6 +174,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         removeEmptyCurrentSession();
         currentSession = new ChatSession("新的对话");
+        chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
         sessions.addFirst(currentSession);
         sidebar.insertSessionAtTop(currentSession, true);
         disposeTranscript();
@@ -173,6 +192,11 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 .filter(session -> session.getId().equals(targetId))
                 .findFirst().orElse(null);
         if (target == null) return;
+        if (target.isArchived()) {
+            resumeSession(targetId);
+            return;
+        }
+        chatService.get().loadSession(targetId);
         if (turns.isStreaming() && turns.streamingSession() == null) {
             turns.stop(CancellationReason.SESSION_SWITCH, false,
                     ChatTurnController.StopPolicy.DISCARD_AND_INVALIDATE);
@@ -188,6 +212,62 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         status.refreshTitle();
     }
 
+    void archiveSession(String id) {
+        lifecycleAction(() -> {
+            chatService.get().archiveSession(id);
+            sessions.stream().filter(session -> session.getId().equals(id)).findFirst()
+                    .ifPresent(session -> { session.setArchived(true); sidebar.updateLifecycle(session); });
+            if (currentSession != null && currentSession.getId().equals(id)) newSession();
+        });
+    }
+
+    void resumeSession(String id) {
+        lifecycleAction(() -> {
+            chatService.get().loadSession(id);
+            sessions.stream().filter(session -> session.getId().equals(id)).findFirst()
+                    .ifPresent(session -> { session.setArchived(false); sidebar.updateLifecycle(session); });
+            sidebar.selectSession(id);
+            switchSession(id);
+        });
+    }
+
+    void forkSession(String id) {
+        lifecycleAction(() -> {
+            ChatSession source = sessions.stream().filter(session -> session.getId().equals(id))
+                    .findFirst().orElseThrow();
+            saveCurrentSession();
+            var fork = chatService.get().forkSession(id, source.getTitle() + " · 分支");
+            List<MessageSnapshot> copied = chatService.get().persistedMessages(fork.scope().sessionId());
+            ChatSession branch = new ChatSession(fork.scope().sessionId(), fork.title(),
+                    java.time.LocalDateTime.ofInstant(fork.createdAt(), java.time.ZoneId.systemDefault()),
+                    copied.stream().map(ChatSessionCoordinator::messageFrom).toList());
+            sessions.addFirst(branch);
+            history.saveMessages(currentWorkspaceId(), branch.getId(), copied);
+            history.saveSessions(currentWorkspaceId(), sessionSnapshots(sessions));
+            sidebar.insertSessionAtTop(branch, false);
+            sidebar.selectSession(branch.getId());
+            switchSession(branch.getId());
+        });
+    }
+
+    void inspectSession(String id) {
+        lifecycleAction(() -> ChatExecutionInspector.show(owner.get(), chatService.get(), id));
+    }
+
+    private void lifecycleAction(Runnable action) {
+        if (rejectWhileRebuilding.test("会话管理")) return;
+        try {
+            action.run();
+        } catch (RuntimeException failure) {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(
+                    javafx.scene.control.Alert.AlertType.INFORMATION, failure.getMessage());
+            alert.setTitle("会话操作未完成");
+            alert.setHeaderText(null);
+            if (owner.get() != null) alert.initOwner(owner.get());
+            alert.showAndWait();
+        }
+    }
+
     void deleteSession(String sessionId) {
         if (rejectWhileRebuilding.test("删除会话")) return;
         if (turns.streamingSession() != null
@@ -198,8 +278,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         sessions.removeIf(session -> session.getId().equals(sessionId));
         sidebar.removeSession(sessionId);
         String workspace = currentWorkspaceId();
-        history.delete(workspace, sessionId);
         chatService.get().deleteSession(sessionId);
+        history.delete(workspace, sessionId);
         if (currentSession != null && currentSession.getId().equals(sessionId)) {
             selectAfterCurrentDeletion();
         }
@@ -219,8 +299,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         for (String id : sessionIds) {
             sessions.removeIf(session -> session.getId().equals(id));
             sidebar.removeSession(id);
-            history.delete(workspace, id);
             chatService.get().deleteSession(id);
+            history.delete(workspace, id);
         }
         if (currentDeleted) selectAfterCurrentDeletion();
         history.saveSessions(workspace, sessionSnapshots(sessions));
@@ -237,16 +317,21 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 ChatTurnController.StopPolicy.DISCARD_AND_INVALIDATE);
         clearRuntimeHistory();
         status.resetSession();
-        chatService.get().deleteSession(currentSession.getId());
+        String deletedId = currentSession.getId();
+        chatService.get().deleteSession(deletedId);
+        history.delete(currentWorkspaceId(), deletedId);
+        sessions.remove(currentSession);
+        sidebar.removeSession(deletedId);
         disposeTranscript();
-        currentSession.getMessages().clear();
-        currentSession.setTitle("新的对话");
+        currentSession = new ChatSession("新的对话");
+        chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
+        sessions.addFirst(currentSession);
+        sidebar.insertSessionAtTop(currentSession, true);
         composer.clearAttachments();
         thinking.reset();
         addWelcomeMessage();
         status.refreshTitle();
-        sidebar.updateSessionTitle(currentSession.getId(), currentSession.getTitle());
-        saveCurrentSession();
+        history.saveSessions(currentWorkspaceId(), sessionSnapshots(sessions));
     }
 
     void reloadWorkspace() {
@@ -351,6 +436,13 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     @Override
     public void appendClarification(String reason, String question) {
+        ChatSession target = turns.streamingSession() == null ? currentSession : turns.streamingSession();
+        if (target != currentSession) {
+            target.getMessages().add(new ChatMessage(ChatMessage.Role.ASSISTANT,
+                    clarificationMarkdown(reason, question)));
+            saveSessionMessages(target);
+            return;
+        }
         ChatMessage timestamp = new ChatMessage(ChatMessage.Role.ASSISTANT, "");
         ClarificationCardView card = clarificationCards.create(
                 AgentConfig.AGENT_NAME, modelName.get(), timestamp.getFormattedTime(), reason, question);
@@ -413,8 +505,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             return;
         }
         if (target.getMessages().isEmpty()) {
-            target.getMessages().addAll(history.messages(
-                            currentWorkspaceId(), target.getId()).stream()
+            target.getMessages().addAll(savedMessages(target.getId()).stream()
                     .map(ChatSessionCoordinator::messageFrom)
                     .toList());
         }
@@ -447,9 +538,20 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     }
 
     private void removeEmptyCurrentSession() {
-        if (currentSession == null || !currentSession.getMessages().isEmpty()) return;
+        if (currentSession == null || currentSession.isArchived() || !currentSession.getMessages().isEmpty()
+                || !chatService.get().sessionTurns(currentSession.getId()).isEmpty()) return;
+        chatService.get().deleteSession(currentSession.getId());
+        history.delete(currentWorkspaceId(), currentSession.getId());
         sessions.remove(currentSession);
         sidebar.removeSession(currentSession.getId());
+    }
+
+    private List<MessageSnapshot> savedMessages(String id) {
+        List<MessageSnapshot> saved = history.messages(currentWorkspaceId(), id);
+        List<MessageSnapshot> recovered = com.javaclaw.application.chat.ChatThreadTranscript.recoverTail(
+                saved, chatService.get().persistedMessages(id));
+        if (!recovered.equals(saved)) history.saveMessages(currentWorkspaceId(), id, recovered);
+        return recovered;
     }
 
     private void suspendTranscript() {

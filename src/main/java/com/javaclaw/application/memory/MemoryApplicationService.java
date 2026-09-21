@@ -13,6 +13,9 @@ import java.util.List;
  * 取消仅阻止尚未开始的后续步骤，已经完成的持久化写入不会回滚。</p>
  */
 public interface MemoryApplicationService {
+    default List<com.javaclaw.memory.MemoryGraphScope> scopes() { return List.of(); }
+    default com.javaclaw.memory.MemoryGraphScope scope() { return null; }
+    default MemoryApplicationService inScope(com.javaclaw.memory.MemoryGraphScope scope) { return this; }
 
     Snapshot snapshot();
 

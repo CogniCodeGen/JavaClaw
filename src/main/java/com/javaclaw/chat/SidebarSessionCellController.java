@@ -28,6 +28,10 @@ public final class SidebarSessionCellController implements AutoCloseable {
     @FXML private Label groupCountLabel;
     @FXML private ContextMenu rowMenu;
     @FXML private MenuItem deleteItem;
+    @FXML private MenuItem archiveItem;
+    @FXML private MenuItem resumeItem;
+    @FXML private MenuItem forkItem;
+    @FXML private MenuItem inspectItem;
     @FXML private Tooltip titleTooltip;
 
     private SidebarSessionItem.Conversation conversation;
@@ -61,8 +65,10 @@ public final class SidebarSessionCellController implements AutoCloseable {
     private void showConversation(SidebarSessionItem.Conversation value) {
         conversation = value;
         showOnly(conversationRow);
-        titleLabel.setText(value.title());
-        titleTooltip.setText(value.title());
+        titleLabel.setText((value.archived() ? "[已归档] " : "")
+                + (value.parentThreadId() == null ? "" : "↳ ") + value.title());
+        titleTooltip.setText(value.title() + (value.parentThreadId() == null ? ""
+                : "\n父会话：" + value.parentThreadId()));
         timeLabel.setText(value.timeText());
         conversationRow.setAccessibleText("会话：" + value.title());
         conversationRow.getStyleClass().remove("sidebar-conv-selected");
@@ -70,6 +76,10 @@ public final class SidebarSessionCellController implements AutoCloseable {
         checkBox.setVisible(value.batchMode());
         checkBox.setManaged(value.batchMode());
         deleteItem.setDisable(value.batchMode());
+        archiveItem.setDisable(value.batchMode() || value.archived());
+        resumeItem.setDisable(value.batchMode());
+        forkItem.setDisable(value.batchMode());
+        inspectItem.setDisable(value.batchMode());
         updating = true;
         try {
             checkBox.setSelected(value.checked());
@@ -140,6 +150,20 @@ public final class SidebarSessionCellController implements AutoCloseable {
         }
     }
 
+    @FXML private void onArchiveRequested() {
+        if (conversation != null && actions != null && !conversation.batchMode() && !conversation.archived())
+            actions.archive(conversation.id());
+    }
+    @FXML private void onResumeRequested() {
+        if (conversation != null && actions != null && !conversation.batchMode()) actions.resume(conversation.id());
+    }
+    @FXML private void onForkRequested() {
+        if (conversation != null && actions != null && !conversation.batchMode()) actions.fork(conversation.id());
+    }
+    @FXML private void onInspectRequested() {
+        if (conversation != null && actions != null && !conversation.batchMode()) actions.inspect(conversation.id());
+    }
+
     private void activate() {
         if (conversation != null && actions != null) actions.activate(conversation.id());
     }
@@ -159,6 +183,10 @@ public final class SidebarSessionCellController implements AutoCloseable {
             checkBox.setOnMouseClicked(null);
         }
         if (deleteItem != null) deleteItem.setOnAction(null);
+        if (archiveItem != null) archiveItem.setOnAction(null);
+        if (resumeItem != null) resumeItem.setOnAction(null);
+        if (forkItem != null) forkItem.setOnAction(null);
+        if (inspectItem != null) inspectItem.setOnAction(null);
     }
 
     boolean isClosed() {

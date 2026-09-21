@@ -3,6 +3,9 @@ package com.javaclaw.memory;
 import com.javaclaw.memory.store.MemoryStore;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -25,6 +28,7 @@ final class MemoryStoreRegistry {
         Path key = Objects.requireNonNull(memoryDir, "memoryDir")
                 .toAbsolutePath().normalize();
         synchronized (ENTRIES) {
+            if (isDeleted(key)) throw new IllegalStateException("会话记忆已删除: " + key);
             Entry entry = ENTRIES.get(key);
             if (entry == null) {
                 MemoryStore created = new MemoryStore(key, dimensions, "workspace");
@@ -42,11 +46,69 @@ final class MemoryStoreRegistry {
         }
     }
 
+    static boolean isDeleted(Path path) {
+        return Files.exists(tombstone(path));
+    }
+
+    static void withLiveGraph(Path path, Runnable operation) {
+        synchronized (ENTRIES) {
+            if (isDeleted(path)) throw new IllegalStateException("来源会话已删除");
+            operation.run();
+        }
+    }
+
+    static void updateMetadata(Path directory, java.util.function.Function<com.javaclaw.memory.model.MemoryRoot,
+            java.util.List<Object>> change) {
+        Path key = directory.toAbsolutePath().normalize();
+        synchronized (ENTRIES) {
+            if (!Files.exists(key.resolve("channel_0"))) return;
+            Entry existing = ENTRIES.get(key);
+            if (existing == null) com.javaclaw.memory.store.MemoryMetadataMaintenance.update(key, change);
+            else com.javaclaw.memory.store.MemoryMetadataMaintenance.update(existing.store, change);
+        }
+    }
+
+    private static Path tombstone(Path path) {
+        return path.resolveSibling(path.getFileName() + ".deleted");
+    }
+
+    /** Tombstone precedes closing the write gate. Old leases cannot resurrect this graph. */
+    static void delete(Path path) {
+        Path key = path.toAbsolutePath().normalize();
+        synchronized (ENTRIES) {
+            try {
+                Files.createDirectories(key.getParent());
+                Files.writeString(tombstone(key), "deleted\n");
+            } catch (IOException failure) {
+                throw new UncheckedIOException("无法持久化记忆删除墓碑", failure);
+            }
+            Entry entry = ENTRIES.get(key);
+            if (entry != null) {
+                entry.deleting = true;
+                entry.store.invalidate();
+            } else {
+                deleteFiles(key);
+            }
+        }
+    }
+
+    private static void deleteFiles(Path path) {
+        if (!Files.exists(path)) return;
+        try (var files = Files.walk(path)) {
+            for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(file);
+            }
+        } catch (IOException failure) {
+            throw new UncheckedIOException("无法删除会话记忆目录", failure);
+        }
+    }
+
     private static final class Entry {
         private final Path path;
         private final int dimensions;
         private final MemoryStore store;
         private int references;
+        private boolean deleting;
 
         private Entry(Path path, int dimensions, MemoryStore store) {
             this.path = Objects.requireNonNull(path);
@@ -89,6 +151,7 @@ final class MemoryStoreRegistry {
                                 "记忆存储注册表状态失衡: " + entry.path);
                     }
                     entry.store.close();
+                    if (entry.deleting) deleteFiles(entry.path);
                 }
             }
         }

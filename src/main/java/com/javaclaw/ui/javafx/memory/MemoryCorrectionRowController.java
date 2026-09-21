@@ -18,6 +18,7 @@ public final class MemoryCorrectionRowController {
     @FXML private Label scope;
     @FXML private Label source;
     @FXML private Button revokeButton;
+    @FXML private Button deleteButton;
     private String id = "";
     private Consumer<String> revoke = ignored -> {};
     private Consumer<String> delete = ignored -> {};
@@ -25,7 +26,7 @@ public final class MemoryCorrectionRowController {
     void configure(
             CorrectionItem item,
             Consumer<String> revoke,
-            Consumer<String> delete) {
+            Consumer<String> delete, boolean readOnly) {
         id = item.id();
         this.revoke = Objects.requireNonNull(revoke, "revoke");
         this.delete = Objects.requireNonNull(delete, "delete");
@@ -44,6 +45,8 @@ public final class MemoryCorrectionRowController {
         source.setTooltip(item.sourceInput().isBlank() ? null : new Tooltip(item.sourceInput()));
         revokeButton.setVisible(item.effective());
         revokeButton.setManaged(item.effective());
+        revokeButton.setDisable(readOnly);
+        deleteButton.setDisable(readOnly);
     }
 
     @FXML private void revokeRequested() { revoke.accept(id); }

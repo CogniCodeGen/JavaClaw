@@ -22,10 +22,20 @@ public final class GraphEngine {
 
     private final NodeExecutorRegistry registry;
     private final GraphCheckpointStore store;
+    private final com.javaclaw.framework.api.AgentClient agents;
+    private final String workspaceId;
+    private GraphAgentTurn owner;
 
     public GraphEngine(NodeExecutorRegistry registry, GraphCheckpointStore store) {
+        this(registry, store, null, null);
+    }
+
+    public GraphEngine(NodeExecutorRegistry registry, GraphCheckpointStore store,
+                       com.javaclaw.framework.api.AgentClient agents, String workspaceId) {
         this.registry = registry;
         this.store = store;
+        this.agents = agents;
+        this.workspaceId = workspaceId;
     }
 
     public GraphRun execute(GraphRun run, CancellationToken cancellation,
@@ -33,6 +43,8 @@ public final class GraphEngine {
         GraphListener sink = listener == null ? GraphListener.NOOP : listener;
         GraphDefinition graph = run.definition();
         try {
+            owner = GraphAgentTurn.begin(agents, workspaceId, run);
+            if (owner != null) owner.observeCancellation(cancellation);
             GraphValidator.requireValid(graph, registry);
             Map<String, NodeDefinition> nodes = new HashMap<>();
             graph.nodes().forEach(n -> nodes.put(n.id(), n));
@@ -59,12 +71,15 @@ public final class GraphEngine {
                     result = executeWithRetry(run, node, cancellation, sink, services);
                 } catch (GraphCancelledException cancelled) {
                     throw cancelled;
+                } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+                    throw paused;
                 } catch (Exception failure) {
                     cancellation.throwIfCancelled();
                     EdgeDefinition errorEdge = graph.edges().stream()
                             .filter(e -> e.source().equals(nodeId) && e.kind() == EdgeKind.ERROR)
                             .min(Comparator.comparingInt(EdgeDefinition::priority)).orElse(null);
                     if (errorEdge == null) throw failure;
+                    if (owner != null) owner.failedNode(nodeId, failure);
                     run.state(run.state().apply(StatePatch.builder()
                             .set("_error.nodeId", nodeId)
                             .set("_error.message", message(failure)).build()));
@@ -106,6 +121,13 @@ public final class GraphEngine {
 
                 if (cancellation.isPauseRequested()) return pause(run, sink);
             }
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            run.status(RunStatus.RECOVERY_REQUIRED);
+            run.error(message(paused));
+            run.nextNodeId(run.currentNodeId());
+            store.checkpoint(run, run.currentNodeId(), CheckpointPhase.PAUSE);
+            emit(sink, new GraphEvent.RunFinished(run.id(), run.status(), run.output(), run.error()));
+            return run;
         } catch (GraphCancelledException e) {
             run.status(RunStatus.CANCELLED);
             run.error(null);
@@ -119,6 +141,8 @@ public final class GraphEngine {
             emit(sink, new GraphEvent.RunFinished(run.id(), run.status(), run.output(), run.error()));
             log.error("工作流执行失败 run={} node={}", run.id(), run.currentNodeId(), failure);
             return run;
+        } finally {
+            if (owner != null) owner.close();
         }
     }
 
@@ -133,12 +157,14 @@ public final class GraphEngine {
             if (backoff > 0) awaitBackoff(backoff, cancellation);
             try {
                 NodeExecutionContext context = new NodeExecutionContext(run.id(), run.threadId(), node,
-                        run.state(), cancellation, listener, services);
+                        run.state(), cancellation, listener, services, run.stepCount());
                 NodeResult result = executor.execute(context);
                 cancellation.throwIfCancelled();
                 return result == null ? NodeResult.next() : result;
             } catch (GraphCancelledException e) {
                 throw e;
+            } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+                throw paused;
             } catch (Exception e) {
                 cancellation.throwIfCancelled();
                 last = e;
@@ -203,7 +229,8 @@ public final class GraphEngine {
         catch (Throwable persistFailure) { log.error("工作流终态检查点失败 run={}", run.id(), persistFailure); }
     }
 
-    private static void emit(GraphListener listener, GraphEvent event) {
+    private void emit(GraphListener listener, GraphEvent event) {
+        if (owner != null) owner.onEvent(event);
         try {
             listener.onEvent(event);
         } catch (Throwable listenerFailure) {

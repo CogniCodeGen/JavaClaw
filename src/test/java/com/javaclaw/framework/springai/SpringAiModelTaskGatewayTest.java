@@ -39,6 +39,51 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class SpringAiModelTaskGatewayTest {
 
     @Test
+    void everyPhysicalAttemptPersistsItsExactInputAndRawResponseAndTerminalOwnersAreRejected() throws Exception {
+        var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:model-steps-" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
+        new com.javaclaw.platform.data.SchemaInitializer(dataSource).initialize();
+        var mapper = new ObjectMapper().findAndRegisterModules();
+        var runs = new com.javaclaw.framework.store.JdbcRunStore(new org.springframework.jdbc.core.JdbcTemplate(dataSource),
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource), mapper, java.time.Clock.systemUTC());
+        RunId owner = RunId.random();
+        var runRequest = com.javaclaw.framework.api.RunRequest.builder()
+                .agent(com.javaclaw.framework.api.AgentDefinitionRef.latest("test"))
+                .profile(com.javaclaw.framework.api.RunProfileRef.latest("test"))
+                .source(com.javaclaw.framework.api.InvocationSource.chat())
+                .scope(new RunScope("workspace", "user", "session"))
+                .input(com.javaclaw.framework.api.InputBlock.text("original input")).build();
+        var empty = JsonNodeFactory.instance.objectNode();
+        runs.create(owner, runRequest, "test-plan", new com.javaclaw.framework.spi.RunEventDraft(
+                "core.run.created", 1, "test", null, null, empty));
+        runs.append(owner, java.util.Set.of(com.javaclaw.framework.api.RunState.CREATED),
+                com.javaclaw.framework.api.RunState.RUNNING, new com.javaclaw.framework.spi.RunEventDraft(
+                        "core.run.started", 1, "test", null, null, empty), null, null);
+        var ledger = new RunUsageLedger();
+        ledger.open(owner, RunBudget.UNBOUNDED, runRequest.scope());
+        AtomicInteger calls = new AtomicInteger();
+        SpringAiModelRegistry models = new SpringAiModelRegistry();
+        models.register("test:model", prompt -> calls.getAndIncrement() == 0
+                ? response("not-json", 7, 3) : response("{\"ok\":true}", 5, 2));
+        models.route("workspace", ModelTier.LIGHT, "test:model");
+        var gateway = new SpringAiModelTaskGateway(models, ledger,
+                new com.javaclaw.framework.core.RunEventModelTaskAuditSink(runs), mapper, new DirectExecutor(), runs);
+        gateway.execute(request(owner, 1)).toCompletableFuture().get();
+        var steps = new com.javaclaw.framework.core.RunStepQuery(runs).steps(owner);
+        assertEquals(2, steps.size());
+        assertEquals("not-json", steps.getFirst().output().path("message").path("text").asText());
+        assertEquals("{\"ok\":true}", steps.getLast().output().path("message").path("text").asText());
+        assertEquals(7, steps.getFirst().usage().path("inputTokens").asLong());
+        assertEquals("session", steps.getFirst().threadId());
+        assertEquals(2, steps.getFirst().input().path("messages").size());
+        runs.append(owner, java.util.Set.of(com.javaclaw.framework.api.RunState.RUNNING),
+                com.javaclaw.framework.api.RunState.COMPLETED, new com.javaclaw.framework.spi.RunEventDraft(
+                        "core.run.completed", 1, "test", null, null, empty), empty, null);
+        assertThrows(IllegalStateException.class, () -> gateway.execute(request(owner, 0)));
+        assertEquals(2, calls.get());
+    }
+
+    @Test
     void rejectedResponsesAreMeteredBeforeParsingAndRetry() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         ChatModel model = prompt -> calls.getAndIncrement() == 0

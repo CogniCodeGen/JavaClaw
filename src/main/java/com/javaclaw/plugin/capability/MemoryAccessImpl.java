@@ -1,6 +1,7 @@
 package com.javaclaw.plugin.capability;
 
 import com.javaclaw.memory.MemoryService;
+import com.javaclaw.memory.MemoryGraphScope;
 import com.javaclaw.plugin.CapabilityGuard;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.capability.MemoryAccess;
@@ -14,7 +15,6 @@ import java.util.Objects;
 /** Read-only plugin projection over durable workspace episodes, never over Agent internals. */
 public final class MemoryAccessImpl implements MemoryAccess {
     private static final Logger log = LoggerFactory.getLogger(MemoryAccessImpl.class);
-    private static final String WORKSPACE_MEMORY = "workspace";
 
     private final String pluginId;
     private final MemoryService memory;
@@ -27,15 +27,37 @@ public final class MemoryAccessImpl implements MemoryAccess {
     @Override
     public List<String> listAgents() {
         CapabilityGuard.require(Capability.MEMORY);
-        return memory.episodes().isEmpty() ? List.of() : List.of(WORKSPACE_MEMORY);
+        return memory.scopes().stream().filter(scope -> scope.kind() == MemoryGraphScope.Kind.THREAD)
+                .map(MemoryGraphScope::threadId).toList();
     }
 
     @Override
     public List<MemoryMessage> snapshot(String agentName) {
         CapabilityGuard.require(Capability.MEMORY);
-        if (!WORKSPACE_MEMORY.equals(agentName)) return List.of();
+        MemoryGraphScope selected = memory.scopes().stream()
+                .filter(scope -> scope.kind() == MemoryGraphScope.Kind.THREAD && scope.threadId().equals(agentName))
+                .findFirst().orElse(null);
+        return selected == null ? List.of() : read(selected);
+    }
+
+    @Override
+    public List<GraphScope> listGraphs() {
+        CapabilityGuard.require(Capability.MEMORY);
+        return memory.scopes().stream().filter(scope -> scope.kind() == MemoryGraphScope.Kind.THREAD)
+                .map(s -> new GraphScope(s.workspaceId(), s.userId(), s.threadId(), s.kind().name())).toList();
+    }
+
+    @Override
+    public List<MemoryMessage> snapshot(GraphScope requested) {
+        CapabilityGuard.require(Capability.MEMORY);
+        if (requested == null || !listGraphs().contains(requested)) return List.of();
+        return read(new MemoryGraphScope(requested.workspaceId(), requested.userId(),
+                requested.threadId(), MemoryGraphScope.Kind.THREAD));
+    }
+
+    private List<MemoryMessage> read(MemoryGraphScope scope) {
         List<MemoryMessage> result = new ArrayList<>();
-        for (var episode : memory.episodes()) {
+        for (var episode : memory.inScope(scope).episodes()) {
             if (episode.userInput != null) {
                 result.add(new MemoryMessage("user", "user", episode.userInput));
             }

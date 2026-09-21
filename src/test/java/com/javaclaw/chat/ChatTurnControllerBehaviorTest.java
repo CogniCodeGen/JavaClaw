@@ -217,11 +217,13 @@ class ChatTurnControllerBehaviorTest {
         drainFxQueue();
         int messagesBeforeClarification = sessions.currentSession().getMessages().size();
 
-        runFx(() -> plan.event(new ConversationEvent.Custom(
-                "clarify_request",
-                new com.javaclaw.agent.clarify.ClarifyPayload(
-                        "缺少边界", "目标版本是什么？").toJson())));
+        runFx(() -> {
+            plan.event(new ConversationEvent.Custom("clarify_request",
+                    new com.javaclaw.agent.clarify.ClarifyPayload("缺少边界", "目标版本是什么？").toJson()));
+            plan.terminal(new ConversationOutcome.WaitingInput("plan-turn", "等待补充边界"));
+        });
         assertFalse(turns.isStreaming());
+        assertTrue(plan.handle.cancellations.isEmpty(), "澄清只结束UI交付，不能中断仍等待输入的Agent轮次");
         assertEquals(messagesBeforeClarification + 1,
                 sessions.currentSession().getMessages().size());
 
@@ -230,6 +232,26 @@ class ChatTurnControllerBehaviorTest {
             plan.complete();
         });
         assertFalse(lastMessage(ChatMessage.Role.ASSISTANT).getContent().contains("不应出现"));
+    }
+
+    @Test
+    void 清空更换Thread身份且归档会话可恢复() throws Exception {
+        String original = sessions.currentSession().getId();
+        var threads = rootContext.getBean(com.javaclaw.framework.api.ThreadClient.class);
+        String workspace = kernel.current().context().workspaceId();
+        runFx(sessions::clearCurrentHistory);
+        String replacement = sessions.currentSession().getId();
+        assertFalse(original.equals(replacement));
+        org.junit.jupiter.api.Assertions.assertThrows(java.util.NoSuchElementException.class,
+                () -> threads.get(new com.javaclaw.framework.api.RunScope(workspace, "local-user", original)));
+        runFx(() -> sessions.archiveSession(replacement));
+        assertEquals(com.javaclaw.framework.api.ThreadStatus.ARCHIVED,
+                threads.get(new com.javaclaw.framework.api.RunScope(workspace, "local-user", replacement)).status());
+        assertFalse(replacement.equals(sessions.currentSession().getId()));
+        runFx(() -> sessions.resumeSession(replacement));
+        assertEquals(replacement, sessions.currentSession().getId());
+        assertEquals(com.javaclaw.framework.api.ThreadStatus.ACTIVE,
+                threads.get(new com.javaclaw.framework.api.RunScope(workspace, "local-user", replacement)).status());
     }
 
     @Test

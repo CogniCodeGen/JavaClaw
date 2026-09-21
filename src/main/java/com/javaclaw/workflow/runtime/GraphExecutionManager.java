@@ -33,11 +33,21 @@ public final class GraphExecutionManager implements AutoCloseable {
     private final WorkflowExtensionPlanProvider extensionPlans;
     private final ConcurrentHashMap<String, CancellationToken> active = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, TaskHandle<Void>> handles = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<CancellationToken, DriverSubmission> drivers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, WorkflowExtensionPlan> retainedPlans =
             new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> retainedPlanThreads = new ConcurrentHashMap<>();
+    private final java.util.Set<String> deletedThreads = ConcurrentHashMap.newKeySet();
     /** 同一 thread 同时只允许一个运行，避免共享 thread state 被并发覆盖。 */
     private final ConcurrentHashMap<String, String> activeThreads = new ConcurrentHashMap<>();
     private final AtomicBoolean accepting = new AtomicBoolean(true);
+    private com.javaclaw.framework.api.AgentClient agents;
+    private String workspaceId;
+
+    public void bindAgentClient(com.javaclaw.framework.api.AgentClient client, String workspace) {
+        agents = Objects.requireNonNull(client, "client");
+        workspaceId = Objects.requireNonNull(workspace, "workspace");
+    }
 
     public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store,
                                  TaskSubmitter tasks) {
@@ -65,7 +75,7 @@ public final class GraphExecutionManager implements AutoCloseable {
         try {
             GraphValidator.requireValid(definition, exactRegistry);
             run = new GraphRun(definition, threadId, initialState, plan.locks());
-            retainPlan(run.id(), plan);
+            retainPlan(run, plan);
             run.status(RunStatus.RUNNING);
             token = reserve(run);
             store.createRunningRun(run);
@@ -73,7 +83,10 @@ public final class GraphExecutionManager implements AutoCloseable {
             schedule(run, token, listener, services, exactRegistry);
             return run;
         } catch (RuntimeException | Error failure) {
-            if (run != null && token != null) release(run, token);
+            if (run != null && token != null) {
+                abandonSubmission(token);
+                release(run, token);
+            }
             if (run != null && persisted) markSchedulingFailure(run, failure);
             if (run != null) releasePlan(run.id());
             else plan.close();
@@ -95,7 +108,7 @@ public final class GraphExecutionManager implements AutoCloseable {
                 store.updateRun(run);
                 throw new IllegalStateException(run.error());
             }
-            retainPlan(runId, plan);
+            retainPlan(run, plan);
         }
         NodeExecutorRegistry exactRegistry = registry.fixedOverlay(plan::find);
         GraphValidator.requireValid(run.definition(), exactRegistry);
@@ -132,6 +145,7 @@ public final class GraphExecutionManager implements AutoCloseable {
             schedule(run, token, listener, services, exactRegistry);
             return run;
         } catch (RuntimeException | Error failure) {
+            abandonSubmission(token);
             release(run, token);
             if (activated) markSchedulingFailure(run, failure);
             throw failure;
@@ -145,6 +159,7 @@ public final class GraphExecutionManager implements AutoCloseable {
         if (run == null || run.status().terminal()) return false;
         run.status(RunStatus.CANCELLED);
         store.updateRun(run);
+        cancelOwner(run, "WORKFLOW_CANCELLED");
         releasePlan(runId);
         return true;
     }
@@ -157,10 +172,45 @@ public final class GraphExecutionManager implements AutoCloseable {
     public GraphRun load(String runId) { return store.loadRun(runId); }
     public boolean isActive(String runId) { return active.containsKey(runId); }
 
-    private CancellationToken reserve(GraphRun run) {
+    /** Stop the driver before removing its durable checkpoints; a late start cannot reacquire it. */
+    public void deleteThread(String threadId) {
+        List<DriverSubmission> pending;
+        synchronized (this) {
+            deletedThreads.add(threadId);
+            pending = drivers.values().stream().filter(driver -> driver.run().threadId().equals(threadId)).toList();
+            pending.forEach(driver -> driver.cancellation().cancel());
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        for (DriverSubmission driver : pending) {
+            try {
+                TaskHandle<Void> handle = driver.handleReady().get(
+                        Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                if (handle != null) {
+                    handle.cancel();
+                    handle.termination().get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                }
+                release(driver.run(), driver.cancellation());
+                drivers.remove(driver.cancellation(), driver);
+            } catch (ExecutionException ignored) {
+                // The driver failed and has exited; its persisted data can still be removed.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("等待已删除工作流退出时中断", interrupted);
+            } catch (TimeoutException timeout) {
+                throw new IllegalStateException("工作流尚未退出，删除将在后续恢复时继续", timeout);
+            }
+        }
+        retainedPlanThreads.forEach((runId, thread) -> {
+            if (threadId.equals(thread)) releasePlan(runId);
+        });
+        store.deleteThread(threadId);
+    }
+
+    private synchronized CancellationToken reserve(GraphRun run) {
         if (!accepting.get()) {
             throw new RejectedExecutionException("工作流执行器已关闭");
         }
+        if (deletedThreads.contains(run.threadId())) throw new IllegalStateException("工作流会话已删除");
         CancellationToken token = new CancellationToken();
         if (active.putIfAbsent(run.id(), token) != null) {
             throw new IllegalStateException("运行已在执行: " + run.id());
@@ -172,12 +222,14 @@ public final class GraphExecutionManager implements AutoCloseable {
                     "同一工作流 thread 已有运行在执行: thread=" + run.threadId()
                             + ", run=" + occupyingRun);
         }
+        drivers.put(token, new DriverSubmission(run, token, new java.util.concurrent.CompletableFuture<>()));
         return token;
     }
 
     private void schedule(GraphRun run, CancellationToken token,
                           GraphListener listener, WorkflowExecutionServices services,
                           NodeExecutorRegistry exactRegistry) {
+        DriverSubmission submission = drivers.get(token);
         TaskHandle<Void> handle = tasks.submit(TaskSpec.io("workflow-run-" + run.id()), context -> {
             context.cancellation().throwIfCancellationRequested();
             AtomicReference<GraphEvent.RunFinished> terminal = new AtomicReference<>();
@@ -186,7 +238,7 @@ public final class GraphExecutionManager implements AutoCloseable {
                 else if (listener != null) listener.onEvent(event);
             };
             try {
-                new GraphEngine(exactRegistry, store)
+                new GraphEngine(exactRegistry, store, agents, workspaceId)
                         .execute(run, token, lifecycleListener, services);
             } finally {
                 // 终态回调可能立刻为同一 thread 启动下一条排队运行；必须先释放两级占用，
@@ -204,17 +256,26 @@ public final class GraphExecutionManager implements AutoCloseable {
             }
             return null;
         });
+        submission.handleReady().complete(handle);
         handles.put(run.id(), handle);
-        handle.completion().whenComplete((ignored, failure) -> handles.remove(run.id(), handle));
+        handle.termination().whenComplete((ignored, failure) -> {
+            release(run, token);
+            handles.remove(run.id(), handle);
+            drivers.remove(token, submission);
+        });
         if (!accepting.get()) {
             token.cancel();
             handle.cancel();
         }
     }
 
-    private void release(GraphRun run, CancellationToken token) {
-        active.remove(run.id(), token);
-        activeThreads.remove(run.threadId(), run.id());
+    private synchronized void release(GraphRun run, CancellationToken token) {
+        if (active.remove(run.id(), token)) activeThreads.remove(run.threadId(), run.id());
+    }
+
+    private void abandonSubmission(CancellationToken token) {
+        DriverSubmission submission = drivers.get(token);
+        if (submission != null && submission.handleReady().complete(null)) drivers.remove(token, submission);
     }
 
     private void markSchedulingFailure(GraphRun run, Throwable failure) {
@@ -225,12 +286,22 @@ public final class GraphExecutionManager implements AutoCloseable {
         } catch (Throwable persistFailure) {
             failure.addSuppressed(persistFailure);
         }
+        cancelOwner(run, "WORKFLOW_SCHEDULING_FAILED");
         releasePlan(run.id());
     }
 
-    private void retainPlan(String runId, WorkflowExtensionPlan plan) {
+    private void cancelOwner(GraphRun run, String reason) {
+        String owner = run.state().get(GraphAgentTurn.OWNER_KEY).asText("");
+        if (agents != null && !owner.isBlank()) {
+            agents.cancel(new com.javaclaw.framework.api.RunId(owner),
+                    new com.javaclaw.framework.api.CancelReason(reason, run.id()));
+        }
+    }
+
+    private void retainPlan(GraphRun run, WorkflowExtensionPlan plan) {
         if (plan.locks().isEmpty()) return;
-        WorkflowExtensionPlan previous = retainedPlans.putIfAbsent(runId, plan);
+        retainedPlanThreads.put(run.id(), run.threadId());
+        WorkflowExtensionPlan previous = retainedPlans.putIfAbsent(run.id(), plan);
         if (previous != null && previous != plan) plan.close();
     }
 
@@ -239,7 +310,7 @@ public final class GraphExecutionManager implements AutoCloseable {
             if (run.extensionLocks().isEmpty()) continue;
             WorkflowExtensionPlan plan = extensionPlans.restore(run.extensionLocks()).orElse(null);
             if (plan != null) {
-                retainPlan(run.id(), plan);
+                retainPlan(run, plan);
                 continue;
             }
             run.status(RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION);
@@ -249,6 +320,7 @@ public final class GraphExecutionManager implements AutoCloseable {
     }
 
     private void releasePlan(String runId) {
+        retainedPlanThreads.remove(runId);
         WorkflowExtensionPlan plan = retainedPlans.remove(runId);
         if (plan != null) plan.close();
     }
@@ -272,7 +344,11 @@ public final class GraphExecutionManager implements AutoCloseable {
             }
         });
         retainedPlans.clear();
+        retainedPlanThreads.clear();
     }
+
+    private record DriverSubmission(GraphRun run, CancellationToken cancellation,
+            java.util.concurrent.CompletableFuture<TaskHandle<Void>> handleReady) { }
 
     private static void awaitGracefulCompletion(
             List<? extends TaskHandle<?>> taskHandles, Duration timeout) {

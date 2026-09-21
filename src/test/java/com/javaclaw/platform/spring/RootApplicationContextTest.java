@@ -126,4 +126,28 @@ class RootApplicationContextTest {
                     "凭据密钥缓存必须属于根 Context，不能跨数据目录共享静态状态");
         }
     }
+
+    @Test
+    void deletionWithoutWorkspaceRuntimePurgesWorkflowCheckpointsBeforeReturning() {
+        try (var context = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("cold-delete")))) {
+            var threads = context.getBean(com.javaclaw.framework.api.ThreadClient.class);
+            var scope = new com.javaclaw.framework.api.RunScope("closed-workspace", "local-user", "workflow");
+            threads.start(com.javaclaw.framework.api.ThreadStartRequest.root(scope, "task"));
+            var store = new com.javaclaw.workflow.store.H2GraphCheckpointStore(scope.workspaceId(),
+                    context.getBean(DatabaseAccess.class), context.getBean(com.fasterxml.jackson.databind.ObjectMapper.class));
+            var run = new com.javaclaw.workflow.runtime.GraphRun(
+                    com.javaclaw.workflow.editor.WorkflowEditorModel.blank("task"), scope.sessionId(),
+                    new com.javaclaw.workflow.model.GraphState());
+            store.createRun(run);
+            store.checkpoint(run, "start", com.javaclaw.workflow.runtime.CheckpointPhase.BEFORE_NODE);
+            store.saveThreadState(run.workflowId(), scope.sessionId(), run.state());
+            threads.delete(scope);
+            for (String table : java.util.List.of("workflow_runs", "workflow_checkpoints", "workflow_threads")) {
+                assertEquals(0, context.getBean(JdbcTemplate.class).queryForObject(
+                        "SELECT COUNT(*) FROM " + table + " WHERE workspace_id=?", Integer.class, scope.workspaceId()));
+            }
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                    () -> store.saveThreadState(run.workflowId(), scope.sessionId(), run.state()));
+        }
+    }
 }

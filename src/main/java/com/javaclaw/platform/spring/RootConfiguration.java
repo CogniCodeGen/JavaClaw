@@ -103,7 +103,7 @@ import java.time.Duration;
 
 /** 进程级基础设施的显式 Spring 装配。 */
 @Configuration(proxyBeanMethods = false)
-@Import(InferenceRootConfiguration.class)
+@Import({InferenceRootConfiguration.class, ThreadRuntimeConfiguration.class})
 public class RootConfiguration {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory
             .getLogger(RootConfiguration.class);
@@ -378,14 +378,18 @@ public class RootConfiguration {
             com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry capabilities,
             com.javaclaw.framework.store.JdbcExtensionStateStore extensionState,
             ManagedTaskExecutor managedTasks,
-            com.javaclaw.framework.extension.TrustedExtensionInstaller installer) {
+            com.javaclaw.framework.extension.TrustedExtensionInstaller installer,
+            ObjectProvider<com.javaclaw.framework.api.AgentClient> agents,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.application.agent.SubAgentApprovalObserver childApprovals) {
         var manager = new com.javaclaw.framework.extension.ExtensionManager(
                 new com.javaclaw.framework.spi.ExtensionContext(
                         frameworkClock, executor, modelTasks, extensionState),
                 new com.javaclaw.infrastructure.agent.ManagedBackgroundJobScheduler(managedTasks));
         var artifacts = new java.util.ArrayList<com.javaclaw.framework.extension.ExtensionArtifact>(
                 com.javaclaw.framework.builtin.BuiltinExtensionCatalog.create(
-                        capabilities, capabilities, capabilities, capabilities, hostTools));
+                        capabilities, capabilities, capabilities, capabilities, hostTools,
+                        new com.javaclaw.framework.builtin.SubAgentTools(agents::getObject, runs, childApprovals)));
         var restored = installer.loadAuthorized();
         artifacts.addAll(restored.artifacts());
         restored.failures().forEach(failure ->
@@ -526,9 +530,11 @@ public class RootConfiguration {
             com.javaclaw.framework.core.ToolInvocationGateway gateway,
             com.javaclaw.framework.core.AgentCompiler compiler,
             com.javaclaw.framework.spi.ToolApprovalResolver approvals,
-            Clock frameworkClock) {
+            Clock frameworkClock,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.api.AgentClient agents) {
         return new com.javaclaw.framework.core.DefaultToolClient(
-                gateway, compiler, frameworkClock, approvals);
+                gateway, compiler, frameworkClock, approvals, runs, agents);
     }
 
     @Bean
@@ -559,7 +565,8 @@ public class RootConfiguration {
             java.util.concurrent.Executor executor,
             ObjectMapper json,
             Clock frameworkClock,
-            com.javaclaw.framework.core.RunUsageLedger usage) {
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.infrastructure.agent.LegacyThreadImporter migration) {
         return new com.javaclaw.framework.core.AgentEngine(
                 compiler, runs, plans, reasoning, executor, json, frameworkClock, usage);
     }

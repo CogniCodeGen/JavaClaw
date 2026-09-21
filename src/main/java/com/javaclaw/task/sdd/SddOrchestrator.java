@@ -149,6 +149,7 @@ public final class SddOrchestrator {
             }
             return null;
         } catch (Exception e) {
+            if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
             log.error("[SDD] {} 编排异常", slug, e);
             return SddOutcome.failed("编排异常：" + e.getMessage());
         }
@@ -165,6 +166,7 @@ public final class SddOrchestrator {
             }
             return implementAndAccept(slug, change.proposal(), change.capabilities(), change.design());
         } catch (Exception e) {
+            if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
             log.error("[SDD] {} 实现与验收异常", slug, e);
             return SddOutcome.failed("实现与验收异常：" + e.getMessage());
         }
@@ -187,6 +189,7 @@ public final class SddOrchestrator {
             progress.log("从既有 change 续跑（当前 " + change.progressPercent() + "%）");
             return implementPrepared();
         } catch (Exception e) {
+            if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
             log.error("[SDD] {} 续跑异常", slug, e);
             return SddOutcome.failed("续跑异常：" + e.getMessage());
         }
@@ -251,7 +254,8 @@ public final class SddOrchestrator {
             progress.phase("验收");
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             List<Scenario> scenarios = change.allScenarios();
-            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, jdbc, json, workspaceId);
+            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, jdbc, json, workspaceId,
+                    store.ownerThreadId());
             cache.syncFingerprint(cache.fingerprint());
             int reused = 0;
             List<VerificationOutcome> outcomes = new ArrayList<>(scenarios.size());
@@ -330,6 +334,7 @@ public final class SddOrchestrator {
                 r = agents.executeTask(ctx, next, done, caps);
                 sameItemFailures = 0;
             } catch (Exception e) {
+                if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
                 if (next.index() != lastFailedIndex) {
                     lastFailedIndex = next.index();
                     sameItemFailures = 0;

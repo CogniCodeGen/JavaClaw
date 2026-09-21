@@ -65,11 +65,14 @@ public final class RunEventModelTaskAuditSink implements ModelTaskAuditSink {
 
     private void append(ModelTaskRequest request, String type, ObjectNode payload) {
         var stored = runs.find(request.ownerRunId());
-        if (stored.isEmpty() || stored.get().snapshot().state().terminal()) return;
+        if (stored.isEmpty() || stored.get().snapshot().state().terminal()) {
+            throw new IllegalStateException("model task requires an active owner turn: " + request.ownerRunId());
+        }
         var state = stored.get().snapshot().state();
-        runs.append(request.ownerRunId(), Set.of(state), state,
+        var appended = runs.append(request.ownerRunId(), Set.of(state), state,
                 new RunEventDraft(type, 1, "framework.springai",
                         stored.get().request().linkage().correlationId(), null, payload),
                 null, null);
+        if (appended.isEmpty()) throw new IllegalStateException("model task owner changed state: " + request.ownerRunId());
     }
 }

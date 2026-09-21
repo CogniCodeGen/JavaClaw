@@ -56,22 +56,28 @@ class DefaultToolInvocationGatewayTest {
     @Test
     void rawResultIsDurableWhilePostProcessedViewReturnsToModel() throws Exception {
         var events = new CopyOnWriteArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var steps = new CopyOnWriteArrayList<com.fasterxml.jackson.databind.JsonNode>();
         FrameworkTool tool = tool(new AtomicBoolean());
         ToolInvocationRequest request = request(tool,
                 List.of((descriptor, configuration, run) -> ToolPolicyDecision.ALLOW),
                 List.of((current, descriptor, context, run) ->
                         JsonNodeFactory.instance.objectNode()
-                                .put("preview", current.path("secret").asText().substring(0, 4))),
+                                .put("preview", current.path("rawPayload").asText().substring(0, 4))),
                 (type, version, producer, payload) -> {
                     if (type.equals("core.tool.completed")) events.add(payload.deepCopy());
+                    if (type.equals("core.step.completed")) steps.add(payload.deepCopy());
                 });
 
         ToolInvocationResult result = gateway().invoke(request).toCompletableFuture().get();
 
         assertEquals("sens", result.output().path("preview").asText());
         assertEquals("sensitive-full-result",
-                events.getFirst().path("output").path("secret").asText());
+                events.getFirst().path("output").path("rawPayload").asText());
         assertTrue(events.getFirst().path("modelViewChanged").asBoolean());
+        assertEquals("sensitive-full-result", steps.getFirst().path("output").path("rawOutput").path("rawPayload").asText());
+        assertEquals("sens", steps.getFirst().path("output").path("modelOutput").path("preview").asText());
+        assertEquals("<redacted>", steps.getFirst().path("output").path("rawOutput").path("secret").asText());
+        assertTrue(steps.getFirst().path("credentialRedacted").asBoolean());
     }
 
     @Test
@@ -273,7 +279,8 @@ class DefaultToolInvocationGatewayTest {
                     ToolExecutionContext context) {
                 executed.set(true);
                 return JsonNodeFactory.instance.objectNode()
-                        .put("secret", "sensitive-full-result");
+                        .put("rawPayload", "sensitive-full-result")
+                        .put("secret", "test-credential-value");
             }
         };
     }

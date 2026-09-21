@@ -6,4 +6,6 @@ import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
 interface MemorySectionController {
     void apply(Snapshot snapshot, String query);
     default void activated() {}
+    default void setMemoryService(com.javaclaw.application.memory.MemoryApplicationService service) {}
+    default boolean isBusy() { return false; }
 }

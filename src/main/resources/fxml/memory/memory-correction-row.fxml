@@ -23,7 +23,7 @@
         </children></VBox>
         <HBox spacing="3.0" alignment="CENTER"><children>
             <Button fx:id="revokeButton" text="⊘" onAction="#revokeRequested" styleClass="button, mc-icon-btn"><tooltip><Tooltip text="撤销：保留记录但不再生效"/></tooltip></Button>
-            <Button text="🗑" onAction="#deleteRequested" styleClass="button, mc-icon-btn, mc-icon-btn-danger"><tooltip><Tooltip text="彻底删除纠错记录"/></tooltip></Button>
+            <Button fx:id="deleteButton" text="🗑" onAction="#deleteRequested" styleClass="button, mc-icon-btn, mc-icon-btn-danger"><tooltip><Tooltip text="彻底删除纠错记录"/></tooltip></Button>
         </children></HBox>
     </children>
 </HBox>

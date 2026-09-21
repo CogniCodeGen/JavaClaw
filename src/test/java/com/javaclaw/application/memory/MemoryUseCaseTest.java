@@ -8,6 +8,7 @@ import com.javaclaw.application.memory.MemoryApplicationService.PersonaDraft;
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
 import com.javaclaw.application.memory.MemoryApplicationService.Statistics;
 import com.javaclaw.memory.graph.MemoryGraph;
+import com.javaclaw.memory.MemoryGraphScope;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -129,6 +130,88 @@ class MemoryUseCaseTest {
         assertFalse(new EmbeddingState("错误", 1).canRefill());
     }
 
+    @Test
+    void scopedViewsKeepBothTheirReadsAndEditsBoundToTheSelectedGraph() {
+        var habits = new MemoryGraphScope("workspace", "user", "", MemoryGraphScope.Kind.WORKSPACE_HABITS);
+        var first = new MemoryGraphScope("workspace", "user", "first", MemoryGraphScope.Kind.THREAD);
+        var second = new MemoryGraphScope("workspace", "user", "second", MemoryGraphScope.Kind.THREAD);
+        var firstPort = new FakePort();
+        var secondPort = new FakePort();
+        port.selectedScope = habits;
+        port.views.put(habits, port);
+        port.views.put(first, firstPort);
+        port.views.put(second, secondPort);
+        firstPort.selectedScope = first;
+        secondPort.selectedScope = second;
+        firstPort.snapshot = snapshot(new EmbeddingState("first graph unavailable", 2));
+        secondPort.snapshot = snapshot(new EmbeddingState("", 0));
+        MemoryApplicationService firstView = useCase.inScope(first);
+        MemoryApplicationService secondView = useCase.inScope(second);
+
+        firstView.addFact(new AddFactCommand("项目约定", "只属于第一会话"));
+        secondView.addFact(new AddFactCommand(null, "只属于第二会话"));
+
+        assertEquals(first, firstView.scope());
+        assertEquals(second, secondView.scope());
+        assertEquals(habits, useCase.scope(), "切换视图不能修改共享目录的 scope");
+        assertEquals(List.of(habits, first, second), useCase.scopes());
+        assertEquals("项目约定", firstPort.addedSection);
+        assertEquals("只属于第一会话", firstPort.addedText);
+        assertEquals("只属于第二会话", secondPort.addedText);
+        assertEquals(null, port.addedText, "会话编辑不能意外写入个人习惯");
+        assertEquals(2, firstView.snapshot().embedding().pendingCount());
+        assertEquals(0, secondView.snapshot().embedding().pendingCount());
+        var foreign = new MemoryGraphScope("other-workspace", "user", "first", MemoryGraphScope.Kind.THREAD);
+        assertThrows(IllegalArgumentException.class, () -> useCase.inScope(foreign));
+        assertEquals(first, firstView.scope());
+    }
+
+    @Test
+    void healthyEmptyGraphSkipsRefillAndExplicitRefillReportsMovedItems() {
+        port.probeError = null;
+        port.snapshot = snapshot(new EmbeddingState(null, 0));
+        assertEquals(0, useCase.probeAndRefill().affected());
+        assertEquals(0, port.promotions, "没有待索引内容时健康探测不能触发重建");
+        port.promoteCount = 2;
+        assertEquals("已回填 2 条记忆", useCase.refillPending().message());
+        assertEquals(1, port.promotions);
+    }
+
+    @Test
+    void rejectsAbsentDeleteSelectionAndPersonaButAllowsPreferenceOnlyOrTabooOnlyPersona() {
+        assertThrows(ValidationException.class, () -> useCase.deleteFacts(null));
+        assertThrows(ValidationException.class, () -> useCase.savePersona(null));
+        PersonaDraft preferences = new PersonaDraft("", "", List.of("简短回答"), List.of());
+        useCase.savePersona(preferences);
+        assertEquals(preferences, port.savedPersona);
+        PersonaDraft taboos = new PersonaDraft("", "", List.of(), List.of("重复敏感内容"));
+        useCase.savePersona(taboos);
+        assertEquals(taboos, port.savedPersona);
+    }
+
+    @Test
+    void emptyLegacySnapshotAndOptionalNodeFieldsRemainSafeForScopeSelection() {
+        Snapshot legacy = new Snapshot(null, null, null, null, null, null, null, null, null);
+        assertEquals(Statistics.empty(), legacy.statistics());
+        assertTrue(legacy.facts().isEmpty());
+        assertTrue(legacy.episodes().isEmpty());
+        assertTrue(legacy.entities().isEmpty());
+        assertTrue(legacy.documents().isEmpty());
+        assertTrue(legacy.corrections().isEmpty());
+        assertTrue(legacy.changes().isEmpty());
+        assertEquals(PersonaDraft.empty(), legacy.persona());
+        assertFalse(legacy.embedding().canRefill());
+        var fact = new MemoryApplicationService.FactItem(null, null, null, 0, 0, 0,
+                false, false, false, false, false, true, null, null);
+        assertEquals("其它", fact.section());
+        assertEquals("", fact.sourceEpisodeId());
+        assertTrue(fact.entityNames().isEmpty());
+        assertEquals("其它", new MemoryApplicationService.EntityItem(null, null, " ", 0).type());
+        assertEquals("—", new MemoryApplicationService.KnowledgeDocument(null, 0, 0, null).importedAt());
+        assertFalse(new MemoryApplicationService.EpisodeItem(null, null, null, null, 0, true, 0).hasToolTrace());
+        assertTrue(new MemoryApplicationService.EpisodeItem("id", "input", "output", "[]", 0, false, 0).hasToolTrace());
+    }
+
     private static Snapshot snapshot(EmbeddingState embedding) {
         return new Snapshot(Statistics.empty(), List.of(), List.of(), List.of(), List.of(),
                 PersonaDraft.empty(), List.of(), List.of(), embedding);
@@ -136,6 +219,8 @@ class MemoryUseCaseTest {
 
     private static final class FakePort implements MemoryPort {
         private Snapshot snapshot = snapshot(new EmbeddingState("", 0));
+        private MemoryGraphScope selectedScope;
+        private final java.util.Map<MemoryGraphScope, FakePort> views = new java.util.LinkedHashMap<>();
         private String probeError = "";
         private int promoteCount;
         private int probes;
@@ -155,6 +240,13 @@ class MemoryUseCaseTest {
         private String exportMarkdown;
         private final List<String> stateActions = new ArrayList<>();
 
+        @Override public List<MemoryGraphScope> scopes() { return List.copyOf(views.keySet()); }
+        @Override public MemoryGraphScope scope() { return selectedScope; }
+        @Override public MemoryPort inScope(MemoryGraphScope scope) {
+            FakePort selected = views.get(scope);
+            if (selected == null) throw new IllegalArgumentException("图谱不属于当前工作区");
+            return selected;
+        }
         @Override public Snapshot load() { return snapshot; }
         @Override public String probeEmbedding() { probes++; return probeError; }
         @Override public int promoteAllPending() { promotions++; return promoteCount; }

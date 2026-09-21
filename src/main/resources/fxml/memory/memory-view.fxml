@@ -3,6 +3,7 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.Group?>
 <?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.control.TextField?>
@@ -23,6 +24,8 @@
                     <padding><Insets top="14.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                     <children>
                         <Label text="记忆库" styleClass="modal-nav-group"/>
+                        <ComboBox fx:id="graphScope" maxWidth="Infinity" promptText="选择记忆图谱"
+                                  accessibleText="记忆图谱范围"/>
                         <Button fx:id="overviewButton" text="总览" maxWidth="Infinity"
                                 onAction="#showOverview" styleClass="button, modal-nav-btn"/>
                         <Button fx:id="factsButton" text="事实" maxWidth="Infinity"
@@ -73,7 +76,7 @@
                                     </children>
                                 </HBox>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <Label text="全局检索 · 向量召回" styleClass="mc-header-tag"/>
+                                <Label text="独立图谱 · 混合召回" styleClass="mc-header-tag"/>
                             </children>
                         </HBox>
                         <HBox fx:id="degradeBanner" alignment="CENTER_LEFT" spacing="9.0"

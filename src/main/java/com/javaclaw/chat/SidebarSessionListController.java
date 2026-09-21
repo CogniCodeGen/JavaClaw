@@ -29,9 +29,7 @@ import java.util.function.Consumer;
 /**
  * Coordinates session filtering, grouping, selection and batch actions.
  *
- * <p>The controller owns page state only. Persistence and workspace effects are emitted
- * through callbacks into the parent application controller. List cells are virtualized and
- * each cell loads its FXML exactly once.</p>
+ * <p>Persistence is delegated; virtualized cells load their FXML once.</p>
  */
 public final class SidebarSessionListController
         implements SidebarSessionCellActions, AutoCloseable {
@@ -59,6 +57,10 @@ public final class SidebarSessionListController
     private ChangeListener<String> searchListener;
     private Consumer<String> onSwitchSession;
     private Consumer<String> onDeleteSession;
+    private Consumer<String> onArchiveSession;
+    private Consumer<String> onResumeSession;
+    private Consumer<String> onForkSession;
+    private Consumer<String> onInspectSession;
     private Consumer<List<String>> onBatchDeleteSessions;
     private boolean closed;
 
@@ -149,6 +151,21 @@ public final class SidebarSessionListController
         onDeleteSession = callback;
     }
 
+    public void setOnArchiveSession(Consumer<String> callback) { onArchiveSession = callback; }
+    public void setOnResumeSession(Consumer<String> callback) { onResumeSession = callback; }
+    public void setOnForkSession(Consumer<String> callback) { onForkSession = callback; }
+    public void setOnInspectSession(Consumer<String> callback) { onInspectSession = callback; }
+
+    public void updateLifecycle(ChatSession session) {
+        for (int index = 0; index < sessions.size(); index++) {
+            if (sessions.get(index).id().equals(session.getId())) {
+                sessions.set(index, SessionState.from(session));
+                refreshProjection();
+                return;
+            }
+        }
+    }
+
     public void setOnBatchDeleteSessions(Consumer<List<String>> callback) {
         onBatchDeleteSessions = callback;
     }
@@ -214,6 +231,11 @@ public final class SidebarSessionListController
         if (onDeleteSession != null) onDeleteSession.accept(sessionId);
     }
 
+    @Override public void archive(String id) { if (onArchiveSession != null) onArchiveSession.accept(id); }
+    @Override public void resume(String id) { if (onResumeSession != null) onResumeSession.accept(id); }
+    @Override public void fork(String id) { if (onForkSession != null) onForkSession.accept(id); }
+    @Override public void inspect(String id) { if (onInspectSession != null) onInspectSession.accept(id); }
+
     @Override
     public void checked(String sessionId, boolean selected) {
         if (selected) checkedSessionIds.add(sessionId);
@@ -266,7 +288,7 @@ public final class SidebarSessionListController
         return new SidebarSessionItem.Conversation(
                 state.id(), state.title(), state.timeText(),
                 !batchMode && state.id().equals(viewModel.selectedSessionIdProperty().get()),
-                batchMode, checkedSessionIds.contains(state.id()));
+                batchMode, checkedSessionIds.contains(state.id()), state.archived(), state.parentThreadId());
     }
 
     private void updateEmptyState(int visibleSessions) {
@@ -337,6 +359,10 @@ public final class SidebarSessionListController
         checkedSessionIds.clear();
         onSwitchSession = null;
         onDeleteSession = null;
+        onArchiveSession = null;
+        onResumeSession = null;
+        onForkSession = null;
+        onInspectSession = null;
         onBatchDeleteSessions = null;
     }
 
@@ -348,15 +374,18 @@ public final class SidebarSessionListController
             String id,
             String title,
             LocalDateTime createdAt,
-            String timeText
+            String timeText,
+            boolean archived,
+            String parentThreadId
     ) {
         static SessionState from(ChatSession session) {
             return new SessionState(session.getId(), normalizedTitle(session.getTitle()),
-                    session.getCreatedAt(), formatTime(session.getCreatedAt()));
+                    session.getCreatedAt(), formatTime(session.getCreatedAt()),
+                    session.isArchived(), session.getParentThreadId());
         }
 
         SessionState withTitle(String value) {
-            return new SessionState(id, value, createdAt, timeText);
+            return new SessionState(id, value, createdAt, timeText, archived, parentThreadId);
         }
     }
 }

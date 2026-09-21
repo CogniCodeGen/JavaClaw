@@ -7,32 +7,20 @@ import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
-import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.store.MemoryStore;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.javaclaw.util.TextSimilarity;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-/**
- * 召回器 —— 每轮对话前按 query 做多索引检索，构建注入系统提示词的上下文块。
- *
- * <p>组成（取代旧 buildContextInjection 的整文件注入）：</p>
- * <ul>
- *   <li><b>人格</b>：整段注入（身份级，不参与 Top-K），永远在</li>
- *   <li><b>相关事实</b>：语义 Top-K（JVector）</li>
- *   <li><b>相关情景</b>：情景 Top-K（历史对话片段）</li>
- * </ul>
- *
- * <p>降级：嵌入不可用 / query 空 → 仅注入人格（等价于"无检索"，但对话不受影响）。</p>
- *
- * @author JavaClaw
- */
+/** Bounded hybrid retrieval over explicitly selected graphs, including unindexed raw evidence. */
 public class Recaller {
-
-    private static final Logger log = LoggerFactory.getLogger(Recaller.class);
-
     private final MemoryStore store;
     private final EmbeddingGateway gate;
     private final AgentConfig settings;
@@ -40,84 +28,149 @@ public class Recaller {
     public Recaller(MemoryStore store, EmbeddingGateway gate, AgentConfig settings) {
         this.store = store;
         this.gate = gate;
-        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.settings = settings;
     }
 
-    /**
-     * 构建本轮注入上下文。query 为空时只注入人格。
-     *
-     * @return {@code <loaded_context>...</loaded_context>} 文本；无任何内容时返回空串
-     */
     public String recall(String query) {
-        AgentConfig cfg = settings;
-        int topK = cfg.getMemoryRecallTopK();
-        int epK = cfg.getMemoryRecallEpisodes();
-        double threshold = cfg.getMemoryRecallThreshold();
-        int budget = cfg.getMemoryRecallMaxChars();
-
-        Persona persona = store.getPersona();
-        String personaText = persona != null && persona.content != null ? persona.content.trim() : "";
-
-        List<MemoryStore.Scored<Fact>> facts = List.of();
-        List<MemoryStore.Scored<Episode>> episodes = List.of();
-        List<CorrectionRecord> corrections = CorrectionEngine.selectRelevant(
-                store.allCorrections(), query, 6);
-        float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
-        if (q != null) {
-            try {
-                facts = store.searchFacts(q, topK, threshold);
-                episodes = store.searchEpisodes(q, epK, threshold);
-            } catch (Exception e) {
-                log.warn("记忆召回失败（已降级为仅人格注入）: {}", e.getMessage());
-            }
-        }
-
-        if (personaText.isEmpty() && corrections.isEmpty()
-                && facts.isEmpty() && episodes.isEmpty()) {
-            return "";
-        }
-
-        StringBuilder sb = new StringBuilder("\n\n<loaded_context>\n");
-        if (!corrections.isEmpty()) {
-            String correctionPrompt =
-                    new CorrectionTurnContext(corrections, null).toPrompt();
-            sb.append(correctionPrompt);
-        }
-        if (!personaText.isEmpty()) {
-            sb.append("<persona>\n").append(personaText).append("\n</persona>\n");
-        }
-
-        int used = sb.length();
-        if (!facts.isEmpty()) {
-            sb.append("<relevant_memory>\n");
-            for (MemoryStore.Scored<Fact> s : facts) {
-                String line = "- " + s.entity().text + "\n";
-                if (used + line.length() > budget) break;
-                sb.append(line);
-                used += line.length();
-            }
-            sb.append("</relevant_memory>\n");
-        }
-        if (!episodes.isEmpty()) {
-            sb.append("<relevant_history>\n");
-            for (MemoryStore.Scored<Episode> s : episodes) {
-                Episode e = s.entity();
-                String snippet = "- 用户曾问：" + brief(e.userInput) + "\n";
-                if (used + snippet.length() > budget) break;
-                sb.append(snippet);
-                used += snippet.length();
-            }
-            sb.append("</relevant_history>\n");
-        }
-        sb.append("</loaded_context>\n");
-
-        log.debug("记忆召回 — 事实 {} 条，情景 {} 条，注入约 {} 字符", facts.size(), episodes.size(), used);
-        return sb.toString();
+        return recallGraphs(List.of(store), gate, settings, query, settings.getMemoryRecallTopK());
     }
 
-    private static String brief(String s) {
-        if (s == null) return "";
-        s = s.strip().replace("\n", " ");
-        return s.length() > 100 ? s.substring(0, 100) + "…" : s;
+    public static String recallGraphs(List<MemoryStore> stores, EmbeddingGateway embeddings,
+                                      AgentConfig settings, String query, int topK) {
+        int limit = Math.max(1, Math.min(50, topK));
+        int episodeLimit = Math.max(1, settings.getMemoryRecallEpisodes());
+        int budget = Math.max(256, settings.getMemoryRecallMaxChars());
+        float[] vector;
+        try { vector = query == null || query.isBlank() ? null
+                : embeddings.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL); }
+        catch (RuntimeException ignored) { vector = null; }
+        StringBuilder body = new StringBuilder();
+        Set<String> emittedFacts = new LinkedHashSet<>();
+        Set<String> emittedEpisodes = new LinkedHashSet<>();
+        for (int graphIndex = 0; graphIndex < stores.size(); graphIndex++) {
+            MemoryStore store = stores.get(graphIndex);
+            if (store == null || !store.isOpen()) continue;
+            Persona persona = store.getPersona();
+            if (persona != null && persona.content != null) append(body, "<persona>\n"
+                    + persona.content + "\n</persona>\n", budget);
+            var corrections = CorrectionEngine.selectRelevant(store.allCorrections(), query, 6);
+            if (!corrections.isEmpty()) append(body,
+                    new CorrectionTurnContext(corrections, null).toPrompt(), budget);
+        }
+        int graphNumber = 0;
+        for (MemoryStore store : stores) {
+            String graphLabel = graphNumber++ == 0 ? "当前图谱" : "工作区个人习惯";
+            if (store == null || !store.isOpen()) continue;
+            GraphEvidence evidenceSnapshot = evidence(store, vector, limit, episodeLimit,
+                    settings.getMemoryRecallThreshold());
+            List<Fact> allFacts = evidenceSnapshot.allFacts();
+            List<Episode> allEpisodes = evidenceSnapshot.allEpisodes();
+            Map<Fact, Double> facts = evidenceSnapshot.facts();
+            Map<Episode, Double> episodes = evidenceSnapshot.episodes();
+            for (Fact fact : allFacts) {
+                double lexical = similarity(query, fact.text);
+                if (lexical > 0 || fact.pinned || fact.userAsserted) {
+                    facts.merge(fact, Math.max(lexical, fact.userAsserted ? .2 : .1), Math::max);
+                }
+            }
+            for (Episode episode : allEpisodes) {
+                double lexical = similarity(query, episode.userInput + " " + episode.assistantReply);
+                if (lexical > 0) episodes.merge(episode, lexical, Math::max);
+            }
+            List<Fact> rankedFacts = facts.entrySet().stream()
+                    .sorted(Map.Entry.<Fact, Double>comparingByValue().reversed())
+                    .limit(limit).map(Map.Entry::getKey).toList();
+            // One-hop entity and source traversal stays strictly inside this graph.
+            Set<String> entities = new LinkedHashSet<>();
+            for (Fact fact : rankedFacts) {
+                if (fact.about != null) fact.about.forEach(e -> { if (e != null) entities.add(e.id); });
+                if (fact.source != null) episodes.putIfAbsent(fact.source, .8);
+            }
+            for (Fact fact : allFacts) {
+                if (fact.about != null && fact.about.stream().anyMatch(e -> e != null && entities.contains(e.id))) {
+                    facts.putIfAbsent(fact, .15);
+                }
+            }
+            for (var hit : facts.entrySet().stream()
+                    .sorted(Map.Entry.<Fact, Double>comparingByValue().reversed()).limit(limit).toList()) {
+                Fact fact = hit.getKey();
+                if (!emittedFacts.add(fact.text)) continue;
+                String source = fact.source == null ? "" : "；来源 " + fact.source.evidenceKey();
+                append(body, "- [" + graphLabel + source + "] " + clip(fact.text, 1000) + "\n", budget);
+            }
+            // Short follow-ups and an unavailable embedding service still see recent source turns.
+            if (episodes.isEmpty() || vector == null || (query != null && query.strip().length() < 8)) {
+                allEpisodes.stream().sorted(Comparator.comparingLong((Episode e) -> e.timestamp).reversed())
+                        .limit(episodeLimit).forEach(e -> episodes.putIfAbsent(e, .05));
+            }
+            for (var hit : episodes.entrySet().stream()
+                    .sorted(Map.Entry.<Episode, Double>comparingByValue().reversed()
+                            .thenComparing(e -> -e.getKey().timestamp)).limit(episodeLimit).toList()) {
+                Episode episode = hit.getKey();
+                if (!emittedEpisodes.add(episode.evidenceKey())) continue;
+                String evidence = "<history_evidence source=\"" + escape(episode.evidenceKey()) + "\">\n"
+                        + "用户：" + clip(episode.userInput, 450) + "\n"
+                        + "当时回复：" + clip(episode.assistantReply, 1200) + "\n"
+                        + (episode.toolTraceJson == null ? "" : "工具依据：" + clip(episode.toolTraceJson, 500) + "\n")
+                        + "</history_evidence>\n";
+                append(body, evidence, budget);
+            }
+        }
+        return body.isEmpty() ? "" : "\n\n<loaded_context>\n" + body + "</loaded_context>\n";
+    }
+
+    private static GraphEvidence evidence(MemoryStore store, float[] vector, int factLimit,
+                                          int episodeLimit, double threshold) {
+        var snapshot = new GraphEvidence(new ArrayList<>(), new ArrayList<>(),
+                new LinkedHashMap<>(), new LinkedHashMap<>());
+        // 暂存迁移先删除再加入索引；两个集合必须共享写入锁，防止漏掉已持久化原文。
+        // 向量已在锁外计算；这里只复制本地图谱和索引结果。
+        store.withProjectionLock(() -> {
+            snapshot.allFacts().addAll(store.allFacts());
+            store.allPendingFacts().stream().filter(Recaller::verifiedPending)
+                    .forEach(snapshot.allFacts()::add);
+            snapshot.allFacts().removeIf(f -> f.superseded || f.contested);
+            snapshot.allEpisodes().addAll(store.allEpisodes());
+            snapshot.allEpisodes().addAll(store.allPendingEpisodes());
+            if (vector != null) {
+                try {
+                    for (var hit : store.searchFacts(vector, factLimit, threshold))
+                        snapshot.facts().put(hit.entity(), (double) hit.score());
+                    for (var hit : store.searchEpisodes(vector, episodeLimit, threshold))
+                        snapshot.episodes().put(hit.entity(), (double) hit.score());
+                } catch (RuntimeException ignored) { /* 原始证据仍可用于词法召回。 */ }
+            }
+        });
+        return snapshot;
+    }
+
+    private record GraphEvidence(List<Fact> allFacts, List<Episode> allEpisodes,
+                                 Map<Fact, Double> facts, Map<Episode, Double> episodes) {}
+
+    private static boolean verifiedPending(Fact fact) {
+        return fact.userAsserted || fact.userEdited || "HABIT_REVIEW".equals(fact.sourceKind)
+                || "DISTILLED".equals(fact.sourceKind);
+    }
+
+    private static double similarity(String query, String text) {
+        if (query == null || query.isBlank() || text == null || text.isBlank()) return 0;
+        String q = query.strip().toLowerCase(java.util.Locale.ROOT);
+        String t = text.toLowerCase(java.util.Locale.ROOT);
+        if (t.contains(q)) return 1;
+        double score = TextSimilarity.bigramJaccard(q, t);
+        return score >= .04 ? score : 0;
+    }
+
+    private static void append(StringBuilder target, String value, int budget) {
+        if (target.length() + value.length() <= budget) target.append(value);
+    }
+
+    private static String clip(String text, int max) {
+        if (text == null) return "";
+        return text.length() <= max ? text : text.substring(0, max) + "…";
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
     }
 }

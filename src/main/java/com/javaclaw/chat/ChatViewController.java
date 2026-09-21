@@ -177,6 +177,10 @@ public class ChatViewController implements AutoCloseable {
         sidebarController.setOnNewChat(sessionCoordinator::newSession);
         sidebarController.setOnSwitchSession(sessionCoordinator::switchSession);
         sidebarController.setOnDeleteSession(sessionCoordinator::deleteSession);
+        sidebarController.setOnArchiveSession(sessionCoordinator::archiveSession);
+        sidebarController.setOnResumeSession(sessionCoordinator::resumeSession);
+        sidebarController.setOnForkSession(sessionCoordinator::forkSession);
+        sidebarController.setOnInspectSession(sessionCoordinator::inspectSession);
         sidebarController.setOnBatchDeleteSessions(sessionCoordinator::deleteSessions);
         sidebarController.setOnOpenSettings(() -> navigation.openSettings(null));
         sidebarController.setOnOpenSkillCenter(navigation::openSkills);

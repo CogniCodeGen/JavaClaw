@@ -73,6 +73,32 @@ class SidebarFxmlLoadTest {
             SidebarSessionCellController cell =
                     cellHandle.controller(SidebarSessionCellController.class);
             assertNotNull(injectedField(cell, "conversationRow"));
+            java.util.List<String> lifecycle = new java.util.ArrayList<>();
+            SidebarSessionCellActions actions = new SidebarSessionCellActions() {
+                @Override public void activate(String id) { }
+                @Override public void delete(String id) { }
+                @Override public void checked(String id, boolean selected) { }
+                @Override public void archive(String id) { lifecycle.add("archive:" + id); }
+                @Override public void resume(String id) { lifecycle.add("resume:" + id); }
+                @Override public void fork(String id) { lifecycle.add("fork:" + id); }
+                @Override public void inspect(String id) { lifecycle.add("inspect:" + id); }
+            };
+            callFx(() -> {
+                cell.show(new SidebarSessionItem.Conversation("child", "Worker", "today", false,
+                        false, false, false, "parent"), actions);
+                for (String name : java.util.List.of("archiveItem", "resumeItem", "forkItem", "inspectItem"))
+                    ((javafx.scene.control.MenuItem) injectedField(cell, name)).fire();
+                cell.show(new SidebarSessionItem.Conversation("child", "Worker", "today", false,
+                        true, false, true, "parent"), actions);
+                assertTrue(((javafx.scene.control.Label) injectedField(cell, "titleLabel")).getText().contains("[已归档] ↳"));
+                for (String name : java.util.List.of("archiveItem", "resumeItem", "forkItem", "inspectItem")) {
+                    var item = (javafx.scene.control.MenuItem) injectedField(cell, name);
+                    assertTrue(item.isDisable());
+                    item.fire();
+                }
+                return null;
+            });
+            assertEquals(java.util.List.of("archive:child", "resume:child", "fork:child", "inspect:child"), lifecycle);
             callFx(() -> {
                 cellHandle.close();
                 return null;

@@ -58,6 +58,39 @@ class WorkspaceSpringContextFactoryTest {
         }
     }
 
+    @Test
+    void productionWorkspaceRegistersOwnedWorkflowAndSddDeletionListeners() {
+        try (var root = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("lifecycle")));
+             var child = root.getBean(WorkspaceSpringContextFactory.class).create(workspace("lifecycle"), options())) {
+            var threads = root.getBean(com.javaclaw.framework.api.ThreadClient.class);
+            var parent = new com.javaclaw.framework.api.RunScope("lifecycle", "local-user", "conversation");
+            var worker = new com.javaclaw.framework.api.RunScope("lifecycle", "local-user", "workflow-child");
+            threads.start(com.javaclaw.framework.api.ThreadStartRequest.root(parent, "parent"));
+            threads.start(new com.javaclaw.framework.api.ThreadStartRequest(worker, "worker", null, parent, null));
+            var checkpoints = child.bean(com.javaclaw.workflow.store.GraphCheckpointStore.class);
+            var run = new com.javaclaw.workflow.runtime.GraphRun(
+                    com.javaclaw.workflow.editor.WorkflowEditorModel.blank("task"), worker.sessionId(),
+                    new com.javaclaw.workflow.model.GraphState());
+            checkpoints.createRun(run);
+            checkpoints.checkpoint(run, "start", com.javaclaw.workflow.runtime.CheckpointPhase.BEFORE_NODE);
+            threads.delete(parent);
+            assertEquals(com.javaclaw.framework.api.ThreadStatus.DELETED,
+                    root.getBean(com.javaclaw.framework.store.JdbcThreadStore.class).require(worker).status());
+            assertEquals(null, checkpoints.loadRun(run.id()));
+            assertThrows(IllegalStateException.class, () -> checkpoints.createRun(run));
+
+            var tasks = child.bean(com.javaclaw.task.sdd.run.SddTaskManager.class);
+            var task = tasks.create("task", "description", null, null, 1000, null, "2026-09-21");
+            var coordinator = new com.javaclaw.framework.api.RunScope("lifecycle", "local-user",
+                    "lifecycle:" + task.id + ":system-sdd");
+            threads.start(com.javaclaw.framework.api.ThreadStartRequest.root(coordinator, "sdd"));
+            threads.delete(coordinator);
+            assertTrue(tasks.list().isEmpty());
+            assertEquals(0, root.getBean(JdbcTemplate.class).queryForObject(
+                    "SELECT COUNT(*) FROM sdd_tasks WHERE workspace_id='lifecycle'", Integer.class));
+        }
+    }
+
     private WorkspaceContext workspace(String id) {
         Path base = tempDirectory.resolve(id);
         return new WorkspaceContext(id, base, base.resolve("data"), base.resolve("browser"),

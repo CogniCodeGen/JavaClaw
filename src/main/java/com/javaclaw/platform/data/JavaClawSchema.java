@@ -485,8 +485,6 @@ final class JavaClawSchema {
                         updated_at BIGINT NOT NULL
                     )
                     """);
-            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_idempotency "
-                    + "ON agent_runs(workspace_id, idempotency_key)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_state "
                     + "ON agent_runs(workspace_id, state, updated_at)");
             st.execute("""
@@ -516,6 +514,7 @@ final class JavaClawSchema {
                     """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_agent_run_outbox_pending "
                     + "ON agent_run_outbox(published_at, created_at)");
+            ThreadSchema.initialize(st);
             st.execute("""
                     CREATE TABLE IF NOT EXISTS agent_extension_state (
                         run_id VARCHAR(128) NOT NULL,

@@ -21,16 +21,23 @@ final class SpringAiToolCallback implements ToolCallback {
     private final ToolInvocationGateway gateway;
     private final ObjectMapper json;
     private final ToolDefinition definition;
+    private final ModelStepJournal journal;
 
     SpringAiToolCallback(
             FrameworkTool tool,
             ReasoningRequest reasoning,
             ToolInvocationGateway gateway,
             ObjectMapper json) {
+        this(tool, reasoning, gateway, json, null);
+    }
+
+    SpringAiToolCallback(FrameworkTool tool, ReasoningRequest reasoning,
+                         ToolInvocationGateway gateway, ObjectMapper json, ModelStepJournal journal) {
         this.tool = Objects.requireNonNull(tool, "tool");
         this.reasoning = Objects.requireNonNull(reasoning, "reasoning");
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.json = Objects.requireNonNull(json, "json");
+        this.journal = journal;
         var descriptor = tool.descriptor();
         this.definition = ToolDefinition.builder()
                 .name(descriptor.name())
@@ -58,8 +65,9 @@ final class SpringAiToolCallback implements ToolCallback {
     public String call(String toolInput, ToolContext ignored) {
         try {
             JsonNode arguments = json.readTree(toolInput);
-            ToolInvocationResult result = invoke(
-                    tool, arguments, reasoning, gateway, UUID.randomUUID().toString());
+            ToolInvocationResult result = journal == null
+                    ? invoke(tool, arguments, reasoning, gateway, UUID.randomUUID().toString())
+                    : journal.invoke(tool, arguments, gateway);
             return json.writeValueAsString(result.output());
         } catch (CompletionException failure) {
             throw propagate(failure);

@@ -46,6 +46,15 @@ public final class SddTaskStore {
     }
 
     public List<SddManagedTask> loadAll() {
+        List<SddManagedTask> live = new ArrayList<>();
+        for (SddManagedTask task : storedTasks()) {
+            if (isDeleted(task.id)) deleteTask(task);
+            else live.add(task);
+        }
+        return List.copyOf(live);
+    }
+
+    List<SddManagedTask> storedTasks() {
         return jdbc.query("""
                         SELECT task_json
                         FROM sdd_tasks
@@ -65,10 +74,36 @@ public final class SddTaskStore {
             rows.add(new Object[]{workspaceId, task.id, encode(task)});
         }
         transactions.executeWithoutResult(status -> {
-            jdbc.update("DELETE FROM sdd_tasks WHERE workspace_id = ?", workspaceId);
-            if (!rows.isEmpty()) {
-                jdbc.batchUpdate(INSERT_TASK, rows);
+            List<Object[]> liveRows = rows.stream().filter(row -> alive((String) row[1], true)).toList();
+            for (SddManagedTask task : tasks) {
+                if (isDeleted(task.id)) deleteArtifacts(task);
             }
+            jdbc.update("DELETE FROM sdd_tasks WHERE workspace_id = ?", workspaceId);
+            if (!liveRows.isEmpty()) {
+                jdbc.batchUpdate(INSERT_TASK, liveRows);
+            }
+        });
+    }
+
+    public boolean isDeleted(String taskId) { return !alive(taskId, false); }
+
+    /** Uses persisted task metadata even when no workspace manager has been opened. */
+    public void deleteThreadArtifacts(String threadId) {
+        for (SddManagedTask task : storedTasks()) {
+            if (com.javaclaw.task.sdd.SddThreadGuard.coordinators(workspaceId, task.id).contains(threadId))
+                deleteTask(task);
+        }
+    }
+
+    private boolean alive(String taskId, boolean lock) {
+        return com.javaclaw.task.sdd.SddThreadGuard.alive(jdbc, workspaceId,
+                com.javaclaw.task.sdd.SddThreadGuard.coordinators(workspaceId, taskId), lock);
+    }
+
+    public void deleteTask(SddManagedTask task) {
+        transactions.executeWithoutResult(status -> {
+            deleteArtifacts(task);
+            jdbc.update("DELETE FROM sdd_tasks WHERE workspace_id=? AND id=?", workspaceId, task.id);
         });
     }
 

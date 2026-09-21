@@ -40,6 +40,12 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
             ToolCallOrigin origin,
             JsonCodec json,
             boolean ownsBrowserManager) {
+        this(browserManager, siteCredentials, origin, json, ownsBrowserManager, null);
+    }
+
+    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials, ToolCallOrigin origin, JsonCodec json,
+            boolean ownsBrowserManager, String threadBrowserScope) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         SiteCredentialManager checkedCredentials =
                 Objects.requireNonNull(siteCredentials, "siteCredentials");
@@ -54,7 +60,9 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
         this.session = new BrowserSessionTools(browserManager, snapshots, checkedOrigin, gate);
         this.toolObjects = List.of(site, page, read, session);
         this.ownsBrowserManager = ownsBrowserManager;
-        if (checkedOrigin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {
+        if (threadBrowserScope != null) {
+            browserManager.activateScope(threadBrowserScope);
+        } else if (checkedOrigin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {
             browserManager.activateScope(checkedOrigin.browserScopeId());
         }
     }

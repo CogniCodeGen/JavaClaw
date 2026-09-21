@@ -26,6 +26,14 @@ public final class BuiltinExtensionCatalog {
             RetrieverContribution knowledgeRetriever,
             PromptContributor skillContributor,
             ToolProviderFactory hostTools) {
+        return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor,
+                hostTools, context -> List.of());
+    }
+
+    public static List<ExtensionArtifact> create(
+            MemoryRecallGateway memoryRecall, MemoryMutationGateway memoryMutations,
+            RetrieverContribution knowledgeRetriever, PromptContributor skillContributor,
+            ToolProviderFactory hostTools, ToolProviderFactory subagents) {
         Objects.requireNonNull(memoryRecall, "memoryRecall");
         Objects.requireNonNull(memoryMutations, "memoryMutations");
         Objects.requireNonNull(knowledgeRetriever, "knowledgeRetriever");
@@ -107,7 +115,7 @@ public final class BuiltinExtensionCatalog {
                                                 java.util.LinkedHashSet::new))))));
         extensions.add(declarative("subagent.run", "SubAgent",
                 "Parent/child AgentClient runs with shared kernel budgets and cancellation",
-                schema(true), 40, List.of(), registrar -> {}));
+                schema(true), 40, List.of(), registrar -> registrar.toolProvider(subagents)));
         extensions.add(declarative("context.compaction", "Context Compaction",
                 "Advisor-driven context compaction with audited summary tasks",
                 schema(true), 50, List.of(), registrar -> {}));

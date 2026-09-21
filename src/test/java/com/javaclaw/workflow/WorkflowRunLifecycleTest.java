@@ -70,6 +70,35 @@ class WorkflowRunLifecycleTest {
         assertTrue(runs.getFirst().error().contains("任务提交失败"));
     }
 
+    @Test
+    void 取消已暂停工作流同时释放持久协调轮次() {
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
+        var agents = new com.javaclaw.support.CapturingLifecycleClient();
+        var owner = agents.beginTurn(com.javaclaw.framework.api.RunRequest.builder()
+                .agent(com.javaclaw.framework.api.AgentDefinitionRef.latest("system.default"))
+                .profile(com.javaclaw.framework.api.RunProfileRef.latest("chat"))
+                .source(com.javaclaw.framework.api.InvocationSource.chat())
+                .input(com.javaclaw.framework.api.InputBlock.text("paused work"))
+                .scope(new com.javaclaw.framework.api.RunScope("ws", "local-user", "thread"))
+                .idempotencyKey("paused-owner").build());
+        owner.pause("checkpoint");
+        var graph = validGraph();
+        var state = new GraphState().apply(com.javaclaw.workflow.model.StatePatch.builder()
+                .set("_agent.turnId", owner.id().value()).build());
+        GraphRun paused = new GraphRun("paused-owned", graph.id(), graph.version(), "thread", graph,
+                state, RunStatus.PAUSED, null, graph.startNodeId(), 0, 0,
+                null, null, null, System.currentTimeMillis(), System.currentTimeMillis());
+        store.createRun(paused);
+        try (var executions = new GraphExecutionManager(PublicNodeCatalog.createRegistry(), store,
+                new RejectingExecutor())) {
+            executions.bindAgentClient(agents, "ws");
+            assertTrue(executions.cancel(paused.id()));
+            assertEquals(RunStatus.CANCELLED, store.loadRun(paused.id()).status());
+            assertEquals(com.javaclaw.framework.api.RunState.CANCELLED,
+                    owner.completion().toCompletableFuture().join().state());
+        }
+    }
+
     private static com.javaclaw.workflow.model.GraphDefinition validGraph() {
         return WorkflowEditorModel.blank("生命周期测试");
     }

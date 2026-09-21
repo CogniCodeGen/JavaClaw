@@ -63,9 +63,12 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
             List<SessionSnapshot> sessions =
                     jdbc.query(
                             """
-                            SELECT id, title, created_at
-                            FROM chat_sessions
-                            WHERE workspace_id = ?
+                            SELECT c.id, c.title, c.created_at
+                            FROM chat_sessions c
+                            WHERE c.workspace_id = ? AND NOT EXISTS (
+                              SELECT 1 FROM agent_threads t WHERE t.workspace_id=c.workspace_id
+                                AND t.user_id='local-user' AND t.thread_id=c.id
+                                AND t.status IN ('ARCHIVED','DELETING','DELETED','FORKING'))
                             ORDER BY created_at DESC
                             """,
                             (row, index) ->
@@ -95,7 +98,10 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
             transactions.executeWithoutResult(
                     status -> {
                         deleteRemovedSessions(workspace, snapshot);
-                        if (snapshot.isEmpty()) return;
+                        List<SessionSnapshot> writable = snapshot.stream()
+                                .sorted(java.util.Comparator.comparing(SessionSnapshot::id))
+                                .filter(session -> lockWritableThread(workspace, session.id())).toList();
+                        if (writable.isEmpty()) return;
                         jdbc.batchUpdate(
                                 """
                                 MERGE INTO chat_sessions(
@@ -103,8 +109,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                                 KEY(workspace_id, id)
                                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 """,
-                                snapshot,
-                                snapshot.size(),
+                                writable,
+                                writable.size(),
                                 (statement, session) -> {
                                     statement.setString(1, workspace);
                                     statement.setString(2, session.id());
@@ -127,6 +133,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         String workspace = requireWorkspaceId(workspaceId);
         lock.readLock().lock();
         try {
+            if (!readableThread(workspace, checkedSessionId)) return List.of();
             List<MessageSnapshot> messages =
                     jdbc.query(
                             """
@@ -169,6 +176,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         try {
             transactions.executeWithoutResult(
                     status -> {
+                        if (!lockWritableThread(workspace, checkedSessionId)) return;
                         ensureSessionRow(workspace, checkedSessionId);
                         jdbc.update(
                                 """
@@ -198,6 +206,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         String checkedSessionId = requireSessionId(sessionId);
         String workspace = requireWorkspaceId(workspaceId);
         try {
+            if (!readableThread(workspace, checkedSessionId)) return false;
             Long count =
                     jdbc.queryForObject(
                             """
@@ -225,7 +234,10 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         lock.writeLock().lock();
         try {
             transactions.executeWithoutResult(
-                    status -> deleteSessions(workspace, List.of(checkedSessionId)));
+                    status -> {
+                        lockThreadStatus(workspace, checkedSessionId);
+                        deleteSessions(workspace, List.of(checkedSessionId));
+                    });
             log.info("会话已从 H2 删除: {}", checkedSessionId);
         } catch (DataAccessException failure) {
             log.error(
@@ -317,13 +329,40 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         List<String> retained = sessions.stream().map(SessionSnapshot::id).toList();
         List<String> removed =
                 jdbc.queryForList(
-                                "SELECT id FROM chat_sessions WHERE workspace_id = ?",
+                                """
+                                SELECT c.id FROM chat_sessions c WHERE c.workspace_id = ?
+                                  AND NOT EXISTS (SELECT 1 FROM chat_messages m
+                                    WHERE m.workspace_id=c.workspace_id AND m.session_id=c.id)
+                                  AND NOT EXISTS (SELECT 1 FROM agent_threads t
+                                    WHERE t.workspace_id=c.workspace_id AND t.user_id='local-user'
+                                      AND t.thread_id=c.id)
+                                """,
                                 String.class,
                                 workspace)
                         .stream()
                         .filter(id -> !retained.contains(id))
                         .toList();
         deleteSessions(workspace, removed);
+    }
+
+    private List<String> lockThreadStatus(String workspace, String sessionId) {
+        return jdbc.queryForList("""
+                SELECT status FROM agent_threads
+                WHERE workspace_id=? AND user_id='local-user' AND thread_id=? FOR UPDATE
+                """, String.class, workspace, sessionId);
+    }
+
+    private boolean lockWritableThread(String workspace, String sessionId) {
+        return lockThreadStatus(workspace, sessionId).stream().noneMatch(
+                state -> state.equals("DELETING") || state.equals("DELETED") || state.equals("FORKING"));
+    }
+
+    private boolean readableThread(String workspace, String sessionId) {
+        return jdbc.queryForList("""
+                SELECT status FROM agent_threads
+                WHERE workspace_id=? AND user_id='local-user' AND thread_id=?
+                """, String.class, workspace, sessionId).stream().noneMatch(
+                state -> state.equals("DELETING") || state.equals("DELETED") || state.equals("FORKING"));
     }
 
     private void deleteSessions(String workspace, List<String> sessionIds) {

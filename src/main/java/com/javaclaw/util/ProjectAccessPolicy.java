@@ -21,6 +21,7 @@ public final class ProjectAccessPolicy {
     public static final String PROJECT_ROOT_PROPERTY = "javaclaw.project.root";
 
     private static final Path PROJECT_ROOT = initializeProjectRoot();
+    private static final ScopedValue<Path> WORKING_DIRECTORY = ScopedValue.newInstance();
     private static final Set<String> RESERVED_TOP_LEVEL_DIRS = Set.of(".git", ".hg", ".svn", ".javaclaw");
 
     private ProjectAccessPolicy() {}
@@ -30,13 +31,26 @@ public final class ProjectAccessPolicy {
         return PROJECT_ROOT;
     }
 
+    /** Run-local relative path base; the host project root remains the permission boundary. */
+    public static Path workingDirectory() {
+        return WORKING_DIRECTORY.isBound() ? WORKING_DIRECTORY.get() : PROJECT_ROOT;
+    }
+
+    public static <T> T withWorkingDirectory(String directory, java.util.concurrent.Callable<T> operation)
+            throws Exception {
+        Path checked = directory == null || directory.isBlank() ? PROJECT_ROOT
+                : requireProjectFilePath(Path.of(directory));
+        if (!Files.isDirectory(checked)) throw new IllegalArgumentException("工作目录不存在: " + checked);
+        return ScopedValue.where(WORKING_DIRECTORY, checked).call(operation::call);
+    }
+
     /** 本版本强制启用，不提供给模型或工作区配置关闭的入口。 */
     public static boolean strictIsolationEnabled() {
         return true;
     }
 
     /**
-     * 解析并校验模型提供的路径。相对路径以项目根为基准；绝对路径也必须位于项目根内。
+     * 解析并校验模型提供的路径。相对路径以当前会话工作目录为基准；绝对路径也必须位于项目根内。
      * 符号链接逃逸、路径穿越、无效路径均安全默认拒绝。
      */
     public static Path resolveProjectPath(String rawPath) {
@@ -55,7 +69,7 @@ public final class ProjectAccessPolicy {
                 throw new SecurityException("禁止使用路径穿越或用户目录缩写: " + rawPath);
             }
         }
-        Path resolved = (supplied.isAbsolute() ? supplied : PROJECT_ROOT.resolve(supplied))
+        Path resolved = (supplied.isAbsolute() ? supplied : workingDirectory().resolve(supplied))
                 .toAbsolutePath().normalize();
         return requireProjectFilePath(resolved);
     }

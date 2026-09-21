@@ -61,12 +61,13 @@ public final class SddTaskRunner implements AutoCloseable {
         this.context = ctx;
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
-        this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId);
+        this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId,
+                SddThreadGuard.coordinator(workspaceId, ctx.id(), workflowService != null));
         this.agents = new FrameworkSddAgents(
                 agentClient, workspace, settings, skills, tokenSink, json.mapper());
         this.commandRunner = new ProcessCommandRunner(processes);
         this.critic = new FrameworkCriticJudge(ctx.workDir(), modelTasks,
-                agents::lastRunId, agents::cancelled, tokenSink);
+                agents::ownerRunId, agents::cancelled, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
         this.orchestrator = new SddOrchestrator(ctx, store, verifier, agents,
                 gate == null ? new AutoApproveReviewGate() : gate,
@@ -109,7 +110,17 @@ public final class SddTaskRunner implements AutoCloseable {
 
     public SddOutcome run() {
         try {
-            return workflowService == null ? orchestrator.run() : runViaGraph(false);
+            if (workflowService != null) return runViaGraph(false);
+            agents.beginCoordinator(context);
+            SddOutcome outcome = orchestrator.run();
+            agents.finishCoordinator(outcome);
+            return outcome;
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            agents.pauseCoordinator(paused.getMessage());
+            return SddOutcome.needsHuman(paused.getMessage());
+        } catch (RuntimeException failure) {
+            agents.finishCoordinator(SddOutcome.failed(failure.getMessage()));
+            throw failure;
         } finally {
             close();
         }
@@ -118,7 +129,17 @@ public final class SddTaskRunner implements AutoCloseable {
     /** 从既有 change 续跑（恢复中断任务）。 */
     public SddOutcome resume() {
         try {
-            return workflowService == null ? orchestrator.resume() : runViaGraph(true);
+            if (workflowService != null) return runViaGraph(true);
+            agents.beginCoordinator(context);
+            SddOutcome outcome = orchestrator.resume();
+            agents.finishCoordinator(outcome);
+            return outcome;
+        } catch (com.javaclaw.framework.api.TurnPausedException paused) {
+            agents.pauseCoordinator(paused.getMessage());
+            return SddOutcome.needsHuman(paused.getMessage());
+        } catch (RuntimeException failure) {
+            agents.finishCoordinator(SddOutcome.failed(failure.getMessage()));
+            throw failure;
         } finally {
             close();
         }
@@ -133,6 +154,7 @@ public final class SddTaskRunner implements AutoCloseable {
     @Override
     public void close() {
         agents.close();
+        agents.closeCoordinator();
     }
 
     private SddOutcome runViaGraph(boolean resume) {
@@ -176,6 +198,7 @@ public final class SddTaskRunner implements AutoCloseable {
                 };
         workflowService.runSystem(SYSTEM_GRAPH, context.id(), resume ? "resume" : "run", callbacks,
                 (stageId, graphCtx) -> {
+            agents.bindOwner(graphCtx.ownerRunId());
             try (AutoCloseable ignored = graphCtx.cancellation().onCancel(orchestrator::cancel)) {
                 if ("prepare".equals(stageId)) {
                     OpenSpecChange existing = resume
@@ -211,6 +234,8 @@ public final class SddTaskRunner implements AutoCloseable {
             cancel();
             return SddOutcome.cancelled();
         }
+        if (error.get() instanceof com.javaclaw.framework.api.TurnPausedException)
+            return SddOutcome.needsHuman(error.get().getMessage());
         if (error.get() != null) return SddOutcome.failed(error.get().getMessage());
         return outcome.get() == null ? SddOutcome.failed("SDD 图未返回结果") : outcome.get();
     }

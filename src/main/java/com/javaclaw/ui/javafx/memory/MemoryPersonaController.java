@@ -40,7 +40,7 @@ public final class MemoryPersonaController
     @FXML private Label preview;
     @FXML private Button saveButton;
 
-    private final MemoryApplicationService useCases;
+    private MemoryApplicationService useCases;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<OperationResult> saveAction;
     private final UiAsyncAction<Void> exportAction;
@@ -61,6 +61,11 @@ public final class MemoryPersonaController
         saveAction = new UiAsyncAction<>(tasks, fx);
         exportAction = new UiAsyncAction<>(tasks, fx);
     }
+
+    @Override public void setMemoryService(MemoryApplicationService service) {
+        this.useCases = Objects.requireNonNull(service);
+    }
+    @Override public boolean isBusy() { return saveAction.busyProperty().get() || exportAction.busyProperty().get(); }
 
     @FXML
     private void initialize() {

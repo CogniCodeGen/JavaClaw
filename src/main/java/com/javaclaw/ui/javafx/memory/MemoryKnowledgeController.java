@@ -28,7 +28,7 @@ public final class MemoryKnowledgeController
     @FXML private VBox emptyPanel;
     @FXML private Label emptyText;
 
-    private final MemoryApplicationService useCases;
+    private MemoryApplicationService useCases;
     private final DialogService dialogs;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<OperationResult> action;
@@ -46,6 +46,11 @@ public final class MemoryKnowledgeController
         this.components = Objects.requireNonNull(components, "components");
         action = new UiAsyncAction<>(tasks, fx);
     }
+
+    @Override public void setMemoryService(MemoryApplicationService service) {
+        this.useCases = Objects.requireNonNull(service);
+    }
+    @Override public boolean isBusy() { return action.busyProperty().get(); }
 
     @Override public void configure(MemorySectionHost host) { this.host = host; }
 

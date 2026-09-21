@@ -50,6 +50,8 @@ public final class MemoryFactRowController {
         if (selected) selectionButton.getStyleClass().add("mc-check-on");
         tools.setVisible(!batchMode);
         tools.setManaged(!batchMode);
+        tools.setDisable(actions.readOnly());
+        selectionButton.setDisable(actions.readOnly());
         factText.setText(fact.text());
         editArea.setText(fact.text());
         updated.setText("更新 " + MemoryUiText.formatTime(fact.updatedAt()));

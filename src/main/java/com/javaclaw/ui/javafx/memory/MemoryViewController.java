@@ -12,6 +12,8 @@ import javafx.beans.binding.Bindings;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import com.javaclaw.memory.MemoryGraphScope;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
@@ -28,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MemoryViewController implements MemorySectionHost, AutoCloseable {
 
     @FXML private HBox layout;
+    @FXML private ComboBox<MemoryGraphScope> graphScope;
     @FXML private TextField searchField;
     @FXML private Label scaleMain;
     @FXML private Label scaleSub;
@@ -64,7 +67,10 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
     @FXML private MemoryLogController logController;
     @FXML private WindowToastController toastController;
 
-    private final MemoryApplicationService useCases;
+    private final MemoryApplicationService catalog;
+    private MemoryApplicationService useCases;
+    private boolean selectingScope;
+    private final UiAsyncAction<java.util.List<MemoryGraphScope>> scopeAction;
     private final MemoryViewModel viewModel = new MemoryViewModel();
     private final UiAsyncAction<Snapshot> loadAction;
     private final UiAsyncAction<OperationResult> refillAction;
@@ -77,7 +83,9 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
             MemoryApplicationService useCases,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx) {
-        this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.catalog = Objects.requireNonNull(useCases, "useCases");
+        this.useCases = useCases;
+        scopeAction = new UiAsyncAction<>(tasks, fx);
         loadAction = new UiAsyncAction<>(tasks, fx);
         refillAction = new UiAsyncAction<>(tasks, fx);
     }
@@ -85,6 +93,25 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
     @FXML
     private void initialize() {
         registerSections();
+        graphScope.valueProperty().addListener((observable, previous, selected) -> {
+            if (selectingScope || selected == null || selected.equals(useCases.scope())) return;
+            if (loadAction.busyProperty().get() || refillAction.busyProperty().get()
+                    || sections.values().stream().anyMatch(section -> section.controller().isBusy())) {
+                selectingScope = true;
+                graphScope.setValue(previous);
+                selectingScope = false;
+                showMessage("当前记忆操作完成后可切换图谱");
+                return;
+            }
+            MemoryApplicationService next = catalog.inScope(selected);
+            useCases = next;
+            sections.values().forEach(section -> section.controller().setMemoryService(next));
+            boolean habits = selected.kind() == MemoryGraphScope.Kind.WORKSPACE_HABITS;
+            knowledgeButton.setDisable(!habits);
+            personaButton.setDisable(!habits);
+            select("overview");
+            requestSnapshot();
+        });
         scaleMain.textProperty().bind(viewModel.scaleMainProperty());
         scaleSub.textProperty().bind(viewModel.scaleSubProperty());
         degradeText.textProperty().bind(viewModel.degradeTextProperty());
@@ -110,6 +137,12 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
     }
 
     void prepare() {
+        scopeAction.execute(TaskSpec.io("memory-graph-scopes"), context -> catalog.scopes(), scopes -> {
+            selectingScope = true;
+            graphScope.getItems().setAll(scopes);
+            graphScope.setValue(useCases.scope());
+            selectingScope = false;
+        }, failure -> showMessage("加载图谱列表失败：" + failure.getMessage()));
         requestSnapshot();
         refillAction.execute(TaskSpec.io("memory-embedding-probe"),
                 context -> useCases.probeAndRefill(), this::apply,
@@ -197,7 +230,8 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
 
     private boolean canRefill() {
         Snapshot current = viewModel.snapshotProperty().get();
-        return current != null && current.embedding().canRefill();
+        return current != null && current.embedding().canRefill()
+                && (useCases.scope() == null || useCases.scope().kind() != MemoryGraphScope.Kind.LEGACY);
     }
 
     @Override public void showMessage(String message) { toastController.show(message); }
@@ -211,6 +245,7 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        scopeAction.close();
         loadAction.close();
         refillAction.close();
     }

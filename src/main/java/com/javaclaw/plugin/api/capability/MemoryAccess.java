@@ -25,6 +25,13 @@ public interface MemoryAccess {
      */
     List<MemoryMessage> snapshot(String agentName);
 
+    /** Explicit graph identities available to this workspace-bound plugin instance. */
+    default List<GraphScope> listGraphs() { return List.of(); }
+
+    default List<MemoryMessage> snapshot(GraphScope scope) { return List.of(); }
+
+    record GraphScope(String workspaceId, String userId, String threadId, String kind) {}
+
     /**
      * 一条记忆消息的只读视图（可序列化，不暴露宿主内部 Msg 类型）。
      *

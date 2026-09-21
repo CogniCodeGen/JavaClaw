@@ -53,13 +53,14 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * @author JavaClaw
  */
-public final class SddTaskManager implements AutoCloseable {
+public final class SddTaskManager implements AutoCloseable, com.javaclaw.framework.spi.ThreadLifecycleListener {
 
     private static final Logger log = LoggerFactory.getLogger(SddTaskManager.class);
 
     private final List<SddManagedTask> tasks = new ArrayList<>();
     private final Map<String, SddTaskRunner> running = new ConcurrentHashMap<>();
     private final Map<String, TaskHandle<Void>> runHandles = new ConcurrentHashMap<>();
+    private final Map<Long, DriverSubmission> driverSubmissions = new ConcurrentHashMap<>();
     /** 每次启动的世代号；暂停/取消会使旧执行线程的迟到结果失效。 */
     private final Map<String, Long> runEpochs = new ConcurrentHashMap<>();
     private final AtomicLong epochSequence = new AtomicLong();
@@ -80,6 +81,30 @@ public final class SddTaskManager implements AutoCloseable {
     private final ProcessRunner processes;
     private final String workspaceId;
     private final SddTaskStore store;
+    private com.javaclaw.framework.api.ThreadClient threads;
+
+    public SddTaskManager bindThreadClient(com.javaclaw.framework.api.ThreadClient client) {
+        threads = java.util.Objects.requireNonNull(client, "client");
+        return this;
+    }
+
+    @Override public boolean accepts(com.javaclaw.framework.api.RunScope scope) {
+        return workspaceId.equals(scope.workspaceId()) && "local-user".equals(scope.userId());
+    }
+
+    @Override public void deleting(com.javaclaw.framework.api.RunScope scope) {
+        if (!accepts(scope)) return;
+        List<SddManagedTask> candidates;
+        synchronized (this) {
+            var byId = new java.util.LinkedHashMap<String, SddManagedTask>();
+            store.storedTasks().forEach(task -> byId.put(task.id, task));
+            tasks.forEach(task -> byId.put(task.id, task));
+            candidates = byId.values().stream().filter(task ->
+                    com.javaclaw.task.sdd.SddThreadGuard.coordinators(workspaceId, task.id)
+                            .contains(scope.sessionId())).toList();
+        }
+        candidates.forEach(this::evict);
+    }
 
     // ==================== 配置 / 持久化 ====================
 
@@ -135,11 +160,12 @@ public final class SddTaskManager implements AutoCloseable {
     // ==================== 查询 ====================
 
     public synchronized List<SddManagedTask> list() {
-        return new ArrayList<>(tasks);
+        return tasks.stream().filter(task -> !store.isDeleted(task.id)).toList();
     }
 
     public synchronized SddManagedTask get(String id) {
-        return tasks.stream().filter(t -> t.id.equals(id)).findFirst().orElse(null);
+        return store.isDeleted(id) ? null
+                : tasks.stream().filter(t -> t.id.equals(id)).findFirst().orElse(null);
     }
 
     // ==================== 生命周期 ====================
@@ -156,9 +182,7 @@ public final class SddTaskManager implements AutoCloseable {
             }
             safeWorkDir = resolved.toString();
         }
-        String id = Integer.toHexString((title + description + nowStamp).hashCode() & 0x7fffffff);
-        // 避免碰撞
-        while (get(id) != null) id = Integer.toHexString((id + "x").hashCode() & 0x7fffffff);
+        String id = java.util.UUID.randomUUID().toString();
         SddManagedTask t = new SddManagedTask(id, title, description, safeWorkDir,
                 capabilities == null ? "auto" : capabilities, tokenBudget, notificationChannel, nowStamp);
         tasks.add(t);
@@ -190,6 +214,7 @@ public final class SddTaskManager implements AutoCloseable {
         ensureOpen();
         final SddManagedTask task;
         final long epoch;
+        final DriverSubmission submission;
         synchronized (this) {
             task = get(id);
             if (task == null) return;
@@ -215,6 +240,8 @@ public final class SddTaskManager implements AutoCloseable {
             runEpochs.put(id, epoch);
             // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
             setState(task, SddTaskState.RUNNING, null);
+            submission = new DriverSubmission(id, new java.util.concurrent.CompletableFuture<>());
+            driverSubmissions.put(epoch, submission);
         }
 
         try {
@@ -224,13 +251,24 @@ public final class SddTaskManager implements AutoCloseable {
                         runTask(task, epoch, completionStamp, resume);
                         return null;
                     });
+            submission.handleReady().complete(handle);
             runHandles.put(id, handle);
-            handle.completion().whenComplete((ignored, failure) -> runHandles.remove(id, handle));
+            handle.termination().whenComplete((ignored, failure) -> {
+                runHandles.remove(id, handle);
+                driverSubmissions.remove(epoch, submission);
+                if (java.util.Objects.equals(runEpochs.get(id), epoch))
+                    applyOutcomeIfCurrent(task, epoch, SddOutcome.cancelled());
+            });
             if (!java.util.Objects.equals(runEpochs.get(id), epoch)) {
                 handle.cancel();
             }
         } catch (RejectedExecutionException e) {
+            submission.handleReady().complete(null);
+            driverSubmissions.remove(epoch, submission);
             applyOutcomeIfCurrent(task, epoch, SddOutcome.failed("任务执行器已关闭"));
+        } catch (RuntimeException | Error failure) {
+            if (submission.handleReady().complete(null)) driverSubmissions.remove(epoch, submission);
+            throw failure;
         }
     }
 
@@ -345,13 +383,48 @@ public final class SddTaskManager implements AutoCloseable {
         if (t != null) setState(t, SddTaskState.CANCELLED, "已取消");
     }
 
-    public synchronized void delete(String id) {
-        cancel(id);
-        SddManagedTask task = get(id);
-        if (task != null) {
-            store.deleteArtifacts(task);
+    public void delete(String id) {
+        SddManagedTask task;
+        synchronized (this) { task = tasks.stream().filter(t -> t.id.equals(id)).findFirst().orElse(null); }
+        if (task == null) return;
+        if (threads != null) threads.delete(new com.javaclaw.framework.api.RunScope(
+                workspaceId, "local-user", com.javaclaw.task.sdd.SddThreadGuard.coordinator(
+                        workspaceId, id, workflowService != null)));
+        evict(task);
+    }
+
+    private void evict(SddManagedTask task) {
+        SddTaskRunner runner;
+        List<DriverSubmission> pending;
+        synchronized (this) {
+            runEpochs.remove(task.id);
+            runner = running.get(task.id);
+            pending = driverSubmissions.values().stream().filter(driver -> driver.taskId().equals(task.id)).toList();
         }
-        tasks.removeIf(t -> t.id.equals(id));
+        ToolConfirmationManager.clearTaskAllowlist(task.id);
+        if (runner != null) runner.cancel();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        for (DriverSubmission driver : pending) {
+            try {
+                var handle = driver.handleReady().get(Math.max(1, deadline - System.nanoTime()),
+                        java.util.concurrent.TimeUnit.NANOSECONDS);
+                if (handle != null) {
+                    handle.cancel();
+                    handle.termination().get(Math.max(1, deadline - System.nanoTime()),
+                            java.util.concurrent.TimeUnit.NANOSECONDS);
+                }
+            } catch (java.util.concurrent.ExecutionException ignored) {
+                // A failed driver is already stopped.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("等待 SDD 任务退出时中断", interrupted);
+            } catch (java.util.concurrent.TimeoutException timeout) {
+                throw new IllegalStateException("SDD 任务尚未退出，删除将在后续恢复时继续", timeout);
+            }
+        }
+        if (runner != null) running.remove(task.id, runner);
+        synchronized (this) { tasks.removeIf(item -> item.id.equals(task.id)); }
+        store.deleteTask(task);
         saveAll();
     }
 
@@ -427,7 +500,8 @@ public final class SddTaskManager implements AutoCloseable {
 
     private void refreshProgress(SddManagedTask task) {
         try {
-            SpecStore store = new SpecStore(task.workDir, jdbc, workspaceId);
+            SpecStore store = new SpecStore(task.workDir, jdbc, workspaceId,
+                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, task.id, workflowService != null));
             String slug = SpecPaths.makeSlug(task.id, task.title);
             OpenSpecChange ch = store.readChange(slug, task.id, task.title);
             task.progress = ch.progressPercent();
@@ -437,6 +511,7 @@ public final class SddTaskManager implements AutoCloseable {
     }
 
     private synchronized void recordTokens(SddManagedTask task, String phase, long in, long out) {
+        if (!tasks.contains(task) || store.isDeleted(task.id)) return;
         boolean wasOver = isOverBudget(task);
         task.totalInputTokens += in;
         task.totalOutputTokens += out;
@@ -487,6 +562,9 @@ public final class SddTaskManager implements AutoCloseable {
         if (closed.get()) throw new RejectedExecutionException("SDD 任务运行时已关闭");
     }
 
+    private record DriverSubmission(String taskId,
+            java.util.concurrent.CompletableFuture<TaskHandle<Void>> handleReady) { }
+
     @Override
     public synchronized void close() {
         if (!closed.compareAndSet(false, true)) return;
@@ -501,7 +579,8 @@ public final class SddTaskManager implements AutoCloseable {
         SddManagedTask t = get(id);
         if (t == null) return Optional.empty();
         try {
-            SpecStore store = new SpecStore(t.workDir, jdbc, workspaceId);
+            SpecStore store = new SpecStore(t.workDir, jdbc, workspaceId,
+                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, t.id, workflowService != null));
             return Optional.of(store.readChange(SpecPaths.makeSlug(t.id, t.title), t.id, t.title));
         } catch (Exception e) {
             return Optional.empty();
@@ -528,6 +607,7 @@ public final class SddTaskManager implements AutoCloseable {
     }
 
     private void notifyTaskChanged(SddManagedTask task) {
+        if (get(task.id) != task) return;
         for (SddTaskListener listener : listeners) {
             try {
                 listener.onTaskChanged(task);
@@ -538,6 +618,7 @@ public final class SddTaskManager implements AutoCloseable {
     }
 
     private void notifyLog(String taskId, String taskTitle, String message) {
+        if (get(taskId) == null) return;
         for (SddTaskListener listener : listeners) {
             try {
                 listener.onLog(taskId, taskTitle, message);

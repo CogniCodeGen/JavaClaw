@@ -59,6 +59,18 @@ final class ChatTurnOutcomeHandler {
         }
     }
 
+    void awaitInput(boolean plan, ChatSession target, TurnMetrics metrics, Runnable finishUi) {
+        if (plan) renderer.finishPlanAgent();
+        String partial = renderer.currentText(plan);
+        if (partial != null && !partial.isBlank() && target != null) {
+            finishRenderedText(partial, plan);
+            host.storeAssistantMessage(target, message(partial, DeliveryState.COMPLETE, metrics));
+        } else {
+            renderer.hideReplyCard();
+        }
+        finishUi.run();
+    }
+
     void fail(
             Throwable error,
             boolean plan,

@@ -121,7 +121,7 @@ public final class LoopService {
             executeLoopPipeline(invocation, request, callbacks);
             return;
         }
-        workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
+        workflowService.runConversationSystem(SYSTEM_GRAPH, request.sessionId(),
                 com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
                 (stageId, context) -> executeLoopGraphStage(invocation, stageId, context));
     }
@@ -138,6 +138,8 @@ public final class LoopService {
             String stageId,
             com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
         ConversationRequest request = com.javaclaw.workflow.service.SystemInvocationState.request(context);
+        invocation.ownerRunId = context.ownerRunId();
+        invocation.graphRunId = context.runId();
         return switch (stageId) {
             case "preflight" -> {
                 Plan plan = buildPlan(request);
@@ -183,7 +185,8 @@ public final class LoopService {
             return;
         }
         Schedulers.boundedElastic().schedule(() -> {
-            String loopId = "loop-" + System.nanoTime();
+            String loopId = invocation.graphRunId == null
+                    ? "loop-" + java.util.UUID.randomUUID() : invocation.graphRunId;
             FrameworkLoopRunner runner = null;
             try {
                 Plan plan = preparedPlan == null ? buildPlan(request) : preparedPlan;
@@ -216,7 +219,7 @@ public final class LoopService {
                 runner = new FrameworkLoopRunner(
                         agents, workspace, request.sessionId(), loopId, plan.contextPrompt(),
                         plan.explicitWorkDir() ? plan.spec().workDir() : null,
-                        config.getLoopIterationTimeoutSeconds());
+                        config.getLoopIterationTimeoutSeconds(), invocation.ownerRunId);
                 invocation.attachRunner(runner);
 
                 // 验证命令超时对齐慢构建场景：默认 120s 会把「盯着 mvn test 直到通过」这类
@@ -224,7 +227,7 @@ public final class LoopService {
                 CommandRunner commandRunner = new ProcessCommandRunner(
                         processes, config.getLoopVerifyTimeoutSeconds());
                 var judge = plan.spec().useJudge()
-                        ? new FrameworkCompletionJudge(modelTasks, runner::lastRunId,
+                        ? new FrameworkCompletionJudge(modelTasks, runner::ownerRunId,
                                 runner::cancelled, plan.spec().workDir())
                         : CompletionJudge.CONSERVATIVE_DENY;
 
@@ -238,7 +241,16 @@ public final class LoopService {
                     log.info("循环启动：cadence={} maxIters={} 准则数={}",
                             plan.spec().cadence().mode(), plan.spec().stopConditions().maxIterations(),
                             plan.spec().criteria().size());
-                    controller.run(callbacks);
+                    FrameworkLoopRunner currentRunner = runner;
+                    controller.run(new ConversationCallbacks() {
+                        @Override public void onEvent(com.javaclaw.api.conversation.ConversationEvent event) {
+                            callbacks.onEvent(event);
+                        }
+                        @Override public void onTerminal(ConversationOutcome outcome) {
+                            currentRunner.finish(outcome);
+                            callbacks.onTerminal(outcome);
+                        }
+                    });
                 } finally {
                     ToolConfirmationManager.clearTaskAllowlist(loopId);
                 }
@@ -247,7 +259,7 @@ public final class LoopService {
                 callbacks.onTerminal(ConversationOutcome.failed(e));
             } finally {
                 if (runner != null) {
-                    runner.shutdown();
+                    runner.close();
                 }
                 invocation.finish();
             }
@@ -503,6 +515,8 @@ public final class LoopService {
         private final AtomicBoolean finished = new AtomicBoolean();
         private final AtomicReference<LoopController> controller = new AtomicReference<>();
         private final AtomicReference<FrameworkLoopRunner> runner = new AtomicReference<>();
+        private volatile com.javaclaw.framework.api.RunId ownerRunId;
+        private volatile String graphRunId;
         private final java.util.concurrent.CountDownLatch stopped =
                 new java.util.concurrent.CountDownLatch(1);
 

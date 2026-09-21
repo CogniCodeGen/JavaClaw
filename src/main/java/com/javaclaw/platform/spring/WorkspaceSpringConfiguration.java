@@ -125,7 +125,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 /** 工作区对象的显式子 Context 装配，不做组件扫描。 */
 @Configuration(proxyBeanMethods = false)
-@Import(WorkspaceIntelligenceConfiguration.class)
+@Import({WorkspaceIntelligenceConfiguration.class, WorkspaceThreadConfiguration.class})
 public class WorkspaceSpringConfiguration {
 
     @Bean(destroyMethod = "close")
@@ -223,7 +223,8 @@ public class WorkspaceSpringConfiguration {
             ScheduleApplicationService schedules,
             JsonCodec json,
             com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
-            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry registry) {
+            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry registry,
+            com.javaclaw.framework.core.ThreadLifecycleRegistry lifecycle) {
         com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.validateContracts(
                 hostToolContractTypes());
         var objects = new com.javaclaw.application.agent.WorkspaceToolObjects(
@@ -232,7 +233,13 @@ public class WorkspaceSpringConfiguration {
                 knowledge, mcpConfigurations, mcpClients, pluginTools, skills, jshell,
                 sddTasks::getObject, schedules, json, modelTasks,
                 com.javaclaw.framework.builtin.ClarifyTools::new);
-        return registry.register(workspace.workspaceId(), objects::create);
+        var registration = registry.register(workspace.workspaceId(), objects::create);
+        var listener = lifecycle.register(objects);
+        return () -> {
+            registration.close();
+            try { listener.close(); } catch (Exception failure) { throw new IllegalStateException(failure); }
+            finally { objects.close(); }
+        };
     }
 
     /** Complete production host-tool inventory, including framework-owned built-ins. */
@@ -656,9 +663,12 @@ public class WorkspaceSpringConfiguration {
             SystemGraphRegistry systemGraphs,
             UserInteractionPort interaction,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
-            com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider extensionPlans) {
+            com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider extensionPlans,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.api.ThreadClient threads) {
         return new WorkflowService(workspace.workspaceId(), options.browserManager(), siteCredentials, nodes,
-                definitions, checkpoints, systemGraphs, interaction, tasks, extensionPlans);
+                definitions, checkpoints, systemGraphs, interaction, tasks, extensionPlans)
+                .bindAgentClient(agents).bindThreadClient(threads);
     }
 
     @Bean
@@ -694,9 +704,9 @@ public class WorkspaceSpringConfiguration {
             JsonCodec json,
             com.javaclaw.platform.process.ProcessRunner processes,
             WorkspaceContext workspace,
-            SddTaskStore store) {
+            SddTaskStore store, com.javaclaw.framework.api.ThreadClient threads) {
         return new SddTaskManager(agents, modelTasks, workspace, skills, skillCurator, settings,
-                tasks, interaction, workflows, jdbc, json, processes, workspace.workspaceId(), store);
+                tasks, interaction, workflows, jdbc, json, processes, workspace.workspaceId(), store).bindThreadClient(threads);
     }
 
     @Bean

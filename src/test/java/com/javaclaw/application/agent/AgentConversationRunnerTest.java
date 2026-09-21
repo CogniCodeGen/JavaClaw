@@ -73,7 +73,6 @@ class AgentConversationRunnerTest {
         run.emit("core.tool.completed", object()
                 .put("tool", "null-output").set("output", JsonNodeFactory.instance.nullNode()));
         run.emit("core.tool.failed", object().put("message", "synthetic failure"));
-        run.emit("core.run.waiting_input", object().put("reason", "need answer"));
 
         ObjectNode textReply = object();
         textReply.set("output", object().put("text", "first reply"));
@@ -157,7 +156,7 @@ class AgentConversationRunnerTest {
     }
 
     @Test
-    void clarificationWaitingInputIsProjectedAndTheSpentRunIsCancelled() {
+    void clarificationPausesDeliveryAndNextInputResumesTheSameDurableTurn() {
         FakeAgentClient agents = new FakeAgentClient();
         TestRunHandle run = agents.enqueue("clarify");
         RecordingCallbacks callbacks = new RecordingCallbacks();
@@ -185,13 +184,91 @@ class AgentConversationRunnerTest {
         assertFalse(callbacks.events.stream().anyMatch(value ->
                 value instanceof ConversationEvent.ToolResult result
                         && result.toolName().equals("ask_user_clarification")));
-        assertTrue(agents.cancellations.stream().anyMatch(cancel ->
-                cancel.runId().equals(run.id())
-                        && cancel.reason().code().equals("CLARIFICATION_REQUESTED")));
-
-        run.complete(RunState.CANCELLED, null);
-        assertInstanceOf(ConversationOutcome.Cancelled.class, callbacks.outcomes.getFirst());
+        assertTrue(agents.cancellations.isEmpty());
+        assertInstanceOf(ConversationOutcome.WaitingInput.class, callbacks.outcomes.getFirst());
         assertFalse(runner.isRunning());
+        assertFalse(run.completion.isDone());
+
+        agents.waiting = new RunSnapshot(run.id(), RunState.WAITING_INPUT, "plan", run.sequence,
+                Instant.EPOCH, Instant.EPOCH, null, null, 1);
+        agents.waitingScope = request("clarify-session").scope();
+        RecordingCallbacks resumed = new RecordingCallbacks();
+        AgentConversationRunner restored = new AgentConversationRunner(agents, Runnable::run);
+        restored.start(request("clarify-session"), ToolCallOrigin.INTERACTIVE, resumed);
+        assertEquals(run.id(), agents.resumes.getFirst().runId());
+        assertEquals("input", agents.resumes.getFirst().command().type());
+        assertEquals("hello", agents.resumes.getFirst().command().payload().path("text").asText());
+        assertTrue(resumed.events.isEmpty(), "old clarification events must not replay");
+        run.emit("core.run.completed", object().set("output", object().put("text", "done")));
+        run.complete(RunState.COMPLETED, null);
+        assertInstanceOf(ConversationOutcome.Completed.class, resumed.outcomes.getFirst());
+        assertEquals(1, callbacks.outcomes.size(), "old delivery remains paused exactly once");
+    }
+
+    @Test
+    void scheduledRecoveryContinuesPausedTurnWithoutInjectingTheNextTrigger() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("paused-schedule");
+        RunRequest base = request("schedule:daily");
+        RunRequest scheduled = new RunRequest(base.agent(), RunProfileRef.latest("schedule"),
+                InvocationSource.schedule("daily"), base.scope(), base.inputs(), base.linkage(),
+                base.permissionCeiling(), base.budget(), null, Map.of("framework.resumeSafeSchedule",
+                JsonNodeFactory.instance.booleanNode(true)));
+        agents.waitingScope = scheduled.scope();
+        agents.waiting = new RunSnapshot(run.id(), RunState.PAUSED, "plan", 0, Instant.EPOCH,
+                Instant.EPOCH, null, null, 1);
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        runner.start(scheduled, ToolCallOrigin.SCHEDULED, callbacks);
+        assertEquals("schedule.continue", agents.resumes.getFirst().command().type());
+        assertTrue(agents.resumes.getFirst().command().payload().path("inputs").isEmpty());
+        assertFalse(agents.resumes.getFirst().command().payload().has("text"));
+        run.emit("core.run.paused", object().put("reason", "tool outcome unknown"));
+        assertFalse(runner.isRunning());
+        assertInstanceOf(com.javaclaw.framework.api.TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class, callbacks.outcomes.getFirst()).error());
+        runner.close();
+        assertTrue(agents.cancellations.isEmpty(), "a paused recovery must stay available for reconciliation");
+    }
+
+    @Test
+    void ordinaryWaitingAndPausedChatDeliveryNeverCancelsTheDurableTurn() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("generic-input");
+        RecordingCallbacks first = new RecordingCallbacks();
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest request = request("paused-chat");
+        runner.start(request, null, first);
+        run.emit("core.run.waiting_input", object().put("reason", "补充输入"));
+        assertInstanceOf(ConversationOutcome.WaitingInput.class, first.outcomes.getFirst());
+        assertTrue(first.events.stream().anyMatch(event -> event instanceof ConversationEvent.Hint));
+        agents.waitingScope = request.scope();
+        agents.waiting = new RunSnapshot(run.id(), RunState.PAUSED, "plan", run.sequence,
+                Instant.EPOCH, Instant.EPOCH, null, null, 1);
+        RecordingCallbacks next = new RecordingCallbacks();
+        runner.start(request, null, next);
+        assertEquals("input", agents.resumes.getFirst().command().type());
+        run.complete(RunState.COMPLETED, null);
+        assertInstanceOf(ConversationOutcome.Completed.class, next.outcomes.getFirst());
+        assertTrue(agents.cancellations.isEmpty());
+    }
+
+    @Test
+    void nonInteractiveWaitingInputKeepsItsOwningDeliveryOpenUntilExplicitCancellation() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("scheduled-input");
+        RunRequest base = request("schedule");
+        RunRequest scheduled = new RunRequest(base.agent(), RunProfileRef.latest("schedule"),
+                InvocationSource.schedule("task"), base.scope(), base.inputs(), base.linkage(),
+                base.permissionCeiling(), base.budget(), null, Map.of());
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        runner.start(scheduled, ToolCallOrigin.SCHEDULED, callbacks);
+        run.emit("core.run.waiting_input", object());
+        assertTrue(callbacks.outcomes.isEmpty());
+        assertTrue(runner.isRunning());
+        runner.close();
+        assertEquals(1, agents.cancellations.size());
     }
 
     @Test
@@ -412,6 +489,13 @@ class AgentConversationRunnerTest {
         private final List<CancelCall> cancellations = new ArrayList<>();
         private final List<ResumeCall> resumes = new ArrayList<>();
         private RuntimeException startFailure;
+        private RunSnapshot waiting;
+        private RunScope waitingScope;
+
+        @Override public java.util.Optional<RunSnapshot> activeTurn(RunScope scope) {
+            return scope.equals(waitingScope) ? java.util.Optional.ofNullable(waiting)
+                    : java.util.Optional.empty();
+        }
 
         private TestRunHandle enqueue(String id) {
             TestRunHandle handle = new TestRunHandle(id);
