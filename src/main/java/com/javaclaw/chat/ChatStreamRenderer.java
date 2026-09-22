@@ -5,6 +5,7 @@ import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import javafx.scene.Node;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,8 +38,7 @@ final class ChatStreamRenderer {
     private final Supplier<String> modelName;
 
     private AssistantMessageView assistantMessage;
-    private String activeToolName;
-    private ExpandableMarkdownBlockView toolResultBlock;
+    private ChildAgentActivityView childAgentActivity;
     private ExpandableMarkdownBlockView planAgentBlock;
     private String planAgentName;
     private final StringBuilder planAgentBuffer = new StringBuilder();
@@ -109,20 +109,19 @@ final class ChatStreamRenderer {
         }
         assistantMessage.showTools();
         String displayName = displayName(toolName);
-        boolean dynamicTask = "execute_task_agent".equals(toolName);
-        if (toolName == null || !toolName.equals(activeToolName)
-                || (dynamicTask && kind == ChunkKind.RESULT)) {
-            createToolResultBlock(toolName, displayName);
-        }
+        ChildAgentActivityView activity = ensureChildAgentActivity();
+        boolean forceNewEntry = "execute_task_agent".equals(toolName)
+                && kind == ChunkKind.RESULT;
+        activity.append(displayName, kind, content, forceNewEntry);
         if (kind == ChunkKind.THINKING) {
             composer.setThinkingText(displayName + " 正在思考...");
             thinking.appendSubAgentThinking(displayName, content);
             return;
         }
-        appendToolReply(displayName, content);
-        if (toolResultBlock != null) {
-            inlineImages.displayInline(
-                    content, toolResultBlock.contentHost(), displayedImagePaths);
+        appendToolReply(toolName, displayName, content);
+        VBox contentHost = activity.activeContentHost();
+        if (contentHost != null) {
+            inlineImages.displayInline(content, contentHost, displayedImagePaths);
         }
     }
 
@@ -274,8 +273,8 @@ final class ChatStreamRenderer {
         if (reply != null) {
             reply.finish();
         }
-        if (toolResultBlock != null) {
-            toolResultBlock.bubble().finish();
+        if (childAgentActivity != null) {
+            childAgentActivity.finish(state);
         }
         if (planAgentBlock != null) {
             planAgentBlock.bubble().finish();
@@ -291,8 +290,7 @@ final class ChatStreamRenderer {
 
     void resetReferences() {
         assistantMessage = null;
-        activeToolName = null;
-        toolResultBlock = null;
+        childAgentActivity = null;
         planAgentBlock = null;
         planAgentName = null;
         planAgentBuffer.setLength(0);
@@ -315,26 +313,21 @@ final class ChatStreamRenderer {
         return text.toString();
     }
 
-    private void createToolResultBlock(String toolName, String displayName) {
-        if (toolResultBlock != null) {
-            toolResultBlock.bubble().finish();
-        }
-        activeToolName = toolName;
-        toolResultBlock = expandableBlocks.create(
-                ExpandableMarkdownBlockFactory.Variant.SUB_AGENT, displayName, false);
-        assistantMessage.toolsHost().getChildren().add(toolResultBlock.root());
+    private ChildAgentActivityView ensureChildAgentActivity() {
+        if (childAgentActivity != null) return childAgentActivity;
+        childAgentActivity = new ChildAgentActivityView(expandableBlocks);
+        assistantMessage.toolsHost().getChildren().add(childAgentActivity.root());
+        return childAgentActivity;
     }
 
-    private void appendToolReply(String displayName, String content) {
-        if (toolResultBlock == null || content == null || content.isBlank()) {
+    private void appendToolReply(String toolName, String displayName, String content) {
+        if (content == null || content.isBlank()) {
             return;
         }
-        toolResultBlock.revealContent();
         composer.setThinkingText(displayName + " 已返回结果...");
         thinking.markSubAgentResult(displayName,
                 content.length() > 80 ? content.substring(0, 77) + "..." : content);
-        toolResultBlock.bubble().appendText(content);
-        log.debug("已追加子智能体回复 [{}]，内容长度: {} 字符", activeToolName, content.length());
+        log.debug("已追加子智能体回复 [{}]，内容长度: {} 字符", toolName, content.length());
     }
 
     private static String displayName(String toolName) {

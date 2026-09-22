@@ -97,6 +97,28 @@ class AssistantMessageFxmlLoadTest {
     }
 
     @Test
+    void closesUnifiedChildAgentActivityWithMessage() throws Exception {
+        view = createView();
+        ChildAgentActivityView activity = callFx(() -> new ChildAgentActivityView(
+                context.getBean(ExpandableMarkdownBlockFactory.class)));
+        runFx(() -> {
+            activity.append("编程专家", ChatStreamRenderer.ChunkKind.REPLY, "result");
+            view.showTools();
+            view.toolsHost().getChildren().add(activity.root());
+        });
+        MarkdownBubble nestedReply = callFx(() -> {
+            Object nested = activity.root().lookup(".expandable-markdown-block")
+                    .getProperties().get("expandableMarkdownBlockView");
+            return ((ExpandableMarkdownBlockView) nested).bubble();
+        });
+
+        runFx(view::close);
+
+        assertEquals(MarkdownBubble.State.DISPOSED, callFx(nestedReply::state));
+        view = null;
+    }
+
+    @Test
     void replyCardCanBeHiddenWithoutHidingToolResults() throws Exception {
         view = createView();
         runFx(() -> {

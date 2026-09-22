@@ -226,6 +226,12 @@ public final class AssistantMessageController implements AutoCloseable {
 
     private static void disposeNestedViews(javafx.scene.Node node) {
         if (node.hasProperties()
+                && node.getProperties().get("childAgentActivityView")
+                instanceof ChildAgentActivityView activity) {
+            activity.close();
+            return;
+        }
+        if (node.hasProperties()
                 && node.getProperties().get("expandableMarkdownBlockView")
                 instanceof ExpandableMarkdownBlockView block) {
             block.close();

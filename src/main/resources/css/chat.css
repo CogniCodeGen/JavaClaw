@@ -1983,6 +1983,54 @@
     -fx-padding: 0 0 8 0;
 }
 
+.child-agent-activity {
+    -fx-background-color: -jc-surface-panel;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.child-agent-activity-header {
+    -fx-alignment: center-left;
+    -fx-padding: 1 2 1 2;
+}
+
+.child-agent-activity-marker {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 14px;
+}
+
+.child-agent-activity-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+}
+
+.child-agent-activity-count {
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 999;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-size: 10px;
+    -fx-font-weight: 600;
+    -fx-padding: 2 7 2 7;
+}
+
+.child-agent-activity-summary {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11px;
+}
+
+.child-agent-activity-entries {
+    -fx-padding: 3 0 0 12;
+    -fx-border-color: transparent transparent transparent -jc-primary-200;
+    -fx-border-width: 0 0 0 2;
+}
+
+.child-agent-activity-entries .expandable-markdown-block {
+    -fx-padding: 1 0 1 0;
+}
+
 .message-tool-result {
     -fx-background-color: -jc-neutral-50;
     -fx-background-radius: 12;
