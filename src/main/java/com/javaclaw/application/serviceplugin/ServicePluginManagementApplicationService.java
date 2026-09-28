@@ -144,18 +144,6 @@ public interface ServicePluginManagementApplicationService {
                     : Math.min(3_600, requestTimeoutSeconds);
         }
 
-        /** Source-compatible default for descriptors created before endpoint timeouts. */
-        public EndpointConfiguration(
-                String id, Protocol protocol, String bindAddress, int port,
-                boolean tlsEnabled, boolean allowInsecureLan, Path keyStorePath,
-                String keyStorePassword, String apiKey, int requestsPerMinute,
-                long tokensPerMinute, int maxConcurrent, int maxConnections,
-                long maxRequestBytes) {
-            this(id, protocol, bindAddress, port, tlsEnabled, allowInsecureLan,
-                    keyStorePath, keyStorePassword, apiKey, requestsPerMinute,
-                    tokensPerMinute, maxConcurrent, maxConnections, maxRequestBytes, 120);
-        }
-
         /** Redacted copy safe for UI snapshots and logs. */
         public EndpointConfiguration redacted() {
             return new EndpointConfiguration(id, protocol, bindAddress, port, tlsEnabled,
@@ -210,26 +198,6 @@ public interface ServicePluginManagementApplicationService {
             configurationSchema = configurationSchema == null ? "" : configurationSchema;
             configuration = configuration == null ? Map.of() : Map.copyOf(configuration);
             endpointCapabilities = immutableNestedSetMap(endpointCapabilities);
-        }
-
-        /** Compatibility constructor for callers created before declarative plugin UI metadata. */
-        public ServicePluginInfo(
-                String id, String name, String version, String publisher,
-                boolean signatureVerified, Path artifactPath, boolean builtIn,
-                StartupPolicy startupPolicy, State state, long pid, Instant processStartedAt,
-                ResourceConfiguration resources, List<EndpointConfiguration> endpoints,
-                boolean endpointConfigurationManaged, Set<String> services,
-                int activeRequests, int queuedRequests, long reservedMemoryMiB,
-                int reservedComputeThreads, int restartCount, List<Instant> recentCrashes,
-                String lastError, List<String> recentLogs, Map<String, Object> health,
-                String description, String configurationSchema,
-                Map<String, String> configuration) {
-            this(id, name, version, publisher, signatureVerified, artifactPath, builtIn,
-                    startupPolicy, state, pid, processStartedAt, resources, endpoints,
-                    endpointConfigurationManaged, services, activeRequests, queuedRequests,
-                    reservedMemoryMiB, reservedComputeThreads, restartCount, recentCrashes,
-                    lastError, recentLogs, health, description, configurationSchema,
-                    configuration, null, null, Map.of());
         }
 
         private static Map<String, Set<String>> immutableNestedSetMap(

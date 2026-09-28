@@ -34,47 +34,6 @@ public final class InferenceManagementUseCase implements InferenceManagementAppl
     public InferenceManagementUseCase(
             InferenceCatalogPort catalog,
             InferenceAssetPreparationPort assets,
-            InferenceRuntimePort runtimes) {
-        this(catalog, assets, metadataFrom(assets), runtimes, InferenceSecretPort.PASSTHROUGH,
-                InferenceApiServerControlPort.NOOP, HuggingFaceModelCatalogPort.UNAVAILABLE);
-    }
-
-    public InferenceManagementUseCase(
-            InferenceCatalogPort catalog,
-            InferenceAssetPreparationPort assets,
-            InferenceRuntimePort runtimes,
-            InferenceSecretPort secrets,
-            InferenceApiServerControlPort apiServer) {
-        this(catalog, assets, metadataFrom(assets), runtimes, secrets, apiServer,
-                HuggingFaceModelCatalogPort.UNAVAILABLE, InferenceSystemProfilePort.CONSERVATIVE);
-    }
-
-    public InferenceManagementUseCase(
-            InferenceCatalogPort catalog,
-            InferenceAssetPreparationPort assets,
-            InferenceModelMetadataPort metadata,
-            InferenceRuntimePort runtimes,
-            InferenceSecretPort secrets,
-            InferenceApiServerControlPort apiServer) {
-        this(catalog, assets, metadata, runtimes, secrets, apiServer,
-                HuggingFaceModelCatalogPort.UNAVAILABLE, InferenceSystemProfilePort.CONSERVATIVE);
-    }
-
-    public InferenceManagementUseCase(
-            InferenceCatalogPort catalog,
-            InferenceAssetPreparationPort assets,
-            InferenceModelMetadataPort metadata,
-            InferenceRuntimePort runtimes,
-            InferenceSecretPort secrets,
-            InferenceApiServerControlPort apiServer,
-            HuggingFaceModelCatalogPort onlineModels) {
-        this(catalog, assets, metadata, runtimes, secrets, apiServer, onlineModels,
-                InferenceSystemProfilePort.CONSERVATIVE);
-    }
-
-    public InferenceManagementUseCase(
-            InferenceCatalogPort catalog,
-            InferenceAssetPreparationPort assets,
             InferenceModelMetadataPort metadata,
             InferenceRuntimePort runtimes,
             InferenceSecretPort secrets,
@@ -189,13 +148,6 @@ public final class InferenceManagementUseCase implements InferenceManagementAppl
     @Override
     public HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
             HuggingFaceModelCatalogPort.SearchRequest request,
-            BooleanSupplier cancelled) throws Exception {
-        return onlineModels.search(request, supportedModelTypes(), safe(cancelled));
-    }
-
-    @Override
-    public HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
-            HuggingFaceModelCatalogPort.SearchRequest request,
             Consumer<HuggingFaceModelCatalogPort.SearchProgress> progress,
             BooleanSupplier cancelled) throws Exception {
         return onlineModels.searchIncrementally(
@@ -286,7 +238,6 @@ public final class InferenceManagementUseCase implements InferenceManagementAppl
         InferenceModelAsset asset = catalog.asset(draft.assetId())
                 .filter(value -> value.state() == InferenceModelAsset.State.READY)
                 .orElseThrow(() -> new IllegalStateException("只能为已准备完成的资产创建档案"));
-        asset = resolveLegacyModelType(asset, cancellation);
         InferenceCatalogPort.RuntimeInstallation runtime = catalog.runtime(draft.runtimeId())
                 .orElseThrow(() -> new IllegalStateException("档案引用的运行时未安装"));
         requireSupported(runtime, draft.kind(), asset.modelType());
@@ -317,19 +268,6 @@ public final class InferenceManagementUseCase implements InferenceManagementAppl
         // This is deliberately the only write: a failed/cancelled probe leaves the old READY row untouched.
         catalog.saveProfile(verified);
         return verified;
-    }
-
-    private InferenceModelAsset resolveLegacyModelType(
-            InferenceModelAsset asset, BooleanSupplier cancelled) throws Exception {
-        if (!"unknown".equals(asset.modelType())) return asset;
-        String modelType = metadata.inspectModel(Path.of(asset.location()), cancelled).modelType();
-        InferenceModelAsset updated = new InferenceModelAsset(
-                asset.id(), asset.source(), asset.displayName(), modelType,
-                asset.contentSha256(), asset.location(), asset.huggingFaceRepository(),
-                asset.huggingFaceCommit(), asset.files(), asset.sizeBytes(), asset.state(),
-                asset.failure(), asset.createdAt(), asset.artifactMetadata());
-        catalog.saveAsset(updated);
-        return updated;
     }
 
     private void requireSupportedByAnActiveRuntime(String modelType) {
@@ -371,13 +309,6 @@ public final class InferenceManagementUseCase implements InferenceManagementAppl
                     + " 不支持将模型类型 “" + modelType + "”用于" +
                     (kind == InferenceModelProfile.Kind.EMBEDDING ? "嵌入" : "文本生成"));
         }
-    }
-
-    private static InferenceModelMetadataPort metadataFrom(InferenceAssetPreparationPort assets) {
-        if (assets instanceof InferenceModelMetadataPort metadata) return metadata;
-        return (source, cancelled) -> {
-            throw new IllegalStateException("模型资产适配器未提供轻量 model_type 检测能力");
-        };
     }
 
     @Override

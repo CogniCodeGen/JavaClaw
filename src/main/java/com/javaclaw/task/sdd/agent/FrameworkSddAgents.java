@@ -398,7 +398,6 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
     }
 
     private static boolean isMetaTaskText(String text) {
-        if (text.contains(".agent/openspec") || text.contains("openspec/changes")) return true;
         if (text.contains("proposal.md") || text.contains("design.md")
                 || text.contains("tasks.md") || text.contains("spec.md")) return true;
         return text.contains("向用户展示") || text.contains("获取用户确认")

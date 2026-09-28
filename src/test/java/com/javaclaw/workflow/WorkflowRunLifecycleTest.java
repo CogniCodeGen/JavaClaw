@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -55,6 +56,24 @@ class WorkflowRunLifecycleTest {
     }
 
     @Test
+    void 缺少扩展锁快照的运行拒绝恢复() throws Exception {
+        var database = new FileDatabaseAccess(temp);
+        var store = new H2GraphCheckpointStore("ws", database, JSON);
+        GraphRun run = runWithStatus("missing-locks", RunStatus.PAUSED);
+        store.createRun(run);
+        try (var connection = database.open();
+             var update = connection.prepareStatement("""
+                     UPDATE workflow_runs SET extension_locks_json=''
+                     WHERE workspace_id='ws' AND id=?
+                     """)) {
+            update.setString(1, run.id());
+            update.executeUpdate();
+        }
+
+        assertThrows(IllegalStateException.class, () -> store.loadRun(run.id()));
+    }
+
+    @Test
     void 执行线程提交失败会把已创建运行置为失败() {
         var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
         var rejecting = new RejectingExecutor();
@@ -87,7 +106,7 @@ class WorkflowRunLifecycleTest {
                 .set("_agent.turnId", owner.id().value()).build());
         GraphRun paused = new GraphRun("paused-owned", graph.id(), graph.version(), "thread", graph,
                 state, RunStatus.PAUSED, null, graph.startNodeId(), 0, 0,
-                null, null, null, System.currentTimeMillis(), System.currentTimeMillis());
+                null, null, null, List.of(), System.currentTimeMillis(), System.currentTimeMillis());
         store.createRun(paused);
         try (var executions = new GraphExecutionManager(PublicNodeCatalog.createRegistry(), store,
                 new RejectingExecutor())) {
@@ -108,7 +127,7 @@ class WorkflowRunLifecycleTest {
         long now = System.currentTimeMillis();
         return new GraphRun(id, graph.id(), graph.version(), "thread", graph,
                 new GraphState(), status, null, graph.startNodeId(), 0, 0,
-                null, null, null, now, now);
+                null, null, null, List.of(), now, now);
     }
 
     private static final class RejectingExecutor implements TaskSubmitter {

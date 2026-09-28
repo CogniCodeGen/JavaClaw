@@ -72,19 +72,8 @@ public final class WorkflowEditorModel {
         return node;
     }
 
-    /**
-     * 空白模板首次添加业务节点时自动插入主链。
-     * 同时兼容旧版 START→END 草稿与新版 START→OUTPUT→END 模板。
-     */
+    /** 空白模板首次添加业务节点时自动插入主链。 */
     private EdgeDefinition initialTemplateInsertionEdge() {
-        if (current.nodes().size() == 2 && current.edges().size() == 1) {
-            return current.edges().stream()
-                    .filter(e -> e.kind() == EdgeKind.NORMAL)
-                    .filter(e -> e.source().equals(current.startNodeId()))
-                    .filter(e -> current.nodes().stream().anyMatch(n ->
-                            n.id().equals(e.target()) && n.type() == NodeType.END))
-                    .findFirst().orElse(null);
-        }
         if (current.nodes().size() != 3 || current.edges().size() != 2) return null;
         NodeDefinition output = current.nodes().stream()
                 .filter(n -> n.type() == NodeType.OUTPUT).findFirst().orElse(null);

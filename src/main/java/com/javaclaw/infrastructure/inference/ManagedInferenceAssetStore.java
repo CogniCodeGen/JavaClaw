@@ -113,7 +113,7 @@ public final class ManagedInferenceAssetStore
             DataRoot dataRoot, Supplier<Path> pluginDataDirectory,
             InferenceCatalogPort catalog, HttpClient http,
             ObjectMapper json, URI huggingFaceBase) {
-        DataRoot root = java.util.Objects.requireNonNull(dataRoot, "dataRoot");
+        java.util.Objects.requireNonNull(dataRoot, "dataRoot");
         this.catalog = java.util.Objects.requireNonNull(catalog, "catalog");
         this.http = java.util.Objects.requireNonNull(http, "http");
         this.json = java.util.Objects.requireNonNull(json, "json");
@@ -122,7 +122,7 @@ public final class ManagedInferenceAssetStore
         String normalized = supplied.toString().endsWith("/")
                 ? supplied.toString() : supplied + "/";
         this.huggingFaceBase = URI.create(normalized);
-        managedStorage = new ManagedInferenceStorage(root, pluginDataDirectory, catalog, json);
+        managedStorage = new ManagedInferenceStorage(pluginDataDirectory, catalog, json);
     }
 
     private static Supplier<Path> defaultPluginDataDirectory(DataRoot dataRoot) {

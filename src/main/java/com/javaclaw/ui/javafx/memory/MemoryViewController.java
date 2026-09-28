@@ -230,8 +230,7 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
 
     private boolean canRefill() {
         Snapshot current = viewModel.snapshotProperty().get();
-        return current != null && current.embedding().canRefill()
-                && (useCases.scope() == null || useCases.scope().kind() != MemoryGraphScope.Kind.LEGACY);
+        return current != null && current.embedding().canRefill();
     }
 
     @Override public void showMessage(String message) { toastController.show(message); }

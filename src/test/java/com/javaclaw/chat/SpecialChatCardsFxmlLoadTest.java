@@ -4,8 +4,6 @@ import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.junit.jupiter.api.AfterEach;
@@ -17,7 +15,6 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -51,41 +48,6 @@ class SpecialChatCardsFxmlLoadTest {
     }
 
     @Test
-    void loopDecisionCanBeSubmittedOnlyOnceAndDestroysController() throws Exception {
-        prepareContext();
-        AtomicInteger calls = new AtomicInteger();
-        AtomicReference<Boolean> result = new AtomicReference<>();
-        LoopDecisionView decisionView = callFx(() ->
-                context.getBean(LoopDecisionFactory.class).create("shell", 3, selected -> {
-                    calls.incrementAndGet();
-                    result.set(selected);
-                }));
-        view = decisionView;
-
-        Label prompt = find(decisionView.root(), "promptLabel", Label.class);
-        Button continueButton = find(decisionView.root(), "continueButton", Button.class);
-        Label resolution = find(decisionView.root(), "resolutionLabel", Label.class);
-        assertEquals("检测到工具 [shell] 连续 3 次相似调用，已暂停。是否继续执行？",
-                callFx(prompt::getText));
-
-        runFx(() -> {
-            continueButton.fire();
-            continueButton.fire();
-        });
-
-        assertEquals(1, calls.get());
-        assertEquals(Boolean.TRUE, result.get());
-        assertEquals("已选择继续执行", callFx(resolution::getText));
-        assertFalse(callFx(continueButton::isManaged));
-        assertNotNull(callFx(() ->
-                decisionView.root().getProperties().get("loopDecisionView")));
-
-        runFx(decisionView::close);
-        assertTrue(decisionView.controller().isClosed());
-        view = null;
-    }
-
-    @Test
     void clarificationCardShowsOnlySuppliedSectionsAndDestroysController() throws Exception {
         prepareContext();
         ClarificationCardView card = callFx(() ->
@@ -113,8 +75,6 @@ class SpecialChatCardsFxmlLoadTest {
         context = new AnnotationConfigApplicationContext();
         context.registerBean(SpringFxmlLoader.class,
                 () -> new SpringFxmlLoader(context.getBeanFactory()));
-        context.registerBean(LoopDecisionFactory.class,
-                () -> new LoopDecisionFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(ClarificationCardFactory.class,
                 () -> new ClarificationCardFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();

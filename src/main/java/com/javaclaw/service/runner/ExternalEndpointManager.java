@@ -61,7 +61,6 @@ final class ExternalEndpointManager implements ExternalEndpointRegistry, AutoClo
     private final Map<String, Listener> listeners = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private final RunnerExecutor timers;
-    private final boolean ownsTimers;
     private final ObjectMapper json;
     private final PluginLogger log;
     private final AtomicBoolean accepting = new AtomicBoolean(true);
@@ -69,22 +68,9 @@ final class ExternalEndpointManager implements ExternalEndpointRegistry, AutoClo
     ExternalEndpointManager(List<ServicePluginWire.Endpoint> configurations,
                             ExecutorService executor, RunnerExecutor timers,
                             ObjectMapper json, PluginLogger log) {
-        this(configurations, executor, timers, false, json, log);
-    }
-
-    /** Compatibility constructor used by isolated listener tests and embedders. */
-    ExternalEndpointManager(List<ServicePluginWire.Endpoint> configurations,
-                            ExecutorService executor, ObjectMapper json, PluginLogger log) {
-        this(configurations, executor, new RunnerExecutor(), true, json, log);
-    }
-
-    private ExternalEndpointManager(List<ServicePluginWire.Endpoint> configurations,
-                                    ExecutorService executor, RunnerExecutor timers,
-                                    boolean ownsTimers, ObjectMapper json, PluginLogger log) {
         this.configurations = checkedConfigurations(configurations);
         this.executor = executor;
         this.timers = timers;
-        this.ownsTimers = ownsTimers;
         this.json = json;
         this.log = log;
     }
@@ -166,7 +152,6 @@ final class ExternalEndpointManager implements ExternalEndpointRegistry, AutoClo
         accepting.set(false);
         listeners.values().forEach(Listener::close);
         listeners.clear();
-        if (ownsTimers) timers.close();
     }
 
     private Listener http(ExternalEndpointDescriptor descriptor,

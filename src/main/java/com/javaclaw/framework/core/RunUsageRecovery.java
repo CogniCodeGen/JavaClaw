@@ -60,15 +60,12 @@ final class RunUsageRecovery {
     static RunUsageLedger.UsageSnapshot totals(List<RunEventEnvelope> events) {
         Map<String, String> kinds = new HashMap<>();
         Map<String, JsonNode> steps = new HashMap<>();
-        long firstModel = Long.MAX_VALUE, firstTask = Long.MAX_VALUE;
         for (var event : events) {
             if (!event.type().startsWith("core.step.")) continue;
             String id = event.payload().path("stepId").asText();
             if (event.type().equals("core.step.started")) {
                 String kind = event.payload().path("kind").asText();
                 kinds.put(id, kind);
-                if (kind.equals("MODEL")) firstModel = Math.min(firstModel, event.sequence());
-                if (kind.equals("MODEL_TASK")) firstTask = Math.min(firstTask, event.sequence());
             } else if (event.payload().has("usage")) steps.put(id, event.payload().path("usage"));
         }
         long input = 0, output = 0;
@@ -80,17 +77,6 @@ final class RunUsageRecovery {
             input = Math.addExact(input, Math.max(0, value.path("inputTokens").asLong()));
             output = Math.addExact(output, Math.max(0, value.path("outputTokens").asLong()));
             cost = cost.add(value.path("estimatedCostCny").decimalValue().max(BigDecimal.ZERO));
-        }
-        boolean primaryUsage = events.stream().anyMatch(event -> event.type().equals("core.model.usage"));
-        boolean taskUsage = events.stream().anyMatch(event -> event.type().equals("core.model_task.usage"));
-        Set<Long> seen = new HashSet<>();
-        for (var event : events) {
-            boolean legacyModel = event.sequence() < firstModel && event.type().equals(primaryUsage ? "core.model.usage" : "core.model.completed");
-            boolean legacyTask = event.sequence() < firstTask && event.type().equals(taskUsage ? "core.model_task.usage" : "core.model_task.completed");
-            if ((!legacyModel && !legacyTask) || !seen.add(event.sequence())) continue;
-            input = Math.addExact(input, Math.max(0, event.payload().path("inputTokens").asLong()));
-            output = Math.addExact(output, Math.max(0, event.payload().path("outputTokens").asLong()));
-            cost = cost.add(event.payload().path("estimatedCostCny").decimalValue().max(BigDecimal.ZERO));
         }
         return new RunUsageLedger.UsageSnapshot(input, output, cost);
     }

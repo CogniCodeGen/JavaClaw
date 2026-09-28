@@ -7,19 +7,14 @@ import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.model.KnowledgeChunk;
+import com.javaclaw.memory.model.MemoryContextIndex;
 import com.javaclaw.memory.model.MemoryRoot;
+import com.javaclaw.memory.model.MemoryStats;
 import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.correction.CorrectionGuard;
 import org.eclipse.store.gigamap.jvector.VectorIndex;
-import org.eclipse.store.gigamap.jvector.VectorIndexConfiguration;
-import org.eclipse.store.gigamap.jvector.VectorIndices;
-import org.eclipse.store.gigamap.jvector.VectorSearchResult;
-import org.eclipse.store.gigamap.jvector.VectorSimilarityFunction;
 import org.eclipse.store.gigamap.jvector.Vectorizer;
-import org.eclipse.store.gigamap.types.GigaMap;
-import org.eclipse.store.gigamap.types.BitmapIndices;
 import org.eclipse.store.gigamap.types.IndexerString;
-import org.eclipse.store.gigamap.types.ScoredSearchResult;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 import org.slf4j.Logger;
@@ -40,8 +35,6 @@ public class MemoryStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryStore.class);
 
-    private static final String IDX = "embedding";
-
     /** searchFacts 过滤软删除事实时的 over-fetch 补偿量(多取若干条以填补被剔除的槽位)。 */
     private static final int SUPERSEDE_OVERFETCH = 8;
 
@@ -60,6 +53,9 @@ public class MemoryStore implements AutoCloseable {
 
     /** EclipseStore 对象图只允许一个写操作或关闭操作进入。 */
     private final ReentrantLock writeLock = new ReentrantLock(true);
+    private final MemoryStoreHabitProgress habitProgress = new MemoryStoreHabitProgress(this);
+    private final MemoryStoreCheckpoints checkpoints = new MemoryStoreCheckpoints(this);
+    private final MemoryStorePersonaState personaState = new MemoryStorePersonaState(this);
 
     public MemoryStore(Path dir, int dimension, String label) {
         this.dir = dir;
@@ -135,14 +131,13 @@ public class MemoryStore implements AutoCloseable {
                             restored.knowledge.size());
                 }
                 root = restored;
-                completeSchema();
-                ensureIdentityIndex(root.facts, FACT_ID);
-                ensureIdentityIndex(root.pendingFacts, FACT_ID);
-                ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
-                ensureIdentityIndex(root.corrections, CORRECTION_ID);
-                factIndex = ensureIndex(root.facts, new FactVectorizer());
-                episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
-                knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
+                MemoryStoreIndexLifecycle.ensureIdentityIndex(root.facts, FACT_ID);
+                MemoryStoreIndexLifecycle.ensureIdentityIndex(root.pendingFacts, FACT_ID);
+                MemoryStoreIndexLifecycle.ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
+                MemoryStoreIndexLifecycle.ensureIdentityIndex(root.corrections, CORRECTION_ID);
+                factIndex = MemoryStoreIndexLifecycle.ensureIndex(root.facts, new FactVectorizer(), dimension);
+                episodeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.episodes, new EpisodeVectorizer(), dimension);
+                knowledgeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.knowledge, new KnowledgeVectorizer(), dimension);
                 log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
             } catch (RuntimeException | Error failure) {
                 cleanupFailedOpen(started, failure);
@@ -153,29 +148,18 @@ public class MemoryStore implements AutoCloseable {
         }
     }
 
-    private void completeSchema() { MemoryStoreSchema.complete(root, mgr); }
-
     // ==================== working-memory checkpoints ====================
 
     public void checkpoint(String key, String messagesJson) {
-        write(() -> {
-            root.working.put(key, new AgentCheckpoint(key, messagesJson));
-            mgr.store(root.working);
-        });
+        checkpoints.save(key, messagesJson);
     }
 
     public AgentCheckpoint loadCheckpoint(String key) {
-        requireOpen();
-        return root.working.get(key);
+        return checkpoints.load(key);
     }
 
     public void removeCheckpoint(String key) {
-        write(() -> {
-            if (root.working.remove(key) != null) {
-                mgr.store(root.working);
-                logInternal("REMOVE", "Checkpoint", key, "user", "");
-            }
-        });
+        checkpoints.remove(key);
     }
 
     private void cleanupFailedOpen(EmbeddedStorageManager started, Throwable failure) {
@@ -191,32 +175,6 @@ public class MemoryStore implements AutoCloseable {
         factIndex = null;
         episodeIndex = null;
         knowledgeIndex = null;
-    }
-
-    /** 获取或创建某 GigaMap 的向量索引(首次 register+add,重开 get)。 */
-    private <E> VectorIndex<E> ensureIndex(GigaMap<E> map, Vectorizer<? super E> vectorizer) {
-        VectorIndices<E> vis = map.index().get(VectorIndices.Category());
-        if (vis == null) {
-            vis = map.index().register(VectorIndices.Category());
-        }
-        VectorIndex<E> idx = vis.get(IDX);
-        if (idx == null) {
-            VectorIndexConfiguration cfg = VectorIndexConfiguration.forSmallDataset(
-                    dimension, VectorSimilarityFunction.COSINE);
-            idx = vis.add(IDX, cfg, vectorizer);
-        }
-        return idx;
-    }
-
-    /**
-     * 确保按实体的 update/remove 能确定性地定位到条目。
-     * 每次 open 都调用，同时完成对“身份索引出现之前建立的旧库”的迁移。
-     */
-    private <E> void ensureIdentityIndex(GigaMap<E> map, IndexerString<? super E> indexer) {
-        BitmapIndices<E> indices = map.index().bitmap();
-        indices.ensure(indexer);
-        indices.setIdentityIndices(indexer);
-        map.store();
     }
 
     @Override
@@ -337,6 +295,7 @@ public class MemoryStore implements AutoCloseable {
             long now = System.currentTimeMillis();
             if (f.createdAt == 0) f.createdAt = now;
             f.updatedAt = now;
+            MemoryContextIndex.refresh(f);
             f.entityId = root.facts.add(f);
             root.facts.store();
             logInternal("ADD", "Fact", f.id, actor, trunc(f.text));
@@ -360,6 +319,7 @@ public class MemoryStore implements AutoCloseable {
             root.facts.update(f, x -> {
                 mutator.accept(x);
                 x.updatedAt = System.currentTimeMillis();
+                MemoryContextIndex.refresh(x);
             });
             root.facts.store();
             logInternal("UPDATE", "Fact", f.id, actor, trunc(f.text));
@@ -438,7 +398,7 @@ public class MemoryStore implements AutoCloseable {
         if (factIndex == null || query == null || topK <= 0) return new ArrayList<>();
         int fetch = topK + SUPERSEDE_OVERFETCH;
         for (int attempt = 0; ; attempt++) {
-            List<Scored<Fact>> raw = search(factIndex, query, fetch, threshold);
+            List<Scored<Fact>> raw = MemoryStoreVectorSearch.search(factIndex, query, fetch, threshold);
             List<Scored<Fact>> out = new ArrayList<>(Math.min(topK, raw.size()));
             for (Scored<Fact> s : raw) {
                 if (s.entity().superseded || s.entity().contested) continue;
@@ -544,6 +504,7 @@ public class MemoryStore implements AutoCloseable {
             f.updatedAt = now;
             f.pending = true;
             f.embedding = null; // 暂存区不持有向量
+            MemoryContextIndex.refresh(f);
             f.entityId = root.pendingFacts.add(f);
             root.pendingFacts.store();
             logInternal("ADD_PENDING", "Fact", f.id, actor, trunc(f.text));
@@ -556,6 +517,7 @@ public class MemoryStore implements AutoCloseable {
             root.pendingFacts.update(f, x -> {
                 mutator.accept(x);
                 x.updatedAt = System.currentTimeMillis();
+                MemoryContextIndex.refresh(x);
             });
             root.pendingFacts.store();
             logInternal("UPDATE", "Fact", f.id, actor, trunc(f.text));
@@ -627,6 +589,7 @@ public class MemoryStore implements AutoCloseable {
         write(() -> {
             if (e.id == null) e.id = UUID.randomUUID().toString();
             if (e.timestamp == 0) e.timestamp = System.currentTimeMillis();
+            MemoryContextIndex.refresh(e);
             e.entityId = root.episodes.add(e);
             root.episodes.store();
             logInternal("ADD", "Episode", e.id, actor, trunc(e.userInput));
@@ -636,7 +599,7 @@ public class MemoryStore implements AutoCloseable {
     public List<Scored<Episode>> searchEpisodes(float[] query, int topK, double threshold) {
         if (invalidated) requireOpen();
         if (!isOpen()) return List.of();
-        return search(episodeIndex, query, topK, threshold);
+        return MemoryStoreVectorSearch.search(episodeIndex, query, topK, threshold);
     }
 
     /**
@@ -653,18 +616,54 @@ public class MemoryStore implements AutoCloseable {
     }
 
     /** 上次习惯回顾时间戳(0 = 从未回顾)。 */
-    public long lastHabitReviewAt() {
-        requireOpen();
-        return root.stats.lastHabitReviewAt;
+    public long lastHabitReviewAt() { return habitProgress.lastReviewedAt(); }
+
+    /** 回顾证据的持久游标与超大待处理项。 */
+    public HabitReviewProgress habitReviewProgress() { return habitProgress.progress(); }
+
+    /** 旧游标不得写事实；共享写锁覆盖复核、事实和进度提交。 */
+    public void withHabitProgress(HabitReviewProgress expected, Runnable mutation) {
+        habitProgress.withProgress(expected, mutation);
     }
 
-    /** 记录一次习惯回顾完成(推进回顾水位,下次只看此后的新情景)。 */
-    public void markHabitReview(long timestamp, String actor, String summary) {
-        write(() -> {
-            root.stats.lastHabitReviewAt = timestamp;
-            mgr.store(root.stats);
-            logInternal("HABIT_REVIEW", "Episode", null, actor, trunc(summary));
-        });
+    /** 保留尚无法容纳的证据，允许游标继续处理后续情景。 */
+    public void noteOversizedHabitEvidence(List<String> evidenceKeys) {
+        habitProgress.noteOversized(evidenceKeys);
+    }
+
+    /** 仅在归纳写入成功后推进游标。 */
+    public void markHabitReviewProgress(long completedAt, long cursorTimestamp,
+                                        String cursorEvidenceKey, List<String> reviewedKeys,
+                                        boolean caughtUp, String actor, String summary) {
+        habitProgress.mark(completedAt, cursorTimestamp, cursorEvidenceKey,
+                reviewedKeys, null, caughtUp, actor, summary);
+    }
+
+    /** 将下一批单例线索与证据游标作为同一统计快照提交。 */
+    public void markHabitReviewProgress(long completedAt, long cursorTimestamp,
+                                        String cursorEvidenceKey, List<String> reviewedKeys,
+                                        List<MemoryStats.HabitObservation> observations,
+                                        boolean caughtUp, String actor, String summary) {
+        habitProgress.mark(completedAt, cursorTimestamp, cursorEvidenceKey,
+                reviewedKeys, observations, caughtUp, actor, summary);
+    }
+
+    /** 已启动的回顾在无剩余可处理证据时，原子结束排空周期。 */
+    public void finishHabitReviewDrain(HabitReviewProgress expected, long completedAt,
+                                       String actor, String summary) {
+        habitProgress.finishDrain(expected, completedAt, actor, summary);
+    }
+
+    public record HabitReviewProgress(long cursorTimestamp, String cursorEvidenceKey,
+                                      List<String> pendingEvidenceKeys,
+                                      List<MemoryStats.HabitObservation> observations,
+                                      long revision, boolean draining) {
+        public HabitReviewProgress {
+            cursorEvidenceKey = cursorEvidenceKey == null ? "" : cursorEvidenceKey;
+            pendingEvidenceKeys = List.copyOf(pendingEvidenceKeys);
+            observations = MemoryStoreHabitProgress.copyObservations(observations);
+        }
+
     }
 
     /** 全部情景(只读快照,供记忆图谱构建/列举)。 */
@@ -684,6 +683,7 @@ public class MemoryStore implements AutoCloseable {
             if (e.timestamp == 0) e.timestamp = System.currentTimeMillis();
             e.pending = true;
             e.embedding = null;
+            MemoryContextIndex.refresh(e);
             e.entityId = root.pendingEpisodes.add(e);
             root.pendingEpisodes.store();
             logInternal("ADD_PENDING", "Episode", e.id, actor, trunc(e.userInput));
@@ -763,6 +763,7 @@ public class MemoryStore implements AutoCloseable {
     public void addKnowledgeChunk(KnowledgeChunk c, String actor) {
         write(() -> {
             if (c.id == null) c.id = UUID.randomUUID().toString();
+            MemoryContextIndex.refresh(c);
             c.entityId = root.knowledge.add(c);
             root.knowledge.store();
             logInternal("ADD", "KnowledgeChunk", c.id, actor, trunc(c.docName));
@@ -770,7 +771,7 @@ public class MemoryStore implements AutoCloseable {
     }
 
     public List<Scored<KnowledgeChunk>> searchKnowledge(float[] query, int topK, double threshold) {
-        return search(knowledgeIndex, query, topK, threshold);
+        return MemoryStoreVectorSearch.search(knowledgeIndex, query, topK, threshold);
     }
 
     /** 全部知识分块(只读快照,供关键词降级检索/列举)。 */
@@ -811,7 +812,10 @@ public class MemoryStore implements AutoCloseable {
     /** 原地更新知识分块(通过 GigaMap.update 通知索引重建),供重建索引时回填新向量。 */
     public void updateKnowledgeChunk(KnowledgeChunk c, java.util.function.Consumer<KnowledgeChunk> mutator, String actor) {
         write(() -> {
-            root.knowledge.update(c, mutator::accept);
+            root.knowledge.update(c, value -> {
+                mutator.accept(value);
+                MemoryContextIndex.refresh(value);
+            });
             root.knowledge.store();
             logInternal("UPDATE", "KnowledgeChunk", c.id, actor, trunc(c.docName));
         });
@@ -820,34 +824,16 @@ public class MemoryStore implements AutoCloseable {
     // ==================== 人格 ====================
 
     public Persona getPersona() {
-        requireOpen();
-        return root.persona;
+        return personaState.get();
     }
 
     public void setPersona(String content, String actor) {
-        write(() -> {
-            if (root.persona == null) {
-                root.persona = new Persona(content);
-            } else {
-                root.persona.content = content;
-                root.persona.updatedAt = System.currentTimeMillis();
-            }
-            mgr.store(root.persona);
-            mgr.store(root);
-            logInternal("PERSONA_EDIT", "Persona", null, actor, trunc(content));
-        });
+        personaState.set(content, actor);
     }
 
     /** 原地更新人格(结构化字段 + 组装正文统一在 mutator 内完成),不存在则新建。 */
     public void updatePersona(java.util.function.Consumer<Persona> mutator, String actor) {
-        write(() -> {
-            if (root.persona == null) root.persona = new Persona("");
-            mutator.accept(root.persona);
-            root.persona.updatedAt = System.currentTimeMillis();
-            mgr.store(root.persona);
-            mgr.store(root);
-            logInternal("PERSONA_EDIT", "Persona", null, actor, trunc(root.persona.content));
-        });
+        personaState.update(mutator, actor);
     }
 
     // ==================== 变更日志 ====================
@@ -865,36 +851,22 @@ public class MemoryStore implements AutoCloseable {
         return all.size() > limit ? all.subList(0, limit) : all;
     }
 
-    // ==================== 内部:通用向量检索 ====================
-
-    private <E> List<Scored<E>> search(VectorIndex<E> index, float[] query, int topK, double threshold) {
-        List<Scored<E>> out = new ArrayList<>();
-        if (index == null || query == null || topK <= 0) return out;
-        VectorSearchResult<E> res = index.search(query, topK);
-        for (ScoredSearchResult.Entry<E> e : res) {
-            if (e.score() >= threshold) {
-                out.add(new Scored<>(e.entity(), e.score()));
-            }
-        }
-        return out;
-    }
-
     // ==================== 访问器 ====================
 
     public MemoryRoot root() { return root; }
 
     public void observeMutations(java.util.function.Consumer<MemoryStore> observer) { mutationObserver = observer; }
     public void withProjectionLock(Runnable operation) { write(operation); }
-    public void persistProjectionState() { write(() -> { mgr.store(root); mgr.store(root.pendingGraphSnapshots); mgr.store(root.migratedIds); }); }
+    public void persistProjectionState() { write(() -> { mgr.store(root); mgr.store(root.pendingGraphSnapshots); }); }
     public void restoreSnapshot(com.javaclaw.memory.graph.MemoryGraphSnapshot snapshot) {
         writeCall(() -> { MemorySnapshotStore.restore(this, snapshot); return null; });
     }
     EmbeddedStorageManager manager() { return mgr; }
     void replaceRoot(MemoryRoot replacement) { root = replacement; mgr.setRoot(root); mgr.storeRoot();
-        completeSchema(); ensureIdentityIndex(root.facts, FACT_ID); ensureIdentityIndex(root.pendingFacts, FACT_ID);
-        ensureIdentityIndex(root.corrections, CORRECTION_ID); ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
-        factIndex = ensureIndex(root.facts, new FactVectorizer()); episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
-        knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer()); }
+        MemoryStoreIndexLifecycle.ensureIdentityIndex(root.facts, FACT_ID); MemoryStoreIndexLifecycle.ensureIdentityIndex(root.pendingFacts, FACT_ID);
+        MemoryStoreIndexLifecycle.ensureIdentityIndex(root.corrections, CORRECTION_ID); MemoryStoreIndexLifecycle.ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
+        factIndex = MemoryStoreIndexLifecycle.ensureIndex(root.facts, new FactVectorizer(), dimension); episodeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.episodes, new EpisodeVectorizer(), dimension);
+        knowledgeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.knowledge, new KnowledgeVectorizer(), dimension); }
 
     public boolean isOpen() { return mgr != null && !invalidated; }
 

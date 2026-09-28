@@ -267,9 +267,6 @@
                                                         <Button fx:id="loadSelectedAssetButton" text="加载…"
                                                                 disable="true" onAction="#loadSelectedAssetRequested"
                                                                 styleClass="jc-btn, jc-btn-primary, jc-btn-sm"/>
-                                                        <Button fx:id="unloadSelectedAssetButton" text="卸载"
-                                                                disable="true" onAction="#unloadSelectedAssetRequested"
-                                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
                                                         <Button fx:id="openAssetDirectoryButton" text="打开目录"
                                                                 disable="true" onAction="#openAssetDirectoryRequested"
                                                                 styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>

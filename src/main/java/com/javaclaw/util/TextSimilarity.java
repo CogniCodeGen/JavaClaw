@@ -8,8 +8,7 @@ import java.util.Set;
 /**
  * 文本相似度工具：双字母组（bigram）多重集合的 Jaccard 相似度，取值 [0.0, 1.0]。
  *
- * <p>循环子系统「无进展检测」与 {@code agent.hook.LoopDetectionHook} 的「重复调用检测」
- * 共用此单一实现，两处不再各自维护拷贝。</p>
+ * <p>循环子系统的无进展检测使用此实现。</p>
  */
 public final class TextSimilarity {
 

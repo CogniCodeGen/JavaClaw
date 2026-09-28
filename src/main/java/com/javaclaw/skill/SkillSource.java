@@ -42,18 +42,16 @@ public enum SkillSource {
         return displayName;
     }
 
-    /**
-     * 从 frontmatter 字符串解析来源，未知值回落为 USER（向后兼容旧技能）
-     */
+    /** 从 frontmatter 字符串解析来源；缺失值由文件解析器设置默认值。 */
     public static SkillSource fromKey(String key) {
         if (key == null || key.isBlank()) {
-            return USER;
+            throw new IllegalArgumentException("技能来源不能为空");
         }
         for (SkillSource s : values()) {
             if (s.key.equalsIgnoreCase(key.strip())) {
                 return s;
             }
         }
-        return USER;
+        throw new IllegalArgumentException("未知技能来源");
     }
 }

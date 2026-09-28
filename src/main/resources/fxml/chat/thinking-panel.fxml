@@ -39,42 +39,6 @@
                                                styleClass="tp-elapsed"/>
                                     </children>
                                 </HBox>
-                                <HBox alignment="CENTER_LEFT" spacing="4.0">
-                                    <children>
-                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
-                                              styleClass="tp-stage-pill, tp-stage-pill-thinking">
-                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
-                                            <children>
-                                                <Label text="●" styleClass="tp-stage-pill-dot, status-thinking"/>
-                                                <Label text="思考" styleClass="tp-stage-pill-text"/>
-                                            </children>
-                                        </HBox>
-                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
-                                              styleClass="tp-stage-pill, tp-stage-pill-planning">
-                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
-                                            <children>
-                                                <Label text="●" styleClass="tp-stage-pill-dot, status-planning"/>
-                                                <Label text="规划" styleClass="tp-stage-pill-text"/>
-                                            </children>
-                                        </HBox>
-                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
-                                              styleClass="tp-stage-pill, tp-stage-pill-executing">
-                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
-                                            <children>
-                                                <Label text="●" styleClass="tp-stage-pill-dot, status-executing"/>
-                                                <Label text="执行" styleClass="tp-stage-pill-text"/>
-                                            </children>
-                                        </HBox>
-                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
-                                              styleClass="tp-stage-pill, tp-stage-pill-replying">
-                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
-                                            <children>
-                                                <Label text="●" styleClass="tp-stage-pill-dot, status-replying"/>
-                                                <Label text="回复" styleClass="tp-stage-pill-text"/>
-                                            </children>
-                                        </HBox>
-                                    </children>
-                                </HBox>
                                 <GridPane hgap="8.0" styleClass="tp-metrics">
                                     <columnConstraints>
                                         <ColumnConstraints percentWidth="33.33"/>
@@ -104,38 +68,9 @@
                                 </GridPane>
                             </children>
                         </VBox>
-                        <HBox alignment="CENTER_LEFT" spacing="6.0"
-                              styleClass="thinking-panel-status-bar">
-                            <children>
-                                <Label fx:id="statusDot" text="●"
-                                       styleClass="thinking-panel-status-dot, status-idle"/>
-                                <Label fx:id="statusLabel" text="等待中"
-                                       styleClass="thinking-panel-status-text"/>
-                            </children>
-                        </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="8.0" styleClass="tp-status-legend">
-                            <padding><Insets top="2.0" right="10.0" bottom="6.0" left="10.0"/></padding>
-                            <children>
-                                <HBox alignment="CENTER_LEFT" spacing="3.0">
-                                    <children><Label text="●" styleClass="tp-legend-dot, status-thinking"/><Label text="思考" styleClass="tp-legend-text"/></children>
-                                </HBox>
-                                <HBox alignment="CENTER_LEFT" spacing="3.0">
-                                    <children><Label text="●" styleClass="tp-legend-dot, status-planning"/><Label text="规划" styleClass="tp-legend-text"/></children>
-                                </HBox>
-                                <HBox alignment="CENTER_LEFT" spacing="3.0">
-                                    <children><Label text="●" styleClass="tp-legend-dot, status-executing"/><Label text="执行" styleClass="tp-legend-text"/></children>
-                                </HBox>
-                                <HBox alignment="CENTER_LEFT" spacing="3.0">
-                                    <children><Label text="●" styleClass="tp-legend-dot, status-replying"/><Label text="回复" styleClass="tp-legend-text"/></children>
-                                </HBox>
-                                <HBox alignment="CENTER_LEFT" spacing="3.0">
-                                    <children><Label text="●" styleClass="tp-legend-dot, status-idle"/><Label text="空闲" styleClass="tp-legend-text"/></children>
-                                </HBox>
-                            </children>
-                        </HBox>
                         <VBox fx:id="dynamicSectionsHost" spacing="8.0"/>
                         <Label fx:id="emptyHint"
-                               text="发送消息后将在此显示&#10;智能体的思考与处理进度"
+                               text="发送消息后将在此显示处理进度"
                                wrapText="true" styleClass="thinking-panel-empty-hint"/>
                     </children>
                 </VBox>

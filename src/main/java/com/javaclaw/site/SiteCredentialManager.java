@@ -106,10 +106,10 @@ public final class SiteCredentialManager {
                     cred.setCreatedAt(rs.getLong("created_at"));
                     cred.setLastUsedAt(rs.getLong("last_used_at"));
                     cred.setHasSession(sessionExists(c, workspaceId, cred.getId()));
+                    SiteCredentialValues.validateMetadata(cred);
                     loaded.put(cred.getId(), cred);
                 }
             }
-            migrateSensitiveRows(c, workspaceId, loaded.values());
             credentials.clear();
             credentials.putAll(loaded);
             loadedWorkspaceId = workspaceId;
@@ -123,34 +123,6 @@ public final class SiteCredentialManager {
 
     }
 
-    public synchronized void save() {
-        String workspaceId = requireLoadedWorkspace();
-        String upsert = """
-                MERGE INTO site_credentials(
-                    workspace_id, id, name, host_pattern, login_url, username, password_enc, notes,
-                    created_at, last_used_at, has_session, updated_at
-                )
-                KEY(workspace_id, id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = databaseAccess.open();
-            PreparedStatement ps = c.prepareStatement(upsert)) {
-            c.setAutoCommit(false);
-            deleteRemovedCredentials(c, workspaceId);
-            for (SiteCredential cred : credentials.values()) {
-                SiteCredentialValues.validateMetadata(cred);
-                bindCredential(ps, workspaceId, cred);
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-            log.info("已保存站点凭据到 H2: {}", databaseAccess.description());
-        } catch (SQLException | RuntimeException e) {
-            log.error("保存站点凭据到 H2 失败", e);
-            throw new IllegalStateException("站点凭据未能确认写入数据库", e);
-        }
-    }
-
     // ==================== CRUD ====================
 
     public synchronized List<SiteCredential> all() {
@@ -162,17 +134,9 @@ public final class SiteCredentialManager {
     }
 
     /**
-     * 添加或更新凭据。如果 id 为空会自动生成。
-     */
-    public synchronized SiteCredential put(SiteCredential cred) {
-        return putChecked(cred);
-    }
-
-    /**
      * 添加或更新凭据，并且仅在 H2 已确认写入后才更新内存快照。
      *
-     * <p>对话工具必须使用本入口：旧 {@link #put(SiteCredential)} 为兼容 UI 保留，
-     * 本方法把单条 MERGE 放在事务内，失败时抛出异常，避免智能体向用户误报成功。</p>
+     * <p>本方法把单条 MERGE 放在事务内，失败时抛出异常，避免智能体向用户误报成功。</p>
      *
      * @throws IllegalStateException 当前工作区未加载或数据库写入失败
      */
@@ -267,13 +231,6 @@ public final class SiteCredentialManager {
         } catch (SQLException | RuntimeException e) {
             throw new IllegalStateException("站点会话事务提交失败", e);
         }
-    }
-
-    /**
-     * 删除凭据，并连带删除其持久化的会话文件
-     */
-    public synchronized void remove(String id) {
-        removeChecked(id);
     }
 
     /**
@@ -532,16 +489,6 @@ public final class SiteCredentialManager {
     // ==================== 会话文件读写 ====================
 
     /**
-     * 写入 Playwright storageState 文本。
-     *
-     * @param id              凭据 ID
-     * @param storageStateJson Playwright {@code BrowserContext.storageState()} 返回的 JSON 文本
-     */
-    public synchronized void writeSession(String id, String storageStateJson) {
-        tryWriteSession(id, storageStateJson);
-    }
-
-    /**
      * 写入 Playwright storageState，并把持久化结果返回给需要向用户准确反馈的交互流程。
      */
     public synchronized boolean tryWriteSession(String id, String storageStateJson) {
@@ -623,42 +570,6 @@ public final class SiteCredentialManager {
         }
     }
 
-    private void deleteRemovedCredentials(Connection c, String workspaceId) throws SQLException {
-        Set<String> existing = new HashSet<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT id FROM site_credentials WHERE workspace_id = ?")) {
-            ps.setString(1, workspaceId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) existing.add(rs.getString("id"));
-            }
-        }
-        existing.removeAll(credentials.keySet());
-        if (existing.isEmpty()) return;
-
-        try (PreparedStatement sessionPs = c.prepareStatement(
-                     "DELETE FROM site_sessions WHERE workspace_id = ? AND credential_id = ?");
-             PreparedStatement bindingPs = c.prepareStatement(
-                     "DELETE FROM site_account_bindings WHERE workspace_id = ? AND credential_id = ?");
-             PreparedStatement ps = c.prepareStatement(
-                     "DELETE FROM site_credentials WHERE workspace_id = ? AND id = ?")) {
-            for (String id : existing) {
-                sessionPs.setString(1, workspaceId);
-                sessionPs.setString(2, id);
-                sessionPs.addBatch();
-
-                bindingPs.setString(1, workspaceId);
-                bindingPs.setString(2, id);
-                bindingPs.addBatch();
-
-                ps.setString(1, workspaceId);
-                ps.setString(2, id);
-                ps.addBatch();
-            }
-            sessionPs.executeBatch();
-            bindingPs.executeBatch();
-            ps.executeBatch();
-        }
-    }
-
     private boolean sessionExists(Connection c, String workspaceId, String id) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM site_sessions WHERE workspace_id = ? AND credential_id = ?")) {
@@ -717,84 +628,6 @@ public final class SiteCredentialManager {
         ps.setBoolean(11, cred.isHasSession());
     }
 
-    /**
-     * 把旧版本遗留的明文密码和浏览器 storageState 原地迁移为密文。
-     * 所有改写在同一事务提交；任何一步失败都回滚并拒绝发布内存快照。
-     */
-    private void migrateSensitiveRows(Connection c, String workspaceId,
-                                      Collection<SiteCredential> loadedCredentials)
-            throws SQLException {
-        for (SiteCredential credential : loadedCredentials) {
-            SiteCredentialValues.validateMetadata(credential);
-        }
-
-        Map<String, String> passwordUpdates = new LinkedHashMap<>();
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT id, password_enc FROM site_credentials WHERE workspace_id = ?")) {
-            ps.setString(1, workspaceId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String stored = rs.getString("password_enc");
-                    if (stored != null && !stored.isBlank()
-                            && !encryptedValue.test(stored)) {
-                        passwordUpdates.put(rs.getString("id"), encryptRequired(stored));
-                    }
-                }
-            }
-        }
-
-        Map<String, String> sessionUpdates = new LinkedHashMap<>();
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT credential_id, storage_state_json FROM site_sessions WHERE workspace_id = ?")) {
-            ps.setString(1, workspaceId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String stored = rs.getString("storage_state_json");
-                    if (stored != null && !stored.isBlank()
-                            && !encryptedValue.test(stored)) {
-                        sessionUpdates.put(rs.getString("credential_id"), encryptRequired(stored));
-                    }
-                }
-            }
-        }
-
-        if (passwordUpdates.isEmpty() && sessionUpdates.isEmpty()) return;
-
-        boolean originalAutoCommit = c.getAutoCommit();
-        c.setAutoCommit(false);
-        try (PreparedStatement passwordPs = c.prepareStatement("""
-                     UPDATE site_credentials SET password_enc = ?, updated_at = CURRENT_TIMESTAMP
-                     WHERE workspace_id = ? AND id = ?
-                     """);
-             PreparedStatement sessionPs = c.prepareStatement("""
-                     UPDATE site_sessions SET storage_state_json = ?, updated_at = CURRENT_TIMESTAMP
-                     WHERE workspace_id = ? AND credential_id = ?
-                     """)) {
-            for (Map.Entry<String, String> entry : passwordUpdates.entrySet()) {
-                passwordPs.setString(1, entry.getValue());
-                passwordPs.setString(2, workspaceId);
-                passwordPs.setString(3, entry.getKey());
-                passwordPs.addBatch();
-            }
-            for (Map.Entry<String, String> entry : sessionUpdates.entrySet()) {
-                sessionPs.setString(1, entry.getValue());
-                sessionPs.setString(2, workspaceId);
-                sessionPs.setString(3, entry.getKey());
-                sessionPs.addBatch();
-            }
-            passwordPs.executeBatch();
-            sessionPs.executeBatch();
-            c.commit();
-            log.info("已迁移站点敏感字段到加密存储: password={} session={}",
-                    passwordUpdates.size(), sessionUpdates.size());
-        } catch (SQLException | RuntimeException e) {
-            rollbackQuietly(c);
-            throw e;
-        } finally {
-            c.setAutoCommit(originalAutoCommit);
-        }
-    }
-
     private static Supplier<String> fixedWorkspace(String workspaceId) {
         String fixed = Objects.requireNonNull(workspaceId, "workspaceId").trim();
         if (fixed.isEmpty()) {
@@ -826,8 +659,9 @@ public final class SiteCredentialManager {
     }
 
     private String decryptRequired(String stored) {
-        if (stored == null || stored.isBlank() || !encryptedValue.test(stored)) {
-            return stored;
+        if (stored == null || stored.isBlank()) return stored;
+        if (!encryptedValue.test(stored)) {
+            throw new IllegalStateException("站点敏感字段不是加密格式，已拒绝使用");
         }
         String decrypted = decryptor.apply(stored);
         if (decrypted == null || encryptedValue.test(decrypted)) {

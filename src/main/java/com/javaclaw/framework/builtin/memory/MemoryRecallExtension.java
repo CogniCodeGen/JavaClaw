@@ -3,18 +3,31 @@ package com.javaclaw.framework.builtin.memory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.builtin.BuiltinCapabilityExtension;
 import com.javaclaw.framework.spi.ExtensionDependency;
+import com.javaclaw.framework.spi.DeferredContextSource;
+import com.javaclaw.framework.spi.FixedContextSource;
+import com.javaclaw.framework.spi.OnDemandContributions;
 
 import java.util.List;
 import java.util.Objects;
 
 public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
     public MemoryRecallExtension(MemoryRecallGateway recall) {
+        this(recall, null);
+    }
+
+    public MemoryRecallExtension(MemoryRecallGateway recall, DeferredContextSource source) {
+        this(recall, source, null);
+    }
+
+    public MemoryRecallExtension(MemoryRecallGateway recall, DeferredContextSource source,
+                                 FixedContextSource personaSource) {
         super("memory.recall", "Memory Recall", "EclipseStore graph and vector recall",
                 schema(), com.javaclaw.framework.builtin.BuiltinSchemas.ui("Memory", 20),
                 List.of(new ExtensionDependency("memory.graph", ">=2.0.0 <3.0.0", false)),
                 registrar -> {
                     registrar.tool(context -> new MemoryRecallTool(recall, context));
-                    registrar.promptContributor((request, state) -> {
+                    registrar.promptContributor(OnDemandContributions.deferred(
+                            (com.javaclaw.framework.spi.PromptContributor) (request, state) -> {
                     String query = request.inputs().stream()
                             .filter(block -> block.type().equals("core.text"))
                             .map(block -> block.data().path("text").asText())
@@ -22,7 +35,9 @@ public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
                     int topK = com.javaclaw.framework.api.CapabilityRuntime.configuration(
                             request, "memory.recall").path("topK").asInt(8);
                     return Objects.requireNonNull(recall, "recall").recall(request, query, topK);
-                    });
+                    }, "memory"));
+                    if (source != null) registrar.deferredContextSource(source);
+                    if (personaSource != null) registrar.fixedContextSource(personaSource);
                 });
     }
 

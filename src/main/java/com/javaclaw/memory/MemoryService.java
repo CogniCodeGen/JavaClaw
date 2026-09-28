@@ -1,6 +1,7 @@
 package com.javaclaw.memory;
 
 import com.javaclaw.config.AgentConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.spi.ModelTaskGateway;
 import com.javaclaw.memory.curation.Distiller;
@@ -42,6 +43,7 @@ public class MemoryService implements AutoCloseable {
     private final ModelTaskGateway modelTasks;
     private final TaskScope tasks;
     private final AgentConfig settings;
+    private final ObjectMapper json;
     private final java.util.concurrent.atomic.AtomicReference<RunId> lastOwnerRun =
             new java.util.concurrent.atomic.AtomicReference<>();
     private MemoryTaskTracker backgroundWork = new MemoryTaskTracker();
@@ -68,11 +70,12 @@ public class MemoryService implements AutoCloseable {
             List<com.javaclaw.framework.api.ThreadEvent>> historyReplayer, historyCatchup;
 
     public MemoryService(ModelTaskGateway modelTasks, EmbeddingGateway gateway,
-                         TaskScope tasks, AgentConfig settings) {
+                         TaskScope tasks, AgentConfig settings, ObjectMapper json) {
         this.gate = java.util.Objects.requireNonNull(gateway, "gateway");
         this.modelTasks = java.util.Objects.requireNonNull(modelTasks, "modelTasks");
         this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.json = java.util.Objects.requireNonNull(json, "json");
     }
 
     /** Surface the first embedding degradation without blocking a conversation. */
@@ -92,7 +95,7 @@ public class MemoryService implements AutoCloseable {
             this.storeLease = acquired;
             this.store = acquired.store();
             this.recaller = new Recaller(store, gate, settings);
-            this.distiller = new Distiller(modelTasks, store, gate, settings);
+            this.distiller = new Distiller(modelTasks, store, gate, settings, json);
             this.habitReviewer = new HabitReviewer(modelTasks, store, gate, settings);
             this.correctionEngine = new CorrectionEngine(
                     store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
@@ -115,7 +118,7 @@ public class MemoryService implements AutoCloseable {
         }
     }
 
-    /** Production entry point: the old mixed store is retained solely as unassigned history. */
+    /** Open the current workspace's scoped memory graphs. */
     public synchronized void open(Path memoryDir, String workspaceId, String userId) {
         if (store != null) return;
         graphRoot = memoryDir.toAbsolutePath().normalize();
@@ -123,12 +126,6 @@ public class MemoryService implements AutoCloseable {
         graphOwner = this;
         open(graphScope.directory(graphRoot));
         catalogAccepting = true;
-    }
-
-    public int migrateLegacy(com.fasterxml.jackson.databind.ObjectMapper json,
-                             java.util.function.Predicate<String> knownThread) {
-        return LegacyMemoryMigration.migrate(this, java.util.Objects.requireNonNull(json),
-                java.util.Objects.requireNonNull(knownThread));
     }
 
     public MemoryGraphScope defaultScope() { return graphScope; }
@@ -182,8 +179,6 @@ public class MemoryService implements AutoCloseable {
                 || !scope.userId().equals(owner.graphScope.userId())) {
             throw new IllegalArgumentException("不能访问其他工作区或用户的记忆图谱");
         }
-        if (scope.kind() == MemoryGraphScope.Kind.LEGACY && !"local-user".equals(scope.userId()))
-            throw new IllegalArgumentException("历史待归属记忆仅属于桌面本地用户");
         if (!owner.catalogAccepting) throw new IllegalStateException("记忆服务正在关闭");
         if (scope.equals(owner.graphScope)) return owner;
         Path path = scope.directory(owner.graphRoot);
@@ -192,7 +187,8 @@ public class MemoryService implements AutoCloseable {
             throw new IllegalStateException("会话记忆已删除: " + scope.threadId());
         }
         MemoryService selected = owner.graphs.computeIfAbsent(scope, key -> {
-            MemoryService child = new MemoryService(owner.modelTasks, owner.gate, owner.tasks, owner.settings);
+            MemoryService child = new MemoryService(owner.modelTasks, owner.gate, owner.tasks,
+                    owner.settings, owner.json);
             child.graphRoot = owner.graphRoot;
             child.graphScope = key;
             child.graphOwner = owner;
@@ -238,10 +234,6 @@ public class MemoryService implements AutoCloseable {
                 });
             } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
         }
-        if ("local-user".equals(owner.graphScope.userId()) && java.nio.file.Files.exists(owner.graphRoot.resolve("channel_0"))) {
-            result.add(new MemoryGraphScope(owner.graphScope.workspaceId(), owner.graphScope.userId(),
-                    "", MemoryGraphScope.Kind.LEGACY));
-        }
         return List.copyOf(result);
     }
 
@@ -267,7 +259,6 @@ public class MemoryService implements AutoCloseable {
     }
 
     public String recall(MemoryGraphScope scope, String query, int topK) {
-        if (scope.kind() == MemoryGraphScope.Kind.LEGACY) return "";
         MemoryService selected = inScope(scope);
         if (scope.kind() == MemoryGraphScope.Kind.WORKSPACE_HABITS) return selected.recall(query);
         return Recaller.recallGraphs(List.of(selected.store, inScope(scope.habits()).store),
@@ -328,7 +319,6 @@ public class MemoryService implements AutoCloseable {
         MemoryStoreRegistry.delete(path);
         MemoryService child = owner.graphs.remove(scope);
         if (child != null) child.close();
-        LegacyMemoryMigration.hideThread(owner, scope);
         // Keep promoted habits, but do not retain deleted conversation text as evidence.
         for (var fact : owner.facts()) {
             if (fact.evidenceKeys != null && fact.evidenceKeys.stream()
@@ -419,7 +409,6 @@ public class MemoryService implements AutoCloseable {
 
     /** 构建本轮注入上下文；服务未就绪时返回空串。 */
     public String recall(String query) {
-        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY) return "";
         if (recaller == null) {
             return "";
         }
@@ -496,9 +485,7 @@ public class MemoryService implements AutoCloseable {
     public List<com.javaclaw.memory.model.CorrectionRecord> corrections() {
         MemoryStore current = store;
         if (current == null) return List.of();
-        return current.allCorrections().stream().filter(c -> graphScope == null
-                || graphScope.kind() != MemoryGraphScope.Kind.LEGACY
-                || !current.root().migratedIds.contains("correctionrecord:" + c.id)).toList();
+        return current.allCorrections();
     }
 
     /**
@@ -668,8 +655,7 @@ public class MemoryService implements AutoCloseable {
 
 
     public Persona getPersona() {
-        return store == null || (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY
-                && store.root().migratedIds.contains("persona")) ? null : store.getPersona();
+        return store == null ? null : store.getPersona();
     }
 
     public void setPersona(String content, String actor) {
@@ -678,22 +664,13 @@ public class MemoryService implements AutoCloseable {
 
     public List<ChangeLogEntry> recentChangeLog(int limit) {
         if (store == null) return List.of();
-        if (graphScope == null || graphScope.kind() != MemoryGraphScope.Kind.LEGACY) return store.recentChangeLog(limit);
-        return store.recentChangeLog(Integer.MAX_VALUE).stream().filter(change ->
-                !store.root().migratedIds.contains(change.type.toLowerCase(java.util.Locale.ROOT) + ":" + change.targetId)
-                        && !("Persona".equals(change.type) && store.root().migratedIds.contains("persona")))
-                .limit(limit).toList();
+        return store.recentChangeLog(limit);
     }
 
 
     /** 全部事实：正式（已索引）+ pending（降级暂存）合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Fact> facts() {
-        if (store == null) return List.of();
-        List<com.javaclaw.memory.model.Fact> out = new java.util.ArrayList<>(store.allFacts());
-        out.addAll(store.allPendingFacts());
-        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY)
-            out.removeIf(f -> store.root().migratedIds.contains("fact:" + f.id));
-        return out;
+        return MemoryReadViews.facts(store);
     }
 
     public void deleteFact(com.javaclaw.memory.model.Fact f) {
@@ -711,12 +688,12 @@ public class MemoryService implements AutoCloseable {
 
     /** 全部情景：正式 + pending 合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Episode> episodes() {
-        if (store == null) return List.of();
-        List<com.javaclaw.memory.model.Episode> out = new java.util.ArrayList<>(store.allEpisodes());
-        out.addAll(store.allPendingEpisodes());
-        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY)
-            out.removeIf(e -> store.root().migratedIds.contains("episode:" + e.id));
-        return out;
+        return MemoryReadViews.episodes(store);
+    }
+
+    /** Read-only vector scores for deferred fact and episode metadata selection. */
+    public java.util.Map<String, Double> deferredEvidenceScores(String query, int limit) {
+        return DeferredEvidenceScorer.score(store, gate, settings, query, limit);
     }
 
 
@@ -798,11 +775,6 @@ public class MemoryService implements AutoCloseable {
 
     public List<com.javaclaw.memory.model.EntityNode> entities() {
         if (store == null) return List.of();
-        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY) {
-            var referenced = facts().stream().filter(f -> f.about != null).flatMap(f -> f.about.stream())
-                    .filter(java.util.Objects::nonNull).map(e -> e.id).collect(java.util.stream.Collectors.toSet());
-            return store.allEntities().stream().filter(e -> referenced.contains(e.id)).toList();
-        }
         return store.allEntities();
     }
 
@@ -847,9 +819,7 @@ public class MemoryService implements AutoCloseable {
         int maxNodes = settings.getMemoryGraphMaxNodes();
         var opt = new com.javaclaw.memory.graph.MemoryGraphBuilder.Options(
                 maxNodes, semThreshold, 3, true, 36);
-        return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt,
-                graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.LEGACY
-                        ? store.root().migratedIds : java.util.Set.of());
+        return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt);
     }
 
     public MemoryStore store() {

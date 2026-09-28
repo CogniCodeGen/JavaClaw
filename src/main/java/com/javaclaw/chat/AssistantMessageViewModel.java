@@ -15,6 +15,7 @@ final class AssistantMessageViewModel {
     private final BooleanProperty toolsVisible = new SimpleBooleanProperty(false);
     private final BooleanProperty replyVisible = new SimpleBooleanProperty(false);
     private final BooleanProperty replyCardVisible = new SimpleBooleanProperty(true);
+    private final BooleanProperty actionsVisible = new SimpleBooleanProperty(false);
     private final BooleanProperty adoptionEnabled = new SimpleBooleanProperty(false);
 
     StringProperty agentNameProperty() {
@@ -45,6 +46,10 @@ final class AssistantMessageViewModel {
         return replyCardVisible;
     }
 
+    BooleanProperty actionsVisibleProperty() {
+        return actionsVisible;
+    }
+
     BooleanProperty adoptionEnabledProperty() {
         return adoptionEnabled;
     }
@@ -65,6 +70,10 @@ final class AssistantMessageViewModel {
 
     void hideReplyCard() {
         replyCardVisible.set(false);
+    }
+
+    void finishGeneration() {
+        actionsVisible.set(true);
     }
 
     void enableAdoption() {

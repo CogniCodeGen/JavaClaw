@@ -80,11 +80,11 @@ class PluginDescriptorLoaderTest {
     }
 
     @Test
-    void 旧描述符默认作为进程内插件(@TempDir Path dir) throws Exception {
-        var descriptor = LOADER.load(pluginJar(dir, "legacy-default"));
-
-        assertEquals(com.javaclaw.plugin.api.PluginDescriptor.PluginType.IN_PROCESS,
-                descriptor.pluginType());
+    void 缺失插件类型直接拒绝(@TempDir Path dir) throws Exception {
+        Path jar = descriptorJar(dir, """
+                {"id":"missing-type","main":"example.Plugin","apiVersion":"3.0"}
+                """);
+        assertThrows(IOException.class, () -> LOADER.load(jar));
     }
 
     @Test
@@ -143,7 +143,7 @@ class PluginDescriptorLoaderTest {
         assertEquals(com.javaclaw.plugin.api.PluginDescriptor.PluginType.SERVICE_PLUGIN,
                 descriptor.pluginType());
         assertTrue(descriptor.description().contains("本地对话"));
-        assertTrue(descriptor.configurationSchema().contains("maxGenerationResident"));
+        assertTrue(descriptor.configurationSchema().contains("inference.publishedCatalog"));
         assertEquals("deliverance", descriptor.inference().engine());
         assertEquals(1, descriptor.inference().protocolMajor());
         assertEquals(2, descriptor.inference().protocolMinor());
@@ -163,7 +163,6 @@ class PluginDescriptorLoaderTest {
                 descriptor.configurationUi().pages().get(1).sections().stream()
                         .map(com.javaclaw.plugin.api.PluginDescriptor.ConfigurationSection::type)
                         .toList());
-        assertTrue(descriptor.configurationSchema().contains("运行时忽略该字段"));
     }
 
     @Test
@@ -248,24 +247,25 @@ class PluginDescriptorLoaderTest {
 
     @Test
     void 推理区块严格校验能力依赖(@TempDir Path dir) throws Exception {
-        String models = """
+        String retiredModels = """
+                "inference":%s,
                 "configurationUi":{"schemaVersion":1,"pages":[{
                   "id":"models","title":"模型","sections":[
                     {"id":"models","type":"INFERENCE_MODELS"}
                   ]}]},"service":%s
-                """.formatted(serviceBlock(true));
+                """.formatted(inferenceBlock(), serviceBlock(true));
         assertThrows(IOException.class,
-                () -> LOADER.load(descriptorJar(dir, serviceDescriptor(models))));
+                () -> LOADER.load(descriptorJar(dir, serviceDescriptor(retiredModels))));
 
-        String apiWithoutEndpoint = """
+        String retiredApi = """
                 "inference":%s,
                 "configurationUi":{"schemaVersion":1,"pages":[{
                   "id":"api","title":"API","sections":[
                     {"id":"api","type":"INFERENCE_API"}
                   ]}]},"service":%s
-                """.formatted(inferenceBlock(), serviceBlock(false));
+                """.formatted(inferenceBlock(), serviceBlock(true));
         assertThrows(IOException.class,
-                () -> LOADER.load(descriptorJar(dir, serviceDescriptor(apiWithoutEndpoint))));
+                () -> LOADER.load(descriptorJar(dir, serviceDescriptor(retiredApi))));
 
         String catalogWithoutInference = """
                 "configurationUi":{"schemaVersion":1,"pages":[{
@@ -347,7 +347,7 @@ class PluginDescriptorLoaderTest {
                 ? ""
                 : ",\"apiVersion\":" + jsonString(apiVersion);
         String json = """
-                {"id":%s,"main":"example.Plugin"%s}
+                {"id":%s,"pluginType":"IN_PROCESS","main":"example.Plugin"%s}
                 """.formatted(jsonString(id), apiVersionField);
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
             out.putNextEntry(new JarEntry("plugin.json"));

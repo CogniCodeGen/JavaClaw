@@ -78,6 +78,23 @@ class SddTaskManagerPersistenceTest {
         assertEquals(List.of("second"), secondStore.loadAll().stream().map(task -> task.id).toList());
     }
 
+    @Test
+    void 旧任务字段不能被静默忽略() {
+        SddTestDatabase database = new SddTestDatabase(temp.resolve("invalid-task-database"));
+        database.jdbc().update("""
+                        INSERT INTO sdd_tasks(workspace_id, id, task_json, updated_at)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                "workspace-a", "legacy", """
+                        {"id":"legacy","oldState":"running"}
+                        """);
+        SddTaskStore store = new SddTaskStore(
+                "workspace-a", database.jdbc(), database.transactions(), database.json());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, store::storedTasks);
+        assertEquals("SDD 任务索引 JSON 损坏", failure.getMessage());
+    }
+
     private static SddManagedTask task(String id, String title) {
         return new SddManagedTask(id, title, "测试索引事务", null,
                 "auto", 0, "none", "2026-08-12 10:00:00");

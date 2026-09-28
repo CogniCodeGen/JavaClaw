@@ -457,11 +457,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     }
 
     @Override
-    public void suspendStreamNode(Node node) {
-        suspendedStreamNodes.add(node);
-    }
-
-    @Override
     public void disposeSuspendedStreamNodes() {
         suspendedStreamNodes.forEach(this::disposeNodeTree);
         suspendedStreamNodes.clear();
@@ -690,11 +685,10 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     private static Object lifecycle(Node node) {
         if (!node.hasProperties()) return null;
-        for (String key : List.of("loopStatusView", "loopDecisionView", "clarificationCardView",
+        for (String key : List.of("loopStatusView", "clarificationCardView",
                 "chatMessageRowView", "assistantMessageView", "markdownBubble")) {
             Object value = node.getProperties().get(key);
             if (value instanceof LoopStatusView
-                    || value instanceof LoopDecisionView
                     || value instanceof ClarificationCardView
                     || value instanceof ChatMessageRowView
                     || value instanceof AssistantMessageView

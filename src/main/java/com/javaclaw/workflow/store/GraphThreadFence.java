@@ -3,7 +3,7 @@ package com.javaclaw.workflow.store;
 import java.sql.Connection;
 import java.sql.SQLException;
 
-/** Serializes legacy graph writes and deletion, including graphs created before Agent threads. */
+/** Serializes graph writes and deletion for a coordinator thread. */
 final class GraphThreadFence {
     private GraphThreadFence() { }
     static void lock(Connection connection, String workspace, String thread) throws SQLException {

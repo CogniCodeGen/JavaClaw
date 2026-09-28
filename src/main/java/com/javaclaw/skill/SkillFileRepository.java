@@ -61,7 +61,7 @@ final class SkillFileRepository {
                 }
                 try {
                     loaded.add(parse(directory));
-                } catch (IOException failure) {
+                } catch (IOException | IllegalArgumentException failure) {
                     log.warn("加载技能失败: {}", directory.getFileName(), failure);
                 }
             }
@@ -313,7 +313,9 @@ final class SkillFileRepository {
     private static ParsedMarkdown parseDocument(String raw) {
         String source = Objects.requireNonNullElse(raw, "").replace("\r\n", "\n")
                 .replace('\r', '\n');
-        if (!source.startsWith("---\n")) return new ParsedMarkdown(Map.of(), source);
+        if (!source.startsWith("---\n")) {
+            throw new IllegalArgumentException("SKILL.md 缺少 YAML front matter");
+        }
         int closing = source.indexOf("\n---\n", 4);
         if (closing < 0) throw new IllegalArgumentException("SKILL.md front matter 未闭合");
         String header = source.substring(4, closing);

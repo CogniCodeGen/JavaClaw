@@ -39,7 +39,7 @@ public final class SddThreadGuard {
         return List.of(coordinator(workspaceId, taskId, true), coordinator(workspaceId, taskId, false));
     }
 
-    /** The absent-row case is for legacy tasks that have never acquired an Agent Thread. */
+    /** A coordinator without an Agent Thread row remains writable until deleted. */
     public static boolean alive(JdbcTemplate jdbc, String workspaceId, List<String> threadIds, boolean lock) {
         for (String id : threadIds) {
             List<String> states = jdbc.queryForList("SELECT status FROM agent_threads "

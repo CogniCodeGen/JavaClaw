@@ -24,7 +24,9 @@ public final class GraphState {
     }
 
     public static GraphState fromJson(String source, ObjectMapper json) {
-        if (source == null || source.isBlank()) return new GraphState();
+        if (source == null || source.isBlank()) {
+            throw new IllegalArgumentException("GraphState JSON 不能为空");
+        }
         try {
             JsonNode parsed = java.util.Objects.requireNonNull(json, "json").readTree(source);
             if (!parsed.isObject()) throw new IllegalArgumentException("GraphState 根必须是 JSON object");

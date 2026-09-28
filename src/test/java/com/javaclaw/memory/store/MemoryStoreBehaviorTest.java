@@ -142,6 +142,40 @@ class MemoryStoreBehaviorTest {
     }
 
     @Test
+    void habitEvidenceCursorAndPendingItemsSurviveReopen() {
+        Path directory = temporaryDirectory.resolve("habit-progress");
+        try (MemoryStore store = new MemoryStore(directory, 4, "habit-progress")) {
+            store.open();
+            store.noteOversizedHabitEvidence(List.of("pending-turn"));
+            store.markHabitReviewProgress(100, 10, "turn-10", List.of(),
+                    List.of(new com.javaclaw.memory.model.MemoryStats.HabitObservation(
+                            "用户偏好表格", "turn-10")), false, "test", "first batch");
+        }
+        try (MemoryStore reopened = new MemoryStore(directory, 4, "habit-progress")) {
+            reopened.open();
+            assertEquals(0, reopened.lastHabitReviewAt());
+            assertEquals(10, reopened.habitReviewProgress().cursorTimestamp());
+            assertEquals("turn-10", reopened.habitReviewProgress().cursorEvidenceKey());
+            assertEquals(1, reopened.habitReviewProgress().revision());
+            assertTrue(reopened.habitReviewProgress().draining());
+            assertEquals(List.of("pending-turn"),
+                    reopened.habitReviewProgress().pendingEvidenceKeys());
+            assertEquals("用户偏好表格", reopened.habitReviewProgress().observations().getFirst().text);
+            assertEquals("turn-10", reopened.habitReviewProgress().observations().getFirst().evidenceKey);
+            reopened.markHabitReviewProgress(101, 11, "turn-11", List.of("pending-turn"),
+                    List.of(), true, "test", "second batch");
+        }
+        try (MemoryStore reopened = new MemoryStore(directory, 4, "habit-progress")) {
+            reopened.open();
+            assertEquals(11, reopened.habitReviewProgress().cursorTimestamp());
+            assertEquals(2, reopened.habitReviewProgress().revision());
+            assertFalse(reopened.habitReviewProgress().draining());
+            assertTrue(reopened.habitReviewProgress().observations().isEmpty());
+            assertTrue(reopened.habitReviewProgress().pendingEvidenceKeys().isEmpty());
+        }
+    }
+
+    @Test
     void episodesEntitiesKnowledgeCheckpointsPersonaAndAuditRoundTrip() {
         try (MemoryStore store = open("other-models")) {
             Episode old = new Episode("session", "old", "answer");
@@ -174,8 +208,21 @@ class MemoryStoreBehaviorTest {
             assertEquals(3, store.allEpisodes().size());
 
             assertEquals(0, store.lastHabitReviewAt());
-            store.markHabitReview(42, "system", "reviewed");
+            store.markHabitReviewProgress(42, 42, "\uffff", List.of(),
+                    true, "system", "reviewed");
             assertEquals(42, store.lastHabitReviewAt());
+            assertEquals(42, store.habitReviewProgress().cursorTimestamp());
+            store.noteOversizedHabitEvidence(List.of("old-evidence"));
+            store.markHabitReviewProgress(100, 90, "evidence-90", List.of(),
+                    false, "system", "partial review");
+            assertEquals(42, store.lastHabitReviewAt());
+            assertEquals(90, store.habitReviewProgress().cursorTimestamp());
+            assertEquals(List.of("old-evidence"),
+                    store.habitReviewProgress().pendingEvidenceKeys());
+            store.markHabitReviewProgress(101, 91, "evidence-91", List.of("old-evidence"),
+                    true, "system", "complete review");
+            assertEquals(101, store.lastHabitReviewAt());
+            assertTrue(store.habitReviewProgress().pendingEvidenceKeys().isEmpty());
 
             assertNull(store.getOrCreateEntity(null, null, "test"));
             assertNull(store.getOrCreateEntity(" ", null, "test"));

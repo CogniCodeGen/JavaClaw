@@ -1,7 +1,5 @@
 package com.javaclaw.agent;
 
-import com.javaclaw.agent.risk.ScopeVerdict;
-import com.javaclaw.agent.risk.ToolScopeAssessor;
 import com.javaclaw.api.interaction.ChoiceOption;
 import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ConfirmDecision;
@@ -28,7 +26,6 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -97,7 +94,6 @@ class ToolConfirmationManagerBehaviorTest {
         port = new RecordingPort();
         ToolConfirmationManager.setEnabled(true);
         ToolConfirmationManager.setPort(port);
-        ToolConfirmationManager.setScopeAssessor(null);
         setStaticField("settings", null);
         setStaticField("authorizedScheduledOrigin", null);
         taskAllowlist().clear();
@@ -122,7 +118,8 @@ class ToolConfirmationManagerBehaviorTest {
         assertEquals(0, port.confirmations.size());
 
         ToolConfirmationManager.setEnabled(true);
-        assertTrue(ToolConfirmationManager.requestConfirmation("unregistered_tool", "noop"));
+        assertTrue(ToolConfirmationManager.requestConfirmation(
+                ToolCallOrigin.UNKNOWN, "unregistered_tool", "noop"));
         assertEquals(0, port.confirmations.size());
 
         useMode(ToolReviewMode.AUTO);
@@ -331,82 +328,20 @@ class ToolConfirmationManagerBehaviorTest {
     }
 
     @Test
-    void scopeApprovalRequiresModelVerdictAndDeterministicPathContainment() {
+    void managedTaskWritesStillRequireHumanConfirmation() {
         String root = "/workspace/project";
         ToolCallOrigin task = ToolCallOrigin.managedTask("scoped", root);
         port.decision = ConfirmDecision.DENY;
+        assertEquals(ToolConfirmationManager.ConfirmOutcome.DENIED,
+                ToolConfirmationManager.requestConfirmationOutcome(
+                        task, "sys_file_write", "write inside workspace"));
+        assertEquals(1, port.confirmations.size());
 
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "no assessor"));
-
-        AtomicInteger assessments = new AtomicInteger();
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) -> {
-            assessments.incrementAndGet();
-            return null;
-        });
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "null verdict"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                ScopeVerdict.outOfScope("uncertain"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "outside verdict"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                new ScopeVerdict(true, List.of(), ""));
-        assertTrue(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "no explicit path"));
-        assertTrue(port.notifications.getLast().message().contains("影响范围限于任务目录"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                new ScopeVerdict(true,
-                        List.of("src/Main.java", root + "/target/result.txt", "  "),
-                        "仅修改构建输出"));
-        assertTrue(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "inside"));
-        assertTrue(port.notifications.getLast().message().contains("仅修改构建输出"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                new ScopeVerdict(true, List.of("../outside.txt"), "claimed inside"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "relative escape"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                new ScopeVerdict(true, List.of("/etc/passwd"), "claimed inside"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "absolute escape"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) ->
-                new ScopeVerdict(true, List.of("bad\0path"), "invalid path"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "invalid path"));
-
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) -> {
-            throw new IllegalArgumentException("model unavailable");
-        });
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "assessor failed"));
-
-        AtomicInteger disabledCalls = new AtomicInteger();
-        ToolConfirmationManager.setScopeAssessor((tool, description, workDir) -> {
-            disabledCalls.incrementAndGet();
-            return new ScopeVerdict(true, List.of(), "inside");
-        });
-        useMode(ToolReviewMode.SMART);
-        config.setTaskRiskAutoApproveEnabled(false);
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "sys_file_write", "disabled"));
-        assertEquals(0, disabledCalls.get());
-
-        config.setTaskRiskAutoApproveEnabled(true);
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                new ToolCallOrigin(ToolCallOrigin.Kind.MANAGED_TASK, "blank-dir", " "),
-                "sys_file_write", "blank directory"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                ToolCallOrigin.managedTask(null, root), "sys_file_write", "missing task id"));
-        assertFalse(ToolConfirmationManager.requestConfirmation(
-                task, "git_commit", "not directory scoped"));
-        assertEquals(0, disabledCalls.get());
+        port.decision = ConfirmDecision.ALLOW_ONCE;
+        assertEquals(ToolConfirmationManager.ConfirmOutcome.ALLOWED_HUMAN,
+                ToolConfirmationManager.requestConfirmationOutcome(
+                        task, "sys_file_write", "write inside workspace"));
+        assertEquals(2, port.confirmations.size());
     }
 
     @Test
@@ -420,14 +355,10 @@ class ToolConfirmationManagerBehaviorTest {
         assertTrue(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", description));
         assertTrue(port.notifications.getLast().message().contains("只读命令"));
 
-        ToolConfirmationManager.setScopeAssessor((tool, detail, workDir) ->
-                new ScopeVerdict(true, List.of("target/output.txt"), "构建目录内"));
         String mutating = ToolConfirmationManager.buildCommandDescription(
                 "touch target/output.txt", "/workspace/project");
-        assertTrue(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", mutating));
-        assertTrue(port.notifications.getLast().message().contains("构建目录内"));
+        assertFalse(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", mutating));
 
-        ToolConfirmationManager.setScopeAssessor(null);
         assertFalse(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", null));
         assertFalse(ToolConfirmationManager.requestConfirmation(
                 task, "cmd_execute", "运行 ls"));
@@ -439,6 +370,10 @@ class ToolConfirmationManagerBehaviorTest {
                 task, "cmd_execute",
                 ToolConfirmationManager.buildCommandDescription(
                         "cat file > output", "/workspace/project")));
+
+        useMode(ToolReviewMode.SMART);
+        config.setTaskRiskAutoApproveEnabled(false);
+        assertFalse(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", description));
     }
 
     @Test
@@ -501,7 +436,6 @@ class ToolConfirmationManagerBehaviorTest {
     private record ManagerState(
             boolean enabled,
             AgentConfig settings,
-            ToolScopeAssessor assessor,
             UserInteractionPort port,
             ToolCallOrigin authorizedOrigin,
             Set<String> allowlist) {
@@ -510,7 +444,6 @@ class ToolConfirmationManagerBehaviorTest {
             return new ManagerState(
                     ToolConfirmationManager.isEnabled(),
                     (AgentConfig) staticField("settings"),
-                    (ToolScopeAssessor) staticField("scopeAssessor"),
                     ToolConfirmationManager.getPort(),
                     (ToolCallOrigin) staticField("authorizedScheduledOrigin"),
                     Set.copyOf(taskAllowlist()));
@@ -519,7 +452,6 @@ class ToolConfirmationManagerBehaviorTest {
         void restore() throws ReflectiveOperationException {
             ToolConfirmationManager.setEnabled(enabled);
             ToolConfirmationManager.setPort(port);
-            ToolConfirmationManager.setScopeAssessor(assessor);
             setStaticField("settings", settings);
             setStaticField("authorizedScheduledOrigin", authorizedOrigin);
             Set<String> current = taskAllowlist();

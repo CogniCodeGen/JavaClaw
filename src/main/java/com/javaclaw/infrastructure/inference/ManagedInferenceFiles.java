@@ -1,8 +1,6 @@
 package com.javaclaw.infrastructure.inference;
 
 import com.javaclaw.inference.api.InferenceModelAsset;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,7 +25,6 @@ import java.util.function.BooleanSupplier;
 /** Shared, symlink-safe file operations for the managed model store. */
 final class ManagedInferenceFiles {
 
-    private static final Logger log = LoggerFactory.getLogger(ManagedInferenceFiles.class);
     private static final int BUFFER_SIZE = 1024 * 1024;
 
     private ManagedInferenceFiles() { }
@@ -270,74 +267,11 @@ final class ManagedInferenceFiles {
         }
     }
 
-    static boolean sameFileStore(Path source, Path targetDirectory) {
-        try {
-            return Files.getFileStore(source).equals(Files.getFileStore(targetDirectory));
-        } catch (IOException unavailable) {
-            return false;
-        }
-    }
-
     static void atomicMove(Path source, Path target) throws IOException {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException unsupported) {
             Files.move(source, target);
-        }
-    }
-
-    static void copyDirectory(Path source, Path target) throws IOException {
-        if (Files.isSymbolicLink(source)
-                || !Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("待复制模型目录不安全: " + source);
-        }
-        Files.createDirectories(target);
-        Files.walkFileTree(source, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
-                    throws IOException {
-                if (Files.isSymbolicLink(dir) || !attrs.isDirectory()) {
-                    throw new IOException("模型目录包含符号链接或特殊目录: " + dir);
-                }
-                Path destination = target.resolve(source.relativize(dir))
-                        .toAbsolutePath().normalize();
-                requireUnder(target, destination);
-                Files.createDirectories(destination);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
-                    throws IOException {
-                if (Files.isSymbolicLink(file) || !attrs.isRegularFile()) {
-                    throw new IOException("模型目录包含符号链接或特殊文件: " + file);
-                }
-                Path destination = target.resolve(source.relativize(file))
-                        .toAbsolutePath().normalize();
-                requireUnder(target, destination);
-                Files.copy(file, destination, StandardCopyOption.COPY_ATTRIBUTES);
-                return FileVisitResult.CONTINUE;
-            }
-        });
-    }
-
-    static void deleteEmptyDirectories(Path root) {
-        if (root == null || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(root)) return;
-        try (var paths = Files.walk(root)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                try {
-                    if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                        try (var values = Files.list(path)) {
-                            if (values.findAny().isEmpty()) Files.deleteIfExists(path);
-                        }
-                    }
-                } catch (IOException cleanupFailure) {
-                    log.debug("未能清理空模型目录 {}: {}", path, cleanupFailure.getMessage());
-                }
-            }
-        } catch (IOException scanFailure) {
-            log.debug("未能扫描空模型目录 {}: {}", root, scanFailure.getMessage());
         }
     }
 

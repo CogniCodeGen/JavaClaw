@@ -45,10 +45,6 @@ public interface InferenceAssetPreparationPort {
                     ? "unknown" : modelType.strip().toLowerCase(java.util.Locale.ROOT);
         }
 
-        public HuggingFacePreview(String repository, String commit, long sizeBytes,
-                                  String license, boolean gated, int fileCount) {
-            this(repository, commit, sizeBytes, license, gated, fileCount, "unknown");
-        }
     }
 
     record Progress(String phase, String currentFile, long completedBytes, long totalBytes) {

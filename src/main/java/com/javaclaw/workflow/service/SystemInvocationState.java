@@ -39,15 +39,11 @@ public final class SystemInvocationState {
             if (path.isTextual() && !path.asText().isBlank()) attachments.add(new File(path.asText()));
         }
         String sessionId = state.get(SESSION_ID).asText();
-        String profileText = state.get(PLAN_PROFILE).asText("AUTO");
-        com.javaclaw.api.conversation.PlanProfile profile;
-        try {
-            profile = com.javaclaw.api.conversation.PlanProfile.valueOf(profileText);
-        } catch (IllegalArgumentException e) {
-            profile = com.javaclaw.api.conversation.PlanProfile.AUTO;
-        }
+        String profileText = state.get(PLAN_PROFILE).asText();
+        com.javaclaw.api.conversation.PlanProfile profile =
+                com.javaclaw.api.conversation.PlanProfile.valueOf(profileText);
         return new ConversationRequest(state.get("input").asText(), attachments,
                 sessionId.isBlank() ? null : sessionId,
-                new com.javaclaw.api.conversation.ConversationOptions(profile));
+                new com.javaclaw.api.conversation.ConversationOptions(profile), List.of());
     }
 }

@@ -19,26 +19,6 @@ import java.util.ArrayList;
 public final class SystemGraphFactory {
     private SystemGraphFactory() {}
 
-    /** 创建一个仍需原子执行的兼容系统图；内置主流程应使用下方的阶段图。 */
-    public static GraphDefinition pipeline(String id, String name, String description, String stageLabel) {
-        var empty = JsonNodeFactory.instance.objectNode();
-        var stageConfig = JsonNodeFactory.instance.objectNode().put("stageId", "pipeline");
-        NodeDefinition start = new NodeDefinition("start", NodeType.START, "start", "开始",
-                empty, 60, 120, RetryPolicy.NONE, ResumeSafety.SAFE);
-        NodeDefinition pipeline = new NodeDefinition("pipeline", NodeType.SYSTEM, "system.pipeline", stageLabel,
-                stageConfig, 260, 120, RetryPolicy.NONE, ResumeSafety.CONFIRM_RETRY);
-        NodeDefinition end = new NodeDefinition("end", NodeType.END, "end", "结束",
-                empty, 500, 120, RetryPolicy.NONE, ResumeSafety.SAFE);
-        List<NodeDefinition> nodes = List.of(start, pipeline, end);
-        List<EdgeDefinition> edges = List.of(
-                new EdgeDefinition("start-pipeline", "start", "pipeline",
-                        EdgeKind.NORMAL, null, 0, false),
-                new EdgeDefinition("pipeline-end", "pipeline", "end",
-                        EdgeKind.NORMAL, null, 0, false));
-        return new GraphDefinition(GraphDefinition.CURRENT_SCHEMA, id, name, description, 1,
-                GraphKind.SYSTEM, "start", nodes, edges, 16);
-    }
-
     public static GraphDefinition chat() {
         return sequential("system-chat", "对话编排",
                 "视觉准备、路由、目标、知识、记忆、Agent 与 GEPA 管线",

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class McpConfigManagerPersistenceTest {
 
     @Test
-    void plaintextRowsAreMigratedAndWorkspaceSnapshotPreventsCrossWorkspaceWrites(@TempDir Path dir)
+    void encryptedRowsLoadAndWorkspaceSnapshotPreventsCrossWorkspaceWrites(@TempDir Path dir)
             throws Exception {
         DatabaseAccess database = new FileDatabaseAccess(dir);
         try (var c = database.open();
@@ -35,10 +35,10 @@ class McpConfigManagerPersistenceTest {
             ps.setString(1, "ws-a");
             ps.setString(2, "remote");
             ps.setString(3, null);
-            ps.setString(4, "[\"--token\",\"arg-secret\"]");
-            ps.setString(5, "{\"INTERNAL\":\"env-secret\"}");
-            ps.setString(6, "https://93.184.216.34/mcp?token=url-secret");
-            ps.setString(7, "{\"Authorization\":\"Bearer header-secret\"}");
+            ps.setString(4, encrypt("[\"--token\",\"arg-secret\"]"));
+            ps.setString(5, encrypt("{\"INTERNAL\":\"env-secret\"}"));
+            ps.setString(6, encrypt("https://93.184.216.34/mcp?token=url-secret"));
+            ps.setString(7, encrypt("{\"Authorization\":\"Bearer header-secret\"}"));
             ps.setBoolean(8, false);
             ps.executeUpdate();
         }
@@ -82,6 +82,40 @@ class McpConfigManagerPersistenceTest {
                 "other", "https://93.184.216.34/mcp", Map.of(), false));
         assertEquals(List.of("other"), manager.getAllServers().stream()
                 .map(McpServerConfig::getName).toList());
+    }
+
+    @Test
+    void plaintextRowsAreRejectedWithoutRewritingStoredSecrets(@TempDir Path dir) throws Exception {
+        DatabaseAccess database = new FileDatabaseAccess(dir);
+        try (var connection = database.open();
+             PreparedStatement insert = connection.prepareStatement("""
+                     INSERT INTO mcp_servers(
+                         workspace_id, name, command, args_json, env_json, url, headers_json, enabled)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     """)) {
+            insert.setString(1, "ws-a");
+            insert.setString(2, "legacy");
+            insert.setString(3, null);
+            insert.setString(4, "[\"plaintext-secret\"]");
+            insert.setString(5, encrypt("{}"));
+            insert.setString(6, null);
+            insert.setString(7, encrypt("{}"));
+            insert.setBoolean(8, false);
+            insert.executeUpdate();
+        }
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> new McpConfigManager(database, () -> "ws-a",
+                        McpConfigManagerPersistenceTest::encrypt,
+                        McpConfigManagerPersistenceTest::decrypt, new ObjectMapper()));
+        assertTrue(failure.getCause().getMessage().contains("不是加密格式"));
+        try (var connection = database.open();
+             PreparedStatement query = connection.prepareStatement(
+                     "SELECT args_json FROM mcp_servers WHERE workspace_id = 'ws-a' AND name = 'legacy'");
+             ResultSet result = query.executeQuery()) {
+            assertTrue(result.next());
+            assertEquals("[\"plaintext-secret\"]", result.getString(1));
+        }
     }
 
     private static String encrypt(String plain) {

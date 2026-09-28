@@ -19,7 +19,7 @@ import javafx.scene.layout.VBox;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Host-owned process controls rendered either as the compatibility page or an embedded section. */
+/** Host-owned process controls rendered as a full page or an embedded section. */
 final class ServicePluginConfigurationPane implements AutoCloseable {
     enum RuntimeAction { START, STOP, RESTART, UNQUARANTINE }
     enum Mode { FULL_PAGE, EMBEDDED_SERVICE, SETTINGS_DRAWER }

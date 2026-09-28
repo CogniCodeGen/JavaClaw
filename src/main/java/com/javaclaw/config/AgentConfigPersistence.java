@@ -31,15 +31,11 @@ final class AgentConfigPersistence {
     void loadInto(Properties target) {
         target.clear();
         target.putAll(store.load(CONFIG_NAMESPACE));
-        boolean removedObsoletePlanConfig = removeObsoletePlanModeProperties(target);
         if (target.isEmpty()) {
             log.info("智能体配置数据库为空，使用默认值: {}", databaseDescription);
             AgentConfigSchema.applyInitialDefaults(target);
         } else {
             log.info("智能体配置已从 H2 加载: {}", databaseDescription);
-        }
-        if (removedObsoletePlanConfig && !store.save(CONFIG_NAMESPACE, target)) {
-            log.warn("已忽略废弃的规划模式配置，但未能从 H2 中清理");
         }
     }
 
@@ -60,11 +56,5 @@ final class AgentConfigPersistence {
 
     String description() {
         return databaseDescription;
-    }
-
-    static boolean removeObsoletePlanModeProperties(Properties target) {
-        boolean removedRounds = target.remove("plan.mode.max.rounds") != null;
-        boolean removedExperts = target.remove("plan.mode.max.experts") != null;
-        return removedRounds || removedExperts;
     }
 }

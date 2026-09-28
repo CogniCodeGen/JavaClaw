@@ -11,6 +11,8 @@ import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.AfterEach;
@@ -53,6 +55,33 @@ class AssistantMessageFxmlLoadTest {
     void tearDown() throws Exception {
         if (view != null) runFx(view::close);
         if (context != null) context.close();
+    }
+
+    @Test
+    void showsOnlyCompactAnimationUntilTheTurnFinishes() throws Exception {
+        view = createView();
+        HBox placeholder = find(view.root(), "generationPlaceholder", HBox.class);
+        HBox actions = find(view.root(), "actionRow", HBox.class);
+        StackPane replyHost = find(view.root(), "replyHost", StackPane.class);
+        VBox card = find(view.root(), "unifiedBubble", VBox.class);
+
+        assertEquals(3, callFx(() -> placeholder.getChildren().size()));
+        assertTrue(callFx(placeholder::isManaged));
+        assertFalse(callFx(actions::isManaged));
+        assertFalse(callFx(replyHost::isManaged));
+        assertEquals(Region.USE_PREF_SIZE, callFx(card::getMaxWidth).doubleValue());
+
+        runFx(() -> {
+            view.reply().appendText("最终回复");
+            view.revealReply();
+        });
+        assertFalse(callFx(actions::isManaged));
+
+        runFx(() -> view.setMetadata("1.0s · 100 tok"));
+        assertFalse(callFx(placeholder::isManaged));
+        assertTrue(callFx(replyHost::isManaged));
+        assertTrue(callFx(actions::isManaged));
+        assertEquals(Double.MAX_VALUE, callFx(card::getMaxWidth).doubleValue());
     }
 
     @Test

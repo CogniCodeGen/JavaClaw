@@ -25,11 +25,5 @@ public record ToolDescriptor(
         SCHEMAS.requireValidSchema(inputSchema, "tool " + name);
     }
 
-    /** Source-compatible constructor for extension tools compiled against the initial 3.0 API. */
-    public ToolDescriptor(String name, String description, JsonNode inputSchema,
-                          PermissionSet requiredPermissions, boolean idempotent) {
-        this(name, description, inputSchema, "extension", requiredPermissions, idempotent);
-    }
-
     @Override public JsonNode inputSchema() { return inputSchema.deepCopy(); }
 }

@@ -64,7 +64,7 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         this.lock = lock;
         this.server = server;
         this.token = token;
-        this.buildFingerprint = normalizeFingerprint(buildFingerprint);
+        this.buildFingerprint = requireFingerprint(buildFingerprint);
         try {
             writeEndpoint();
         } catch (IOException failure) {
@@ -81,21 +81,14 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
     }
 
     /**
-     * 获取主实例资格。返回 {@code null} 表示已通知现有实例，调用进程应立即退出。
-     */
-    public static SingleInstanceCoordinator acquire(Path dataDirectory) throws IOException {
-        return acquire(dataDirectory, "");
-    }
-
-    /**
      * Acquires the primary-instance role for one data directory and publishes the running build.
-     * A secondary process with a different non-empty fingerprint asks the primary to show a
+     * A secondary process with a different fingerprint asks the primary to show a
      * restart-required notice instead of silently treating the old JVM as the new build.
      */
     public static SingleInstanceCoordinator acquire(Path dataDirectory, String buildFingerprint)
             throws IOException {
         Path dataDir = dataDirectory.toAbsolutePath().normalize();
-        String normalizedFingerprint = normalizeFingerprint(buildFingerprint);
+        String normalizedFingerprint = requireFingerprint(buildFingerprint);
         Files.createDirectories(dataDir);
         Path lockFile = dataDir.resolve(LOCK_FILE);
         Path endpointFile = dataDir.resolve(ENDPOINT_FILE);
@@ -115,8 +108,6 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
                     log.warn("已有 JavaClaw 实例，但主窗口通知未获得回应");
                 } else if (notified == NotifyResult.RESTART_REQUIRED) {
                     log.warn("已有 JavaClaw 实例运行不同构建，已提示完整退出后重新启动");
-                } else if (notified == NotifyResult.LEGACY_SHOWN) {
-                    log.warn("已有 JavaClaw 实例未提供构建指纹；已唤起旧窗口，请完整退出后重新启动一次");
                 }
                 return null;
             }
@@ -261,15 +252,13 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         for (int attempt = 0; attempt < 20; attempt++) {
             try {
                 List<String> lines = Files.readAllLines(endpointFile, StandardCharsets.UTF_8);
-                if (lines.size() < 2) throw new IOException("端点文件不完整");
+                if (lines.size() != 3) throw new IOException("端点文件格式无效");
                 String token = lines.get(0).trim();
                 int port = Integer.parseInt(lines.get(1).trim());
-                String remoteFingerprint = lines.size() >= 3 ? lines.get(2).trim() : "";
-                if (token.isBlank() || port < 1 || port > 65535) throw new IOException("端点数据无效");
-                boolean mismatch = !localFingerprint.isBlank()
-                        && !remoteFingerprint.isBlank()
-                        && !localFingerprint.equals(remoteFingerprint);
-                boolean legacy = !localFingerprint.isBlank() && remoteFingerprint.isBlank();
+                String remoteFingerprint = lines.get(2).trim();
+                if (token.isBlank() || remoteFingerprint.isBlank()
+                        || port < 1 || port > 65535) throw new IOException("端点数据无效");
+                boolean mismatch = !localFingerprint.equals(remoteFingerprint);
                 try (Socket socket = new Socket()) {
                     socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 300);
                     socket.setSoTimeout(1000);
@@ -287,7 +276,7 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
                         return NotifyResult.RESTART_REQUIRED;
                     }
                     if (!OK_RESPONSE.equals(response)) return NotifyResult.FAILED;
-                    return legacy ? NotifyResult.LEGACY_SHOWN : NotifyResult.SHOWN;
+                    return NotifyResult.SHOWN;
                 }
             } catch (IOException | NumberFormatException notReady) {
                 try {
@@ -301,11 +290,14 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         return NotifyResult.FAILED;
     }
 
-    private static String normalizeFingerprint(String fingerprint) {
-        return fingerprint == null ? "" : fingerprint.strip();
+    private static String requireFingerprint(String fingerprint) {
+        if (fingerprint == null || fingerprint.isBlank()) {
+            throw new IllegalArgumentException("构建指纹不能为空");
+        }
+        return fingerprint.strip();
     }
 
-    private enum NotifyResult { SHOWN, LEGACY_SHOWN, RESTART_REQUIRED, FAILED }
+    private enum NotifyResult { SHOWN, RESTART_REQUIRED, FAILED }
 
     @Override
     public void close() {

@@ -127,9 +127,9 @@ public class Recaller {
         // 向量已在锁外计算；这里只复制本地图谱和索引结果。
         store.withProjectionLock(() -> {
             snapshot.allFacts().addAll(store.allFacts());
-            store.allPendingFacts().stream().filter(Recaller::verifiedPending)
+            store.allPendingFacts().stream().filter(RecallEligibility::fact)
                     .forEach(snapshot.allFacts()::add);
-            snapshot.allFacts().removeIf(f -> f.superseded || f.contested);
+            snapshot.allFacts().removeIf(f -> !RecallEligibility.fact(f));
             snapshot.allEpisodes().addAll(store.allEpisodes());
             snapshot.allEpisodes().addAll(store.allPendingEpisodes());
             if (vector != null) {
@@ -146,11 +146,6 @@ public class Recaller {
 
     private record GraphEvidence(List<Fact> allFacts, List<Episode> allEpisodes,
                                  Map<Fact, Double> facts, Map<Episode, Double> episodes) {}
-
-    private static boolean verifiedPending(Fact fact) {
-        return fact.userAsserted || fact.userEdited || "HABIT_REVIEW".equals(fact.sourceKind)
-                || "DISTILLED".equals(fact.sourceKind);
-    }
 
     private static double similarity(String query, String text) {
         if (query == null || query.isBlank() || text == null || text.isBlank()) return 0;

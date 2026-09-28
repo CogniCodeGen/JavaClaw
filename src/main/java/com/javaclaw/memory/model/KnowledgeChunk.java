@@ -22,6 +22,11 @@ public class KnowledgeChunk {
     /** 分块文本 */
     public String content;
 
+    /** Indexed content version and bounded metadata for deferred context search. */
+    public String deferredContextDigest;
+    public String deferredSearchText;
+    public String deferredSummary;
+
     /** 预计算向量 */
     public float[] embedding;
 

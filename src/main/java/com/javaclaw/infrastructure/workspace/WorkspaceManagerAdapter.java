@@ -8,7 +8,7 @@ import com.javaclaw.config.WorkspaceManager;
 import java.util.List;
 import java.util.Objects;
 
-/** Adapts the durable legacy workspace store to the application workspace port. */
+/** Adapts the durable workspace store to the application workspace port. */
 public final class WorkspaceManagerAdapter implements WorkspaceManagementPort {
 
     private final WorkspaceManager manager;

@@ -1,7 +1,7 @@
 package com.javaclaw.plugin;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.plugin.api.Capability;
 import org.slf4j.Logger;
@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -61,7 +60,7 @@ public final class PluginStore {
         return persisted != null && persisted.enabled;
     }
 
-    /** 读取已授权能力集合；未知能力名属于旧数据，安全忽略。 */
+    /** 读取已授权能力集合。 */
     synchronized Set<Capability> granted(String id) {
         Persist persisted = entries.get(id);
         Set<Capability> result = new LinkedHashSet<>();
@@ -69,11 +68,7 @@ public final class PluginStore {
             return result;
         }
         for (String name : persisted.granted) {
-            try {
-                result.add(Capability.valueOf(name.toUpperCase(Locale.ROOT)));
-            } catch (IllegalArgumentException ignored) {
-                log.debug("插件[{}]包含宿主未知的历史能力名：{}", id, name);
-            }
+            result.add(Capability.valueOf(name));
         }
         return result;
     }
@@ -172,28 +167,45 @@ public final class PluginStore {
     }
 
     private List<String> readStringList(String value) {
-        if (value == null || value.isBlank()) {
-            return new ArrayList<>();
+        JsonNode parsed = readPersistedJson(value, "granted_json");
+        if (!parsed.isArray()) throw new IllegalStateException("插件授权列表必须是 JSON 数组");
+        List<String> names = new ArrayList<>();
+        for (JsonNode item : parsed) {
+            if (!item.isTextual()) throw new IllegalStateException("插件授权名称必须是字符串");
+            String name = item.textValue();
+            try {
+                Capability.valueOf(name);
+            } catch (IllegalArgumentException invalid) {
+                throw new IllegalStateException("未知的插件授权能力: " + name, invalid);
+            }
+            names.add(name);
         }
-        try {
-            List<String> parsed = json.readValue(value, new TypeReference<>() { });
-            return parsed == null ? new ArrayList<>() : parsed;
-        } catch (JsonProcessingException failure) {
-            log.warn("解析插件授权列表失败，已按空列表处理：{}", failure.getMessage());
-            return new ArrayList<>();
-        }
+        return names;
     }
 
     private Map<String, String> readStringMap(String value) {
+        JsonNode parsed = readPersistedJson(value, "config_json");
+        if (!parsed.isObject()) throw new IllegalStateException("插件配置必须是 JSON 对象");
+        Map<String, String> config = new LinkedHashMap<>();
+        parsed.fields().forEachRemaining(field -> {
+            if (!field.getValue().isTextual()) {
+                throw new IllegalStateException("插件配置值必须是字符串: " + field.getKey());
+            }
+            config.put(field.getKey(), field.getValue().textValue());
+        });
+        return config;
+    }
+
+    private JsonNode readPersistedJson(String value, String column) {
         if (value == null || value.isBlank()) {
-            return new LinkedHashMap<>();
+            throw new IllegalStateException("插件状态缺少 " + column);
         }
         try {
-            Map<String, String> parsed = json.readValue(value, new TypeReference<>() { });
-            return parsed == null ? new LinkedHashMap<>() : parsed;
+            JsonNode parsed = json.readTree(value);
+            if (parsed == null) throw new IllegalStateException("插件状态缺少 " + column);
+            return parsed;
         } catch (JsonProcessingException failure) {
-            log.warn("解析插件配置失败，已按空配置处理：{}", failure.getMessage());
-            return new LinkedHashMap<>();
+            throw new IllegalStateException("插件状态 JSON 损坏: " + column, failure);
         }
     }
 

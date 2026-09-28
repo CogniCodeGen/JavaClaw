@@ -4,38 +4,48 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.api.BudgetExceededException;
-import com.javaclaw.framework.core.*;
-import com.javaclaw.framework.spi.ExtensionStateStore;
+import com.javaclaw.framework.api.RunEventEnvelope;
+import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.core.CancellableTaskStages;
+import com.javaclaw.framework.core.ReasoningGateway;
+import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.ReasoningResult;
+import com.javaclaw.framework.core.RunUsageLedger;
+import com.javaclaw.framework.core.ToolApprovalRequiredException;
+import com.javaclaw.framework.core.ToolGroupAccess;
+import com.javaclaw.framework.core.ToolInputRequiredException;
+import com.javaclaw.framework.core.ToolInvocationGateway;
+import com.javaclaw.framework.core.ToolRecoveryRequiredException;
+import com.javaclaw.framework.spi.AdvisorRuntimeContext;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
+import com.javaclaw.framework.spi.ExtensionStateStore;
 import com.javaclaw.framework.spi.FrameworkTool;
 import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.RetryContext;
+import com.javaclaw.framework.spi.RetryDirective;
+import com.javaclaw.framework.spi.RunCancelledException;
 import com.javaclaw.framework.spi.RunStore;
 import com.javaclaw.framework.spi.ToolContext;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.util.MimeTypeUtils;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import reactor.core.publisher.Flux;
 
 import java.math.BigDecimal;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -52,6 +62,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     private final ObjectMapper json;
     private final CancellableTaskExecutor executor;
     private final ObservationRegistry observations;
+    private final SpringAiPromptFactory prompts;
 
     public SpringAiReasoningGateway(
             SpringAiModelRegistry models,
@@ -74,6 +85,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         this.json = Objects.requireNonNull(json, "json");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.observations = Objects.requireNonNull(observations, "observations");
+        this.prompts = new SpringAiPromptFactory(extensionState);
     }
 
     @Override
@@ -93,47 +105,104 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             AtomicInteger currentAttempt = new AtomicInteger(1);
             AtomicInteger responseIndex = new AtomicInteger();
             ModelStepJournal journal = new ModelStepJournal(request, runStore, json);
-            ChatModel rawModel = models.require(request.plan().descriptor().modelPolicyRef());
-            ChatModel model = new MeteredChatModel(rawModel, journal, currentAttempt,
-                    () -> usageLedger.beginModelCall(request.runId()), request.control()::throwIfCancelled, response -> meter(
-                    request, response, currentAttempt.get(), responseIndex.incrementAndGet()),
-                    failure -> meterFailure(request, failure, currentAttempt.get(),
-                            responseIndex.incrementAndGet()));
-            List<Advisor> customAdvisors = advisorRegistry.create(
-                    request.plan().descriptor().advisors(), request.plan().advisorFactories(),
-                    new com.javaclaw.framework.spi.AdvisorRuntimeContext(
-                            request.runId(), request.runRequest(),
-                            extensionState.view(request.runId()), modelTasks, request.control()));
-
-            // ChatClient 2.0 installs its recursive ToolCallingAdvisor. We never add another one.
-            ChatClient client = ChatClient.builder(model, observations, null, null)
-                    .defaultAdvisors(customAdvisors)
-                    .build();
-            List<FrameworkTool> runTools = createTools(request);
-            List<ToolCallback> callbacks = createToolCallbacks(request, runTools, journal);
-            String systemPrompt = buildSystemPrompt(request);
-            List<Message> messages = new ArrayList<>(buildMessages(request));
-
-            ObjectNode started = JsonNodeFactory.instance.objectNode();
-            started.put("modelPolicy", request.plan().descriptor().modelPolicyRef());
-            started.put("toolCount", callbacks.size());
-            started.put("toolCallingAdvisorCount", 1);
-            request.events().emit("core.model.started", 1, "framework.springai", started);
-
+            StepContextProjector projector = new StepContextProjector(
+                    request.plan().descriptor().stepContextPolicy());
+            ProviderContextBoundary boundary = new ProviderContextBoundary();
+            List<FrameworkTool> runTools = new ArrayList<>(createTools(request));
             ChatResponse response = null;
             Throwable callFailure = null;
             try {
-                ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, true);
-                if (recovered != null) {
+                ToolCatalogSession catalog = null;
+                if (request.plan().descriptor().stepContextPolicy() != null && !runTools.isEmpty()) {
+                    catalog = new ToolCatalogSession(request, runStore, json,
+                            request.plan().descriptor().stepContextPolicy(), runTools);
+                    runTools.add(catalog);
+                }
+                List<ToolCallback> callbacks = SpringAiToolCatalog.createCallbacks(
+                        request, runTools, tools, json, journal);
+                if (catalog != null) catalog.bindCallbacks(callbacks);
+                ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, catalog, true);
+                String systemPrompt;
+                List<Message> messages;
+                StepContextProjector.Projection activeProjection;
+                List<Message> originalHistory = prompts.messages(request);
+                boolean onDemandEnabled = request.plan().descriptor().onDemandContextPolicy() != null;
+                if (recovered == null) {
+                    String prepared = onDemandEnabled
+                            ? TurnPreparationJournal.prepare(request, runStore, extensionState) : "";
+                    systemPrompt = prompts.systemPrompt(request)
+                            + (prepared.isBlank() ? "" : "\n\n" + prepared);
+                    messages = originalHistory;
+                    activeProjection = projector.project(
+                            providerMessages(systemPrompt, messages));
+                    messages = withoutSystemMessages(activeProjection.messages());
+                } else {
                     systemPrompt = recovered.systemPrompt();
                     messages = new ArrayList<>(recovered.messages());
+                    activeProjection = new StepContextProjector.Projection(
+                            recovered.messages(), recovered.statistics());
                     response = recovered.finalResponse();
-                } else if (request.approvedToolInvocation() != null) {
-                    // Compatibility for runs persisted before atomic model checkpoints existed.
-                    appendApprovedToolContinuation(request, runTools, messages, request.approvedToolInvocation());
                 }
-                if (response == null) response = callWithRetry(
-                        client, systemPrompt, messages, callbacks, request, currentAttempt, journal, runTools);
+                OnDemandContextSession onDemand = null;
+                if (onDemandEnabled && response == null) {
+                    if (recovered != null) {
+                        TurnPreparationJournal.prepare(request, runStore, extensionState);
+                    }
+                    onDemand = new OnDemandContextSession(request, catalog, modelTasks,
+                            tools, runStore, json, originalHistory);
+                    if (recovered != null) onDemand.replayOnce(recovered);
+                }
+                if (recovered == null && request.approvedToolInvocation() != null
+                        && !request.approvedToolInvocation().challenge().tool()
+                                .startsWith("framework_context_")) {
+                    throw new ToolRecoveryRequiredException(request.runId().value(),
+                            "approved business tool has no durable model Step; restart the Run");
+                }
+                if (response == null) {
+                    ChatModel rawModel = models.require(request.plan().descriptor().modelPolicyRef());
+                    ChatModel model = new SpringAiMeteredChatModel(
+                            rawModel, journal, currentAttempt,
+                            () -> usageLedger.beginModelCall(request.runId()),
+                            request.control()::throwIfCancelled,
+                            value -> meter(request, value, currentAttempt.get(),
+                                    responseIndex.incrementAndGet()),
+                            failure -> meterFailure(request, failure, currentAttempt.get(),
+                                    responseIndex.incrementAndGet()),
+                            projector, catalog, request, boundary);
+                    List<Advisor> customAdvisors = advisorRegistry.create(
+                            request.plan().descriptor().advisors(), request.plan().advisorFactories(),
+                            new AdvisorRuntimeContext(
+                                    request.runId(), request.runRequest(),
+                                    extensionState.view(request.runId()), modelTasks, request.control()));
+
+                    // Exactly one recursive advisor owns tool execution. Its manager uses our registry.
+                    var advisorBuilder = SpringAiToolCallingAdvisor
+                            .builder(projector, catalog, boundary, onDemand)
+                            .toolCallingManager(new GuardedToolCallingManager(
+                                    ToolCallingManager.builder()
+                                            .observationRegistry(observations).build(), journal));
+                    ChatClient client = ChatClient.builder(model, observations, null, null, advisorBuilder)
+                            .defaultAdvisors(customAdvisors)
+                            .build();
+                    ToolCatalogProjection toolProjection = onDemand != null
+                            ? new ToolCatalogProjection(List.of(), 0,
+                                    catalog == null ? 0 : catalog.summaries().size())
+                            : catalog == null
+                                    ? SpringAiToolCatalog.project(callbacks, Set.of(),
+                                            request.plan().descriptor().stepContextPolicy())
+                                    : catalog.project(messages);
+                    ObjectNode started = JsonNodeFactory.instance.objectNode();
+                    started.put("modelPolicy", request.plan().descriptor().modelPolicyRef());
+                    started.put("toolCount", toolProjection.callbacks().size());
+                    started.put("availableToolCount", toolProjection.availableToolCount());
+                    started.put("toolSchemaCharacters", toolProjection.schemaCharacters());
+                    started.put("toolCallingAdvisorCount", 1);
+                    addProjectionStatistics(started, activeProjection.statistics());
+                    request.events().emit("core.model.started", 1, "framework.springai", started);
+
+                    response = callWithRetry(client, systemPrompt, messages, callbacks, request,
+                            currentAttempt, journal, runTools, catalog, onDemand);
+                }
             } catch (Throwable failure) {
                 callFailure = failure;
                 throw failure;
@@ -179,12 +248,13 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     resultObject.set("value", guarded);
                 }
                 ObjectNode assessments = resultObject.putObject("assessments");
-                List<com.javaclaw.framework.api.RunEventEnvelope> runEvents =
+                List<RunEventEnvelope> runEvents =
                         runStore.eventsAfter(request.runId(), 0);
                 for (var policy : request.plan().evaluationPolicies()) {
                     JsonNode assessment = policy.evaluate(runEvents, resultObject, modelTasks);
                     assessments.set(policy.id(), assessment);
-                    request.events().emit(policy.id() + ".assessment", 1,
+                    request.events().emit(policy.id() + ".assessment",
+                            policy.eventSchemaVersion(assessment),
                             "framework.builtin", assessment);
                 }
                 guarded = resultObject;
@@ -207,10 +277,23 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 return ReasoningResult.waitingForInput(input.context(), input.getMessage());
             }
             if (cause instanceof ToolRecoveryRequiredException recovery) {
-                return new ReasoningResult(com.javaclaw.framework.api.RunState.PAUSED,
+                return new ReasoningResult(RunState.PAUSED,
                         JsonNodeFactory.instance.objectNode().put("kind", "tool.recovery_required")
-                                .put("stepId", recovery.stepId()),
+                                .put("stepId", recovery.stepId())
+                                .put("reason", recovery.getMessage()),
                         recovery.getMessage());
+            }
+            if (cause instanceof ContextPlanningRequiredException planning) {
+                return new ReasoningResult(RunState.PAUSED,
+                        JsonNodeFactory.instance.objectNode().put("kind", "context.planning_required")
+                                .put("reason", planning.getMessage()),
+                        planning.getMessage());
+            }
+            if (cause instanceof BudgetExceededException budget
+                    && request.plan().descriptor().onDemandContextPolicy() != null) {
+                return new ReasoningResult(RunState.PAUSED,
+                        JsonNodeFactory.instance.objectNode().put("kind", "context.budget_exhausted")
+                                .put("reason", budget.getMessage()), budget.getMessage());
             }
             if (cause instanceof RuntimeException runtime) throw runtime;
             throw new IllegalStateException(cause);
@@ -225,7 +308,9 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             ReasoningRequest request,
             AtomicInteger currentAttempt,
             ModelStepJournal journal,
-            List<FrameworkTool> runTools) throws Throwable {
+            List<FrameworkTool> runTools,
+            ToolCatalogSession catalog,
+            OnDemandContextSession onDemand) throws Throwable {
         int attempt = 1;
         while (true) {
             request.control().throwIfCancelled();
@@ -243,12 +328,13 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 if (cause instanceof ToolApprovalRequiredException
                         || cause instanceof ToolInputRequiredException
                         || cause instanceof ToolRecoveryRequiredException
+                        || cause instanceof ContextPlanningRequiredException
                         || cause instanceof BudgetExceededException
-                        || cause instanceof com.javaclaw.framework.spi.RunCancelledException
+                        || cause instanceof RunCancelledException
                         || attempt >= 8) throw failure;
-                com.javaclaw.framework.spi.RetryDirective directive = null;
+                RetryDirective directive = null;
                 String policyId = null;
-                var context = new com.javaclaw.framework.spi.RetryContext(
+                var context = new RetryContext(
                         request.runId(), "spring-ai.chat", attempt, cause,
                         request.control().remaining());
                 for (var policy : request.plan().retryPolicies()) {
@@ -272,10 +358,14 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 request.events().emit("core.model.retrying", 1,
                         "framework.springai", retrying);
                 awaitRetry(directive.delay(), request);
-                ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, false);
+                ModelStepJournal.Recovery recovered = journal.recover(
+                        runTools, tools, catalog, false);
                 if (recovered != null) {
-                    systemPrompt = recovered.systemPrompt();
+                    if (request.plan().descriptor().onDemandContextPolicy() == null) {
+                        systemPrompt = recovered.systemPrompt();
+                    }
                     messages = recovered.messages();
+                    if (onDemand != null) onDemand.replayOnce(recovered);
                     if (recovered.finalResponse() != null) return recovered.finalResponse();
                 }
                 attempt++;
@@ -371,7 +461,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             java.util.concurrent.locks.LockSupport.parkNanos(wait);
             if (Thread.interrupted()) {
                 Thread.currentThread().interrupt();
-                throw new com.javaclaw.framework.spi.RunCancelledException();
+                throw new RunCancelledException();
             }
             remainingNanos -= wait;
         }
@@ -419,67 +509,27 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         return runTools;
     }
 
-    private List<ToolCallback> createToolCallbacks(
-            ReasoningRequest request, List<FrameworkTool> runTools, ModelStepJournal journal) {
-        List<ToolCallback> callbacks = new ArrayList<>();
-        for (FrameworkTool tool : runTools) {
-            callbacks.add(new SpringAiToolCallback(tool, request, tools, json, journal));
-        }
-        long uniqueNames = callbacks.stream().map(callback ->
-                callback.getToolDefinition().name()).distinct().count();
-        if (uniqueNames != callbacks.size()) {
-            throw new IllegalStateException("duplicate tool names in execution plan");
-        }
-        return List.copyOf(callbacks);
+    private static List<Message> providerMessages(
+            String systemPrompt, List<Message> messages) {
+        List<Message> combined = new ArrayList<>();
+        if (!systemPrompt.isBlank()) combined.add(new SystemMessage(systemPrompt));
+        combined.addAll(messages);
+        return combined;
     }
 
-    private void appendApprovedToolContinuation(
-            ReasoningRequest request,
-            List<FrameworkTool> runTools,
-            List<Message> messages,
-            ApprovedToolInvocation approved) {
-        var challenge = approved.challenge();
-        FrameworkTool selected = runTools.stream()
-                .filter(tool -> tool.descriptor().name().equals(challenge.tool()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException(
-                        "approved tool is absent from the locked execution plan: "
-                                + challenge.tool()));
-        String actualFingerprint = ToolInvocationFingerprint.create(
-                selected.descriptor().name(), challenge.arguments());
-        if (!actualFingerprint.equals(challenge.fingerprint())) {
-            throw new IllegalStateException(
-                    "approved tool arguments no longer match their fingerprint");
-        }
-        String callId = "call_" + challenge.fingerprint().substring(
-                0, Math.min(24, challenge.fingerprint().length()));
-        ToolInvocationResult result;
-        try {
-            result = SpringAiToolCallback.invoke(
-                    selected, challenge.arguments(), request, tools, callId);
-        } catch (ToolApprovalRequiredException repeatedChallenge) {
-            throw new IllegalStateException(
-                    "an exact approved tool invocation requested approval again",
-                    repeatedChallenge);
-        } finally {
-            request.control().discardToolApprovalGrant(challenge.fingerprint());
-        }
-        try {
-            String arguments = json.writeValueAsString(challenge.arguments());
-            String response = json.writeValueAsString(result.output());
-            messages.add(AssistantMessage.builder()
-                    .content("")
-                    .toolCalls(List.of(new AssistantMessage.ToolCall(
-                            callId, "function", challenge.tool(), arguments)))
-                    .build());
-            messages.add(ToolResponseMessage.builder()
-                    .responses(List.of(new ToolResponseMessage.ToolResponse(
-                            callId, challenge.tool(), response)))
-                    .build());
-        } catch (Exception failure) {
-            throw new IllegalStateException(
-                    "cannot encode approved tool continuation", failure);
-        }
+    private static List<Message> withoutSystemMessages(List<Message> messages) {
+        return messages.stream().filter(message -> !(message instanceof SystemMessage)).toList();
+    }
+
+    private static void addProjectionStatistics(
+            ObjectNode target, StepContextProjector.Statistics statistics) {
+        target.put("contextProjectionVersion", 1);
+        target.put("messagesBefore", statistics.messagesBefore());
+        target.put("messagesAfter", statistics.messagesAfter());
+        target.put("messageCharactersBefore", statistics.charactersBefore());
+        target.put("messageCharactersAfter", statistics.charactersAfter());
+        target.put("evictedToolExchanges", statistics.evictedToolExchanges());
+        target.put("contextCompacted", statistics.compacted());
     }
 
     private static void closeTools(List<FrameworkTool> runTools) {
@@ -493,99 +543,6 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             }
         }
         if (first != null) throw first;
-    }
-
-    private String buildSystemPrompt(ReasoningRequest request) {
-        StringBuilder prompt = new StringBuilder();
-        JsonNode projectInstructions = request.runRequest().attributes().get("framework.projectInstructions");
-        if (projectInstructions != null && projectInstructions.isTextual()
-                && !projectInstructions.asText().isBlank()) {
-            prompt.append("## Project instructions\n").append(projectInstructions.asText()).append("\n\n");
-        }
-        request.plan().descriptor().promptSections().entrySet().stream()
-                .sorted(java.util.Map.Entry.comparingByKey())
-                .forEach(entry -> prompt.append("## ").append(entry.getKey()).append('\n')
-                        .append(entry.getValue()).append("\n\n"));
-        JsonNode invocationPrompt = request.runRequest().attributes().get("framework.systemPrompt");
-        if (invocationPrompt != null && invocationPrompt.isTextual()
-                && !invocationPrompt.asText().isBlank()) {
-            prompt.append("## Invocation profile\n")
-                    .append(invocationPrompt.asText()).append("\n\n");
-        }
-        var state = extensionState.view(request.runId());
-        for (var contributor : request.plan().promptContributors()) {
-            String contribution = contributor.contribute(request.runRequest(), state);
-            if (contribution != null && !contribution.isBlank()) {
-                prompt.append(contribution).append("\n\n");
-            }
-        }
-        String query = inputText(request);
-        for (var retriever : request.plan().retrievers()) {
-            List<JsonNode> documents = retriever.retrieve(query, request.runRequest());
-            if (!documents.isEmpty()) {
-                prompt.append("## Retrieved context\n").append(documents).append("\n\n");
-            }
-        }
-        for (var provider : request.plan().contextProviders()) {
-            List<JsonNode> values = provider.provide(request.runRequest(), state);
-            if (!values.isEmpty()) {
-                prompt.append("## Runtime context\n").append(values).append("\n\n");
-            }
-        }
-        return prompt.toString();
-    }
-
-    private List<Message> buildMessages(ReasoningRequest request) {
-        List<Message> messages = new ArrayList<>();
-        for (InputBlock block : request.runRequest().inputs()) {
-            if (!block.type().equals("core.message")) continue;
-            String text = block.data().path("text").asText("");
-            if (text.isBlank()) continue;
-            if (block.data().path("role").asText("").equals("assistant")) {
-                messages.add(new AssistantMessage(text));
-            } else {
-                messages.add(new UserMessage(text));
-            }
-        }
-        messages.add(buildCurrentUserMessage(request));
-        return List.copyOf(messages);
-    }
-
-    private UserMessage buildCurrentUserMessage(ReasoningRequest request) {
-        StringBuilder text = new StringBuilder(inputText(request));
-        List<Media> media = new ArrayList<>();
-        for (InputBlock block : request.runRequest().inputs()) {
-            if (!block.type().equals("core.file") && !block.type().equals("core.image")) continue;
-            JsonNode data = block.data();
-            String name = data.path("name").asText("attachment");
-            String uri = data.path("uri").asText("");
-            String mediaType = data.path("mediaType").asText("application/octet-stream");
-            text.append("\n[Attachment: ").append(name).append("; ").append(mediaType).append(']');
-            if (!uri.isBlank() && (mediaType.startsWith("image/") || mediaType.startsWith("audio/"))) {
-                try {
-                    media.add(Media.builder().name(name)
-                            .mimeType(MimeTypeUtils.parseMimeType(mediaType))
-                            .data(URI.create(uri)).build());
-                } catch (RuntimeException ignored) {
-                    // The textual attachment descriptor remains available to the model.
-                }
-            }
-        }
-        if (request.resumeCommand() != null
-                && !request.resumeCommand().type().equals("tool.approval")) {
-            text.append("\n\nResume command (").append(request.resumeCommand().type())
-                    .append("): ").append(request.resumeCommand().payload());
-        }
-        UserMessage.Builder builder = UserMessage.builder().text(text.toString());
-        if (!media.isEmpty()) builder.media(media);
-        return builder.build();
-    }
-
-    private static String inputText(ReasoningRequest request) {
-        return request.runRequest().inputs().stream()
-                .filter(block -> block.type().equals("core.text"))
-                .map(block -> block.data().path("text").asText())
-                .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private static long token(Integer value) {
@@ -607,74 +564,5 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             long outputTokens,
             BigDecimal estimatedCostCny) { }
 
-    /** Captures every provider response before advisors can execute tools or retry. */
-    private static final class MeteredChatModel implements ChatModel {
-        private final ChatModel delegate;
-        private final ModelStepJournal journal;
-        private final AtomicInteger attempt;
-        private final java.util.function.Supplier<RunUsageLedger.ModelCall> admission;
-        private final Runnable cancelled;
-        private final java.util.function.Consumer<ChatResponse> meter;
-        private final java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
-                failureMeter;
 
-        private MeteredChatModel(
-                ChatModel delegate, ModelStepJournal journal, AtomicInteger attempt,
-                java.util.function.Supplier<RunUsageLedger.ModelCall> admission, Runnable cancelled,
-                java.util.function.Consumer<ChatResponse> meter,
-                java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
-                        failureMeter) {
-            this.delegate = Objects.requireNonNull(delegate, "delegate");
-            this.journal = journal;
-            this.attempt = attempt;
-            this.admission = admission;
-            this.cancelled = cancelled;
-            this.meter = Objects.requireNonNull(meter, "meter");
-            this.failureMeter = Objects.requireNonNull(failureMeter, "failureMeter");
-        }
-
-        @Override
-        public ChatResponse call(Prompt prompt) {
-            try (var ignored = admission.get()) {
-                cancelled.run();
-                var step = journal.started(prompt, attempt.get());
-                ChatResponse response;
-                try {
-                    response = delegate.call(prompt);
-                    if (response == null) throw new IllegalStateException("model returned no response");
-                } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
-                    try { journal.failed(step, failure); }
-                    catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
-                    try { failureMeter.accept(failure); }
-                    catch (RuntimeException meteringFailure) { meteringFailure.addSuppressed(failure); throw meteringFailure; }
-                    throw failure;
-                } catch (RuntimeException failure) {
-                    try { journal.failed(step, failure); }
-                    catch (RuntimeException journalFailure) { failure.addSuppressed(journalFailure); }
-                    throw failure;
-                }
-                RuntimeException journalFailure = null;
-                try { journal.completed(step, response); }
-                catch (RuntimeException failure) { journalFailure = failure; }
-                // Provider responses remain billable even if cancellation prevents publishing the step.
-                try { meter.accept(response); }
-                catch (RuntimeException failure) {
-                    if (journalFailure != null) failure.addSuppressed(journalFailure);
-                    throw failure;
-                }
-                if (journalFailure != null) throw journalFailure;
-                return response;
-            }
-        }
-
-        @Override
-        public ChatOptions getOptions() {
-            return delegate.getOptions();
-        }
-
-        @Override
-        public Flux<ChatResponse> stream(Prompt prompt) {
-            return delegate.stream(prompt);
-        }
-    }
 }

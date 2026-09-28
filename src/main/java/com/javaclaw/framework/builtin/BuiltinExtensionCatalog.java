@@ -9,7 +9,18 @@ import com.javaclaw.framework.builtin.memory.MemoryMutationGateway;
 import com.javaclaw.framework.builtin.memory.MemoryRecallExtension;
 import com.javaclaw.framework.builtin.memory.MemoryRecallGateway;
 import com.javaclaw.framework.extension.ExtensionArtifact;
-import com.javaclaw.framework.spi.*;
+import com.javaclaw.framework.spi.AgentFrameworkExtension;
+import com.javaclaw.framework.spi.EventCodec;
+import com.javaclaw.framework.spi.EventTypeDescriptor;
+import com.javaclaw.framework.spi.ExtensionDependency;
+import com.javaclaw.framework.spi.ExtensionRegistrar;
+import com.javaclaw.framework.spi.PromptContributor;
+import com.javaclaw.framework.spi.RetrieverContribution;
+import com.javaclaw.framework.spi.DeferredContextSource;
+import com.javaclaw.framework.spi.FixedContextSource;
+import com.javaclaw.framework.spi.OnDemandContributions;
+import com.javaclaw.framework.spi.TurnPreparation;
+import com.javaclaw.framework.spi.ToolProviderFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,13 +38,33 @@ public final class BuiltinExtensionCatalog {
             PromptContributor skillContributor,
             ToolProviderFactory hostTools) {
         return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor,
-                hostTools, context -> List.of());
+                hostTools, context -> List.of(), null, null, null);
     }
 
     public static List<ExtensionArtifact> create(
             MemoryRecallGateway memoryRecall, MemoryMutationGateway memoryMutations,
             RetrieverContribution knowledgeRetriever, PromptContributor skillContributor,
             ToolProviderFactory hostTools, ToolProviderFactory subagents) {
+        return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor,
+                hostTools, subagents, null, null, null);
+    }
+
+    public static List<ExtensionArtifact> create(
+            MemoryRecallGateway memoryRecall, MemoryMutationGateway memoryMutations,
+            RetrieverContribution knowledgeRetriever, PromptContributor skillContributor,
+            ToolProviderFactory hostTools, ToolProviderFactory subagents,
+            DeferredContextSource memorySource, DeferredContextSource knowledgeSource,
+            DeferredContextSource skillSource) {
+        return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor,
+                hostTools, subagents, memorySource, knowledgeSource, skillSource, null);
+    }
+
+    public static List<ExtensionArtifact> create(
+            MemoryRecallGateway memoryRecall, MemoryMutationGateway memoryMutations,
+            RetrieverContribution knowledgeRetriever, PromptContributor skillContributor,
+            ToolProviderFactory hostTools, ToolProviderFactory subagents,
+            DeferredContextSource memorySource, DeferredContextSource knowledgeSource,
+            DeferredContextSource skillSource, FixedContextSource personaSource) {
         Objects.requireNonNull(memoryRecall, "memoryRecall");
         Objects.requireNonNull(memoryMutations, "memoryMutations");
         Objects.requireNonNull(knowledgeRetriever, "knowledgeRetriever");
@@ -44,11 +75,11 @@ public final class BuiltinExtensionCatalog {
         extensions.add(declarative("memory.graph", "Memory Graph",
                 "EclipseStore authoritative graph with a Spring AI VectorStore adapter",
                 schema(true), 10, List.of(), registrar -> {}));
-        extensions.add(new MemoryRecallExtension(memoryRecall));
+        extensions.add(new MemoryRecallExtension(memoryRecall, memorySource, personaSource));
         extensions.add(declarative("memory.correction", "Memory Correction",
                 "Durable corrections, conflict/supersede/undo and final-answer protection",
                 schema(true), 30, dependsOnGraph(), registrar -> {
-                    registrar.promptContributor((request, state) -> {
+                    PromptContributor correctionPrompt = (request, state) -> {
                         String input = textInput(request);
                         String previous = request.attributes().containsKey("previousAssistantReply")
                                 ? request.attributes().get("previousAssistantReply").asText("") : "";
@@ -57,6 +88,14 @@ public final class BuiltinExtensionCatalog {
                         if (correction == null || correction.isNull()) return "";
                         String prompt = correction.path("prompt").asText("");
                         return prompt.isBlank() ? "" : prompt;
+                    };
+                    registrar.promptContributor(OnDemandContributions.eagerOnly(correctionPrompt));
+                    registrar.turnPreparation(new TurnPreparation() {
+                        @Override public String id() { return "memory.correction"; }
+                        @Override public String prepare(com.javaclaw.framework.api.RunRequest request,
+                                                        com.javaclaw.framework.spi.ExtensionStateView state) {
+                            return correctionPrompt.contribute(request, state);
+                        }
                     });
                     registrar.outputGuard((output, request, runId) ->
                             memoryMutations.protectOutput(runId, request, output));
@@ -86,6 +125,9 @@ public final class BuiltinExtensionCatalog {
                     registrar.eventType(new EventTypeDescriptor(
                             "gepa.evaluate.assessment", 1, gepaAssessmentSchema()),
                             EventCodec.jsonNode());
+                    registrar.eventType(new EventTypeDescriptor(
+                            "gepa.evaluate.assessment", 2, gepaUnavailableAssessmentSchema()),
+                            EventCodec.jsonNode());
                 }));
         extensions.add(declarative("gepa.revise", "GEPA Revision",
                 "Reply repair and PlanRevision without a second execution loop",
@@ -95,16 +137,22 @@ public final class BuiltinExtensionCatalog {
         extensions.add(declarative("gepa.goal", "Structured Goals",
                 "Goal decomposition contributed as reasoning context",
                 schema(true), 40, List.of(), registrar ->
-                        registrar.promptContributor((request, state) ->
+                        registrar.promptContributor(OnDemandContributions.fixed((request, state) ->
                                 "For complex work, keep goals explicit and emit progress through run events. "
-                                        + "Do not create a second plan state machine.")));
+                                        + "Do not create a second plan state machine."))));
 
         extensions.add(declarative("knowledge.rag", "Knowledge / RAG",
                 "Spring AI Retriever and RAG Advisor over workspace knowledge",
-                topKSchema(), 10, List.of(), registrar -> registrar.retriever(knowledgeRetriever)));
+                topKSchema(), 10, List.of(), registrar -> {
+                    registrar.retriever(OnDemandContributions.deferred(knowledgeRetriever, "knowledge"));
+                    if (knowledgeSource != null) registrar.deferredContextSource(knowledgeSource);
+                }));
         extensions.add(declarative("skill.runtime", "Skills",
                 "Reusable prompt, tool and curation workflow contributions",
-                schema(true), 20, List.of(), registrar -> registrar.promptContributor(skillContributor)));
+                schema(true), 20, List.of(), registrar -> {
+                    registrar.promptContributor(OnDemandContributions.deferred(skillContributor, "skills"));
+                    if (skillSource != null) registrar.deferredContextSource(skillSource);
+                }));
         extensions.add(declarative("plan.readonly", "Read-only Plan Mode",
                 "PlanRevision with a permission profile that cannot execute mutations",
                 schema(true), 30, List.of(), registrar ->
@@ -117,12 +165,16 @@ public final class BuiltinExtensionCatalog {
                 "Parent/child AgentClient runs with shared kernel budgets and cancellation",
                 schema(true), 40, List.of(), registrar -> registrar.toolProvider(subagents)));
         extensions.add(declarative("context.compaction", "Context Compaction",
-                "Advisor-driven context compaction with audited summary tasks",
-                schema(true), 50, List.of(), registrar -> {}));
+                "Bounded model-visible messages and tool schemas with durable full evidence",
+                contextCompactionSchema(), 50, List.of(), registrar -> {}));
+        extensions.add(declarative("context.on_demand", "On-demand Context",
+                "Select per-Step context and tools before each provider call",
+                onDemandContextSchema(), 55, List.of(), registrar -> {}));
         extensions.add(declarative("tool.result-eviction", "Tool Result Eviction",
                 "Size-aware tool-result post-processing without losing durable events",
                 resultEvictionSchema(), 60, List.of(), registrar ->
                         registrar.toolResultPostProcessor((current, tool, context, request) -> {
+                            if (context.internalContextRead()) return current;
                             String rendered = current.isTextual()
                                     ? current.asText() : current.toString();
                             int limit = com.javaclaw.framework.api.CapabilityRuntime.configuration(
@@ -177,6 +229,25 @@ public final class BuiltinExtensionCatalog {
         return BuiltinSchemas.integerProperty(schema, "intervalHours", 24, 1, 720);
     }
 
+    private static ObjectNode contextCompactionSchema() {
+        ObjectNode schema = schema(true);
+        BuiltinSchemas.integerProperty(schema, "maxMessageCharacters", 48_000, 4_000, 200_000);
+        BuiltinSchemas.integerProperty(schema, "maxToolSchemaCharacters", 48_000, 4_000, 200_000);
+        BuiltinSchemas.integerProperty(schema, "retainedToolExchanges", 4, 1, 32);
+        BuiltinSchemas.integerProperty(schema, "maxToolResultCharacters", 16_000, 1_000, 100_000);
+        return BuiltinSchemas.integerProperty(schema, "maxTools", 64, 1, 256);
+    }
+
+    private static ObjectNode onDemandContextSchema() {
+        ObjectNode schema = schema(true);
+        BuiltinSchemas.integerProperty(schema, "searches", 2, 1, 32);
+        BuiltinSchemas.integerProperty(schema, "fetches", 3, 1, 64);
+        BuiltinSchemas.integerProperty(schema, "candidates", 32, 1, 256);
+        BuiltinSchemas.integerProperty(schema, "plannerInputChars", 8_000, 1_000, 200_000);
+        BuiltinSchemas.integerProperty(schema, "selectedBodyChars", 12_000, 1_000, 200_000);
+        return BuiltinSchemas.integerProperty(schema, "selectedTools", 8, 1, 256);
+    }
+
     private static ObjectNode resultEvictionSchema() {
         ObjectNode schema = schema(true);
         return BuiltinSchemas.integerProperty(
@@ -194,6 +265,16 @@ public final class BuiltinExtensionCatalog {
         properties.putObject("summary").put("type", "string").put("maxLength", 500);
         schema.putArray("required")
                 .add("mode").add("score").add("needsRevision").add("summary");
+        return schema;
+    }
+
+    private static ObjectNode gepaUnavailableAssessmentSchema() {
+        ObjectNode schema = BuiltinSchemas.objectSchema();
+        ObjectNode properties = (ObjectNode) schema.withObject("/properties");
+        properties.putObject("mode").put("const", "unavailable");
+        properties.putObject("reason").put("const", "answer_too_large");
+        properties.putObject("summary").put("type", "string").put("maxLength", 500);
+        schema.putArray("required").add("mode").add("reason").add("summary");
         return schema;
     }
 

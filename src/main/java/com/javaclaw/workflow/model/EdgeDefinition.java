@@ -1,5 +1,7 @@
 package com.javaclaw.workflow.model;
 
+import java.util.Objects;
+
 /** 条件边按 priority 从小到大匹配；defaultEdge 必须是同源条件边中的最后兜底。 */
 public record EdgeDefinition(
         String id,
@@ -14,6 +16,6 @@ public record EdgeDefinition(
         id = id == null ? "" : id.trim();
         source = source == null ? "" : source.trim();
         target = target == null ? "" : target.trim();
-        kind = kind == null ? EdgeKind.NORMAL : kind;
+        kind = Objects.requireNonNull(kind, "kind");
     }
 }

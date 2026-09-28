@@ -63,7 +63,7 @@ class SiteCredentialManagerBehaviorTest {
         source.setId(" ");
         source.setCreatedAt(0);
         source.setPassword("plain-secret");
-        SiteCredential saved = manager.put(source);
+        SiteCredential saved = manager.putChecked(source);
         assertNotNull(saved.getId());
         assertFalse(saved.getId().isBlank());
         assertTrue(saved.getCreatedAt() > 0);
@@ -76,7 +76,6 @@ class SiteCredentialManagerBehaviorTest {
         manager.putChecked(update);
         assertEquals("updated", manager.get(saved.getId()).getName());
         assertEquals(1, manager.all().size());
-        manager.save();
 
         SiteCredentialManager reloaded = manager(database, workspace);
         assertEquals("updated", reloaded.get(saved.getId()).getName());
@@ -90,30 +89,10 @@ class SiteCredentialManagerBehaviorTest {
         preEncrypted.setPassword("ENC(not-plaintext)");
         assertThrows(IllegalStateException.class, () -> manager.putChecked(preEncrypted));
 
-        try (var connection = database.open();
-             PreparedStatement statement = connection.prepareStatement("""
-                     INSERT INTO site_credentials(
-                         workspace_id, id, name, host_pattern, created_at,
-                         last_used_at, has_session)
-                     VALUES ('workspace', 'orphan', 'orphan', 'orphan.test', 1, 0, FALSE)
-                     """)) {
-            statement.executeUpdate();
-        }
-        manager.save();
-        try (var connection = database.open();
-             PreparedStatement statement = connection.prepareStatement("""
-                     SELECT COUNT(*) FROM site_credentials
-                     WHERE workspace_id = 'workspace' AND id = 'orphan'
-                     """);
-             var rows = statement.executeQuery()) {
-            assertTrue(rows.next());
-            assertEquals(0, rows.getInt(1));
-        }
-
         assertFalse(manager.removeChecked("missing"));
         assertTrue(manager.removeChecked(saved.getId()));
         assertNull(manager.get(saved.getId()));
-        manager.remove("missing");
+        assertNull(manager(database, workspace).get(saved.getId()));
     }
 
     @Test
@@ -136,7 +115,6 @@ class SiteCredentialManagerBehaviorTest {
         assertFalse(manager.tryWriteSession(null, "{}"));
         assertFalse(manager.tryWriteSession(exact.getId(), null));
         assertFalse(manager.tryWriteSession("missing", "{}"));
-        manager.writeSession("missing", "{}");
         assertTrue(manager.tryWriteSession(exact.getId(), "{\"cookies\":[]}"));
         assertTrue(manager.get(exact.getId()).isHasSession());
         assertEquals("{\"cookies\":[]}", manager.readSession(exact.getId()));
@@ -254,7 +232,6 @@ class SiteCredentialManagerBehaviorTest {
         assertThrows(IllegalStateException.class,
                 () -> manager.putChecked(credential("new", "example.com")));
         assertEquals(1, manager.all().size());
-        assertThrows(IllegalStateException.class, manager::save);
         assertThrows(IllegalStateException.class,
                 () -> manager.removeChecked(saved.getId()));
         assertFalse(manager.tryWriteSession(saved.getId(), "{}"));

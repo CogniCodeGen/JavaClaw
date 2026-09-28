@@ -55,26 +55,6 @@ public interface LocalInferenceQuickSetupApplicationService {
                     ? List.of() : List.copyOf(supportedModelTypes);
         }
 
-        public QuickSnapshot(
-                List<LocalModel> models, UUID publishedProfileId, String alias, String endpoint,
-                boolean gatewayEnabled, boolean apiKeyConfigured, boolean insecureLanConfirmed) {
-            this(models, publishedProfileId, alias, endpoint, gatewayEnabled,
-                    apiKeyConfigured, insecureLanConfirmed,
-                    gatewayEnabled ? InferenceApiServerControlPort.State.CONFIGURED_STOPPED
-                            : InferenceApiServerControlPort.State.DISABLED,
-                    List.of());
-        }
-
-        public QuickSnapshot(
-                List<LocalModel> models, UUID publishedProfileId, String alias, String endpoint,
-                boolean gatewayEnabled, boolean apiKeyConfigured, boolean insecureLanConfirmed,
-                List<SupportedModelType> supportedModelTypes) {
-            this(models, publishedProfileId, alias, endpoint, gatewayEnabled,
-                    apiKeyConfigured, insecureLanConfirmed,
-                    gatewayEnabled ? InferenceApiServerControlPort.State.CONFIGURED_STOPPED
-                            : InferenceApiServerControlPort.State.DISABLED,
-                    supportedModelTypes);
-        }
     }
 
     record SupportedModelType(String id, String displayName) {
@@ -127,12 +107,6 @@ public interface LocalInferenceQuickSetupApplicationService {
             failure = failure == null ? "" : failure.strip();
         }
 
-        public LocalModel(
-                UUID assetId, String displayName, long sizeBytes,
-                InferenceModelAsset.State assetState, UUID profileId,
-                Status status, String failure) {
-            this(assetId, displayName, "unknown", sizeBytes, assetState, profileId, status, failure);
-        }
     }
 
     enum Status { IMPORTED, READY, API_AVAILABLE, RUNNING, FAILED }

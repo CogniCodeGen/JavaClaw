@@ -18,11 +18,6 @@ public final class BudgetExceededException extends RuntimeException {
     private final String actual;
     private final String limit;
 
-    /** Backward-compatible constructor for callers without structured budget metadata. */
-    public BudgetExceededException(String message) {
-        this(Kind.UNKNOWN, message, "", "");
-    }
-
     public BudgetExceededException(Kind kind, String message, String actual, String limit) {
         super(Objects.requireNonNullElse(message, "execution budget exceeded"));
         this.kind = Objects.requireNonNullElse(kind, Kind.UNKNOWN);

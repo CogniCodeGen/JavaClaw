@@ -1,11 +1,7 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.ui.javafx.loop.LoopStatusView;
-import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
-import javafx.scene.Node;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
+import com.javaclaw.loop.model.LoopStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,35 +28,29 @@ final class ChatStreamRenderer {
     private final ChatComposerController composer;
     private final ThinkingPanelController thinking;
     private final AssistantMessageFactory assistantMessages;
-    private final ExpandableMarkdownBlockFactory expandableBlocks;
-    private final LoopStatusViewFactory loopStatusViews;
     private final ChatInlineImageRenderer inlineImages;
     private final Supplier<String> modelName;
 
     private AssistantMessageView assistantMessage;
-    private ChildAgentActivityView childAgentActivity;
-    private ExpandableMarkdownBlockView planAgentBlock;
+    private final StringBuilder replyBuffer = new StringBuilder();
     private String planAgentName;
     private final StringBuilder planAgentBuffer = new StringBuilder();
+    private String planAgentFallback;
     private final Set<String> displayedImagePaths = new HashSet<>();
-    private LoopStatusView loopStatusView;
     private String finalPlanDraft;
+    private String activeToolName;
 
     ChatStreamRenderer(
             ChatSessionController transcript,
             ChatComposerController composer,
             ThinkingPanelController thinking,
             AssistantMessageFactory assistantMessages,
-            ExpandableMarkdownBlockFactory expandableBlocks,
-            LoopStatusViewFactory loopStatusViews,
             ChatInlineImageRenderer inlineImages,
             Supplier<String> modelName) {
         this.transcript = Objects.requireNonNull(transcript, "transcript");
         this.composer = Objects.requireNonNull(composer, "composer");
         this.thinking = Objects.requireNonNull(thinking, "thinking");
         this.assistantMessages = Objects.requireNonNull(assistantMessages, "assistantMessages");
-        this.expandableBlocks = Objects.requireNonNull(expandableBlocks, "expandableBlocks");
-        this.loopStatusViews = Objects.requireNonNull(loopStatusViews, "loopStatusViews");
         this.inlineImages = Objects.requireNonNull(inlineImages, "inlineImages");
         this.modelName = Objects.requireNonNull(modelName, "modelName");
     }
@@ -69,8 +59,11 @@ final class ChatStreamRenderer {
             Runnable regenerate,
             Consumer<String> save,
             Consumer<AssistantMessageView> delete) {
-        loopStatusView = null;
         finalPlanDraft = null;
+        planAgentFallback = null;
+        replyBuffer.setLength(0);
+        planAgentBuffer.setLength(0);
+        activeToolName = null;
         displayedImagePaths.clear();
         ChatMessage timestamp = new ChatMessage(ChatMessage.Role.ASSISTANT, "");
         AssistantMessageView message = assistantMessages.create(
@@ -91,42 +84,56 @@ final class ChatStreamRenderer {
     }
 
     void appendReply(String chunk) {
-        MarkdownBubble reply = activeReply();
-        if (reply == null) {
+        if (assistantMessage == null || chunk == null || chunk.isEmpty()) {
             return;
         }
-        if (reply.getLength() == 0) {
-            revealReply();
-            composer.setThinkingText("助手正在回复...");
+        if (replyBuffer.isEmpty()) {
             thinking.setReplying();
         }
-        reply.appendText(chunk);
+        replyBuffer.append(chunk);
     }
 
     void appendSubAgent(String toolName, String content, ChunkKind kind) {
         if (assistantMessage == null) {
             return;
         }
-        assistantMessage.showTools();
         String displayName = displayName(toolName);
-        ChildAgentActivityView activity = ensureChildAgentActivity();
-        boolean forceNewEntry = "execute_task_agent".equals(toolName)
-                && kind == ChunkKind.RESULT;
-        activity.append(displayName, kind, content, forceNewEntry);
-        if (kind == ChunkKind.THINKING) {
-            composer.setThinkingText(displayName + " 正在思考...");
-            thinking.appendSubAgentThinking(displayName, content);
-            return;
-        }
-        appendToolReply(toolName, displayName, content);
-        VBox contentHost = activity.activeContentHost();
-        if (contentHost != null) {
-            inlineImages.displayInline(content, contentHost, displayedImagePaths);
+        switch (kind) {
+            case THINKING -> thinking.appendSubAgentThinking(displayName, content);
+            case REPLY -> thinking.appendSubAgentReply(displayName, content, inlineImages);
+            case RESULT -> {
+                thinking.appendToolResult(toolName, content, inlineImages);
+                thinking.completeSubAgentIfPresent(displayName);
+                if (Objects.equals(toolName, activeToolName)) activeToolName = null;
+                log.debug("子智能体 [{}] 已返回结果，内容长度: {} 字符",
+                        toolName, content == null ? 0 : content.length());
+            }
         }
     }
 
     void appendPlanHint(String hint) {
-        composer.setThinkingText("正在执行规划...");
+        if (hint == null) return;
+        if (hint.startsWith("正在执行工具：")) {
+            activeToolName = hint.substring("正在执行工具：".length()).trim();
+            thinking.appendToolCall(activeToolName, "", "running");
+            return;
+        }
+        if (hint.startsWith("工具等待授权：")) {
+            activeToolName = hint.substring("工具等待授权：".length()).trim();
+            thinking.appendToolCall(activeToolName, "", "waiting");
+            return;
+        }
+        if (hint.startsWith("工具执行失败：")) {
+            thinking.appendToolFailure(activeToolName,
+                    hint.substring("工具执行失败：".length()).trim());
+            activeToolName = null;
+            return;
+        }
+        if (hint.contains("正在推理")) {
+            thinking.setStatus("thinking", "思考中...");
+            thinking.recordPipelineProgress("model-response", "模型响应", "running", hint);
+            return;
+        }
         thinking.updatePlan(hint);
     }
 
@@ -137,66 +144,38 @@ final class ChatStreamRenderer {
         if (planAgentName != null && !planAgentName.equals(agentName)) {
             finishPlanAgent();
         }
-        if (planAgentBlock != null) {
-            planAgentBlock.bubble().finish();
-        }
-        assistantMessage.showTools();
-        composer.setThinkingText(agentName + " 正在发言...");
         planAgentName = agentName;
+        planAgentFallback = null;
         planAgentBuffer.setLength(0);
         thinking.appendSubAgentThinking(agentName, "");
-        planAgentBlock = expandableBlocks.create(
-                ExpandableMarkdownBlockFactory.Variant.PLAN_AGENT, agentName, true);
-        assistantMessage.toolsHost().getChildren().add(planAgentBlock.root());
     }
 
     void appendPlanAgentReply(String chunk) {
-        if (planAgentBlock == null) {
+        if (planAgentName == null || chunk == null) {
             return;
         }
         String displayChunk = chunk.replace("[PLAN_COMPLETE]", "");
         if (displayChunk.isEmpty()) {
             return;
         }
-        planAgentBlock.bubble().appendText(displayChunk);
-        if (planAgentName != null) {
-            planAgentBuffer.append(displayChunk);
-            thinking.appendSubAgentThinking(planAgentName, displayChunk);
-        }
+        planAgentBuffer.append(displayChunk);
+        thinking.appendSubAgentReply(planAgentName, displayChunk, inlineImages);
     }
 
     void finishPlanAgent() {
         if (planAgentName == null) {
             return;
         }
-        if (planAgentBlock != null) {
-            planAgentBlock.bubble().finish();
+        if (!planAgentBuffer.isEmpty()) {
+            planAgentFallback = planAgentBuffer.toString();
         }
-        String singleLine = planAgentBuffer.toString().trim().replaceAll("\\s+", " ");
-        String summary = singleLine.isEmpty()
-                ? "（无回复内容）"
-                : singleLine.length() > 80
-                        ? singleLine.substring(0, 77) + "..." : singleLine;
-        thinking.markSubAgentResult(planAgentName, summary);
+        thinking.markSubAgentResult(planAgentName, "");
         planAgentName = null;
         planAgentBuffer.setLength(0);
     }
 
-    void updateLoopStatus(
-            com.javaclaw.loop.model.LoopStatus status,
-            boolean streamDisplayedElsewhere,
-            Consumer<Node> suspendedNode) {
-        if (loopStatusView == null) {
-            loopStatusView = loopStatusViews.create(status);
-            HBox row = loopStatusView.root();
-            if (streamDisplayedElsewhere) {
-                suspendedNode.accept(row);
-            } else {
-                transcript.addMessage(row);
-            }
-            return;
-        }
-        loopStatusView.update(status);
+    void updateLoopStatus(LoopStatus status) {
+        thinking.recordLoopStatus(status);
     }
 
     void setFinalPlanDraft(String draft) {
@@ -207,11 +186,34 @@ final class ChatStreamRenderer {
         if (planMode && finalPlanDraft != null && !finalPlanDraft.isBlank()) {
             return finalPlanDraft;
         }
-        if (planMode && planAgentBlock != null && planAgentBlock.bubble().getLength() > 0) {
-            return planAgentBlock.bubble().getText();
+        if (planMode && !planAgentBuffer.isEmpty()) {
+            return planAgentBuffer.toString();
         }
+        if (planMode && planAgentFallback != null) {
+            return planAgentFallback;
+        }
+        return replyBuffer.isEmpty() ? null : replyBuffer.toString();
+    }
+
+    void appendLoopWarning(String warning) {
+        if (assistantMessage == null) return;
+        if (!replyBuffer.isEmpty()) replyBuffer.append("\n\n");
+        replyBuffer.append("[循环中断] ").append(warning);
+        thinking.recordPipelineProgress("loop-warning", "循环检测", "error", "已中断循环");
+    }
+
+    void showFinalReply(String text) {
         MarkdownBubble reply = activeReply();
-        return reply != null && reply.getLength() > 0 ? reply.getText() : null;
+        if (reply == null) return;
+        reply.finishWith(text);
+        revealReply();
+    }
+
+    void removePendingMessage() {
+        if (assistantMessage == null) return;
+        transcript.removeContaining(assistantMessage.root());
+        assistantMessage.root().setVisible(false);
+        assistantMessage.root().setManaged(false);
     }
 
     void renderInlineReplyImages() {
@@ -234,10 +236,6 @@ final class ChatStreamRenderer {
         return assistantMessage == null ? null : assistantMessage.reply();
     }
 
-    ExpandableMarkdownBlockView planAgentBlock() {
-        return planAgentBlock;
-    }
-
     void revealReply() {
         if (assistantMessage != null) {
             assistantMessage.revealReply();
@@ -247,12 +245,6 @@ final class ChatStreamRenderer {
     void hideReplyCard() {
         if (assistantMessage != null) {
             assistantMessage.hideReplyCard();
-        }
-    }
-
-    void markLoopCancelled() {
-        if (loopStatusView != null) {
-            loopStatusView.markCancelled();
         }
     }
 
@@ -269,15 +261,8 @@ final class ChatStreamRenderer {
     void clear(TurnMetrics metrics, DeliveryState state) {
         AssistantMessageView message = assistantMessage;
         MarkdownBubble reply = activeReply();
-        revealReply();
         if (reply != null) {
             reply.finish();
-        }
-        if (childAgentActivity != null) {
-            childAgentActivity.finish(state);
-        }
-        if (planAgentBlock != null) {
-            planAgentBlock.bubble().finish();
         }
         if (message != null) {
             message.setMetadata(formatTurnMeta(metrics, state));
@@ -290,13 +275,13 @@ final class ChatStreamRenderer {
 
     void resetReferences() {
         assistantMessage = null;
-        childAgentActivity = null;
-        planAgentBlock = null;
+        replyBuffer.setLength(0);
         planAgentName = null;
         planAgentBuffer.setLength(0);
+        planAgentFallback = null;
         displayedImagePaths.clear();
         finalPlanDraft = null;
-        loopStatusView = null;
+        activeToolName = null;
     }
 
     static String formatTurnMeta(TurnMetrics metrics, DeliveryState state) {
@@ -311,23 +296,6 @@ final class ChatStreamRenderer {
             text.append(" · 失败");
         }
         return text.toString();
-    }
-
-    private ChildAgentActivityView ensureChildAgentActivity() {
-        if (childAgentActivity != null) return childAgentActivity;
-        childAgentActivity = new ChildAgentActivityView(expandableBlocks);
-        assistantMessage.toolsHost().getChildren().add(childAgentActivity.root());
-        return childAgentActivity;
-    }
-
-    private void appendToolReply(String toolName, String displayName, String content) {
-        if (content == null || content.isBlank()) {
-            return;
-        }
-        composer.setThinkingText(displayName + " 已返回结果...");
-        thinking.markSubAgentResult(displayName,
-                content.length() > 80 ? content.substring(0, 77) + "..." : content);
-        log.debug("已追加子智能体回复 [{}]，内容长度: {} 字符", toolName, content.length());
     }
 
     private static String displayName(String toolName) {

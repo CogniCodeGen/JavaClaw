@@ -2,6 +2,7 @@ package com.javaclaw.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.spi.DeferredContextDigest;
 import com.javaclaw.util.SensitiveDataRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,8 +10,10 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -28,6 +31,8 @@ public class SkillManager implements SkillPromptRenderer.Source {
     private final SkillBundleStore bundleStore;
     private final SkillPromptRenderer prompts;
     private final List<Skill> skills;
+    private final java.util.Map<Skill, String> deferredDetailDigests =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * 动态注册技能（owner → 技能列表）—— 由插件等运行时来源经 {@link #registerDynamicSkills} 注册，
@@ -56,8 +61,15 @@ public class SkillManager implements SkillPromptRenderer.Source {
      * 扫描 skills 目录，加载所有包含 SKILL.md 的子目录
      */
     private void loadAll() {
+        List<Skill> loaded = files.loadAll();
+        loaded.forEach(this::indexDeferredDetail);
+        dynamicSkills.values().forEach(group -> group.forEach(this::indexDeferredDetail));
         skills.clear();
-        skills.addAll(files.loadAll());
+        skills.addAll(loaded);
+        Set<Skill> current = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        current.addAll(loaded);
+        dynamicSkills.values().forEach(current::addAll);
+        deferredDetailDigests.keySet().removeIf(skill -> !current.contains(skill));
     }
 
     // ==================== 查询 ====================
@@ -75,7 +87,8 @@ public class SkillManager implements SkillPromptRenderer.Source {
                 result.add(s);
             }
         }
-        for (List<Skill> ds : dynamicSkills.values()) {
+        for (List<Skill> ds : dynamicSkills.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue).toList()) {
             for (Skill s : ds) {
                 if (s.isEnabled()) {
                     result.add(s);
@@ -105,7 +118,8 @@ public class SkillManager implements SkillPromptRenderer.Source {
         if (onDisk != null) {
             return onDisk;
         }
-        for (List<Skill> ds : dynamicSkills.values()) {
+        for (List<Skill> ds : dynamicSkills.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue).toList()) {
             for (Skill s : ds) {
                 if (s.getName().equals(target)) {
                     return s;
@@ -113,6 +127,23 @@ public class SkillManager implements SkillPromptRenderer.Source {
             }
         }
         return null;
+    }
+
+    /** A workspace-local snapshot digest; deferred search never renders skill details. */
+    String deferredDetailDigest(Skill skill) {
+        return deferredDetailDigests.get(skill);
+    }
+
+    private void indexDeferredDetail(Skill skill) {
+        if (SensitiveDataRedactor.containsLikelyCredential(skill.getName())
+                || SensitiveDataRedactor.containsLikelyCredential(skill.getDescription())
+                || SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
+            deferredDetailDigests.remove(skill);
+            return;
+        }
+        String body = prompts.buildSkillDetail(skill);
+        if (body == null) deferredDetailDigests.remove(skill);
+        else deferredDetailDigests.put(skill, DeferredContextDigest.sha256(body));
     }
 
     // ==================== 动态技能注册（运行时来源，不落盘） ====================
@@ -134,7 +165,11 @@ public class SkillManager implements SkillPromptRenderer.Source {
                 .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getContent()))
                 .toList();
         if (safeSkills.isEmpty()) return;
-        dynamicSkills.put(ownerId, List.copyOf(safeSkills));
+        safeSkills.forEach(this::indexDeferredDetail);
+        List<Skill> previous = dynamicSkills.put(ownerId, List.copyOf(safeSkills));
+        if (previous != null) previous.stream()
+                .filter(stale -> safeSkills.stream().noneMatch(current -> current == stale))
+                .forEach(this::removeDeferredDetailIfUnregistered);
         log.info("已注册动态技能 owner={}，{} 个", ownerId, safeSkills.size());
     }
 
@@ -149,8 +184,16 @@ public class SkillManager implements SkillPromptRenderer.Source {
         }
         List<Skill> removed = dynamicSkills.remove(ownerId);
         if (removed != null && !removed.isEmpty()) {
+            removed.forEach(this::removeDeferredDetailIfUnregistered);
             log.info("已移除动态技能 owner={}，{} 个", ownerId, removed.size());
         }
+    }
+
+    private void removeDeferredDetailIfUnregistered(Skill skill) {
+        if (skills.stream().anyMatch(current -> current == skill)) return;
+        if (dynamicSkills.values().stream()
+                .anyMatch(group -> group.stream().anyMatch(current -> current == skill))) return;
+        deferredDetailDigests.remove(skill);
     }
 
     /**
@@ -186,6 +229,45 @@ public class SkillManager implements SkillPromptRenderer.Source {
                 .toList();
     }
 
+    /** Preserve registration origin when a deferred skill is selected by its ID. */
+    List<DeferredSkill> activeDeferredSkills() {
+        String os = currentOs();
+        List<DeferredSkill> result = new ArrayList<>();
+        for (Skill skill : skills) {
+            if (skill.isEnabled() && skill.isActiveFor(null, os)) {
+                result.add(new DeferredSkill(skill, null, 0));
+            }
+        }
+        dynamicSkills.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+            Map<String, Integer> ordinals = new HashMap<>();
+            for (Skill skill : entry.getValue()) {
+                // Count all registered entries so disabling an earlier duplicate does not
+                // change the identity of a later one in an in-flight selection.
+                int ordinal = ordinals.merge(skill.getId(), 1, Integer::sum) - 1;
+                if (skill.isEnabled() && skill.isActiveFor(null, os)) {
+                    result.add(new DeferredSkill(skill, entry.getKey(), ordinal));
+                }
+            }
+        });
+        return List.copyOf(result);
+    }
+
+    List<SkillBundle> activeDeferredBundles() {
+        if (!prompts.bundlesEnabled()) return List.of();
+        Set<String> names = new java.util.HashSet<>();
+        return getEnabledBundles().stream()
+                .filter(bundle -> bundle.name != null && names.add(bundle.name))
+                .toList();
+    }
+
+    String renderDeferredSkill(Skill skill) {
+        return prompts.buildSkillDetail(skill);
+    }
+
+    record DeferredSkill(Skill skill, String ownerId, int ordinal) {
+        boolean workspace() { return ownerId == null; }
+    }
+
     /** 当前操作系统标识（windows/macos/linux），与 platforms 字段取值对齐 */
     private static String currentOs() {
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -215,6 +297,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
         skill.setContent(content);
         skill.setDirectory(dir);
         Skill persisted = files.saveAndReadBack(skill, name);
+        indexDeferredDetail(persisted);
         skills.add(persisted);
         log.info("已创建技能: {} ({})", name, dirName);
         return persisted;
@@ -259,6 +342,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
         skill.setCategory(category);
         skill.setTags(tags);
         Skill persisted = files.saveAndReadBack(skill, name);
+        indexDeferredDetail(persisted);
         skills.add(persisted);
         return persisted;
     }
@@ -340,7 +424,9 @@ public class SkillManager implements SkillPromptRenderer.Source {
         if (skill == null) {
             return "未找到名为「" + name + "」的技能";
         }
-        return files.writeSupportFile(skill, relPath, content);
+        String result = files.writeSupportFile(skill, relPath, content);
+        if (result == null) indexDeferredDetail(skill);
+        return result;
     }
 
     /**
@@ -353,15 +439,23 @@ public class SkillManager implements SkillPromptRenderer.Source {
         if (skill == null) {
             return "未找到名为「" + name + "」的技能";
         }
-        return files.removeSupportFile(skill, relPath);
+        String result = files.removeSupportFile(skill, relPath);
+        if (result == null) indexDeferredDetail(skill);
+        return result;
     }
 
     /**
      * 删除技能并由 SkillFileRepository 递归清理目录。
      */
     public void deleteSkill(String id) {
-        skills.removeIf(s -> s.getId().equals(id));
+        List<Skill> removed = skills.stream().filter(skill -> skill.getId().equals(id)).toList();
+        skills.removeAll(removed);
         files.delete(id);
+        removed.forEach(skill -> {
+            if (dynamicSkills.values().stream().anyMatch(group -> group.stream()
+                    .anyMatch(current -> current == skill))) indexDeferredDetail(skill);
+            else removeDeferredDetailIfUnregistered(skill);
+        });
     }
 
     // ==================== 版本管理 ====================
@@ -445,9 +539,12 @@ public class SkillManager implements SkillPromptRenderer.Source {
     // ==================== 持久化 ====================
 
     private void replaceSkillSnapshot(String id, Skill persisted) {
+        indexDeferredDetail(persisted);
         for (int i = 0; i < skills.size(); i++) {
             if (java.util.Objects.equals(id, skills.get(i).getId())) {
+                Skill previous = skills.get(i);
                 skills.set(i, persisted);
+                removeDeferredDetailIfUnregistered(previous);
                 return;
             }
         }
@@ -484,15 +581,6 @@ public class SkillManager implements SkillPromptRenderer.Source {
     }
 
     // ==================== 系统提示词集成 ====================
-
-    /**
-     * 构建技能目录（L0 元数据层，始终常驻系统提示词）—— 无条件激活过滤的兼容入口。
-     *
-     * @see #buildSkillCatalogPrompt(Set)
-     */
-    public String buildSkillCatalogPrompt() {
-        return buildSkillCatalogPrompt(null);
-    }
 
     /**
      * 构建技能目录（L0 元数据层，始终常驻系统提示词）。
@@ -540,7 +628,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
     /**
      * 构建单个技能的详细指令（L2 正文 + references），供 {@code skill_read} 工具按需拉取。
      *
-     * <p>渐进式暴露的 L2 拉取入口：L1 目录（{@link #buildSkillCatalogPrompt()}）只告知技能存在，
+     * <p>渐进式暴露的 L2 拉取入口：L1 目录（{@link #buildSkillCatalogPrompt(Set)}）只告知技能存在，
      * 模型判断相关后调用本方法获取完整内容，避免一次性把所有技能正文塞进上下文。</p>
      *
      * @param name 技能名称（须与 L1 目录中展示的名称一致）

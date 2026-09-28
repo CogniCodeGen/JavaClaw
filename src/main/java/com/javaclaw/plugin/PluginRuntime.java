@@ -103,15 +103,6 @@ final class PluginRuntime {
         this.storageFactory = java.util.Objects.requireNonNull(storageFactory, "storageFactory");
     }
 
-    /** Test-only compatibility constructor for plugins that do not request CHAT. */
-    PluginRuntime(PluginDescriptor descriptor, Path jarPath,
-                  ClassLoader appClassLoader, String workspaceId,
-                  ManagedTaskExecutor taskExecutor, ScheduleApplicationService schedules,
-                  PluginStorageFactory storageFactory) {
-        this(descriptor, jarPath, null, null, Runnable::run, appClassLoader,
-                workspaceId, taskExecutor, schedules, storageFactory);
-    }
-
     // ==================== 生命周期 ====================
 
     /** 建立类加载器（含 lib/ 三方 jar）并实例化入口类（不调用 start）。 */

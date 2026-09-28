@@ -91,35 +91,28 @@ class ScheduleDomainBehaviorTest {
 
         task.setTriggerType("daily");
         task.setIntervalMinutes(7);
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         assertEquals(7, task.getIntervalMinutes());
         task.setTriggerType("interval");
         task.setIntervalMinutes(120);
         task.setIntervalValue(2);
         task.setIntervalUnit("hour");
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         assertEquals(2, task.getIntervalValue());
         task.setIntervalMinutes(0);
         task.setIntervalValue(3);
         task.setIntervalUnit("day");
-        task.normalizeIntervalFields();
-        assertEquals(1, task.getIntervalMinutes());
-        assertEquals(1, task.getIntervalValue());
-        assertEquals("minute", task.getIntervalUnit());
+        assertThrows(IllegalArgumentException.class, task::validateIntervalFields);
         task.setIntervalInMinutes(0);
         assertEquals(1, task.getIntervalMinutes());
         task.setIntervalInMinutes(30);
         assertEquals(30, task.getIntervalValue());
 
-        task.setExecutionHistory(null);
         task.setExecRecords(null);
         for (int i = 0; i < 25; i++) {
-            task.addExecutionRecord("history-" + i);
             task.addExecRecord(new ScheduledTask.ExecRecord(
                     "time-" + i, "status-" + i, "duration-" + i, "note-" + i));
         }
-        assertEquals(20, task.getExecutionHistory().size());
-        assertEquals("history-24", task.getExecutionHistory().getFirst());
         assertEquals(20, task.getExecRecords().size());
         assertEquals("note-24", task.getExecRecords().getFirst().getNote());
 
@@ -145,24 +138,18 @@ class ScheduleDomainBehaviorTest {
         source.setBuiltin(true);
         source.setTriggerSummary("摘要");
         source.setSourceModule("module");
-        source.setExecutionHistory(new ArrayList<>(List.of("history")));
         source.setExecRecords(new ArrayList<>(List.of(
                 new ScheduledTask.ExecRecord("time", "success", "1ms", "note"))));
 
         ScheduledTask copy = source.copy();
         assertNotEquals(source, copy);
         assertEquals(source.getId(), copy.getId());
-        assertEquals("history", copy.getExecutionHistory().getFirst());
         assertEquals("note", copy.getExecRecords().getFirst().getNote());
-        source.getExecutionHistory().set(0, "changed");
         source.getExecRecords().getFirst().setNote("changed");
-        assertEquals("history", copy.getExecutionHistory().getFirst());
         assertEquals("note", copy.getExecRecords().getFirst().getNote());
 
-        source.setExecutionHistory(null);
         source.setExecRecords(null);
         ScheduledTask nullSafeCopy = source.copy();
-        assertTrue(nullSafeCopy.getExecutionHistory().isEmpty());
         assertTrue(nullSafeCopy.getExecRecords().isEmpty());
 
         ScheduledTask.ExecRecord record = new ScheduledTask.ExecRecord();

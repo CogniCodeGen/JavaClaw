@@ -286,7 +286,8 @@ class MemoryServiceBehaviorTest {
                 TestEmbeddingGatewayFactory.create(4, invoker);
         FakeModelTasks modelTasks = new FakeModelTasks();
         MemoryService service = new MemoryService(
-                modelTasks, embedding.gateway(), embedding.tasks(), settings);
+                modelTasks, embedding.gateway(), embedding.tasks(), settings,
+                new com.fasterxml.jackson.databind.ObjectMapper());
         return new Fixture(service, modelTasks, embedding);
     }
 

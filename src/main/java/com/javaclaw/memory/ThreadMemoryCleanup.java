@@ -21,8 +21,6 @@ public final class ThreadMemoryCleanup {
         safePath(root, thread.resolveSibling(thread.getFileName() + ".deleted"));
         MemoryStoreRegistry.delete(thread);
         MemoryStoreRegistry.updateMetadata(habits, data -> markHabitSources(data, scope.threadId()));
-        if ("local-user".equals(scope.userId()))
-            MemoryStoreRegistry.updateMetadata(root, data -> hideLegacySources(data, scope.threadId()));
     }
     private Path workspaceRoot(String id) {
         Path root = memoryRoots.resolve(id).normalize();
@@ -45,26 +43,5 @@ public final class ThreadMemoryCleanup {
         };
         root.facts.iterate(mark); root.pendingFacts.iterate(mark);
         return changed;
-    }
-    private static List<Object> hideLegacySources(MemoryRoot root, String thread) {
-        java.util.function.Consumer<com.javaclaw.memory.model.Episode> hideEpisode = episode -> {
-            if (thread.equals(episode.sessionId)) root.migratedIds.add("episode:" + episode.id);
-        };
-        root.episodes.iterate(hideEpisode); root.pendingEpisodes.iterate(hideEpisode);
-        java.util.function.Consumer<com.javaclaw.memory.model.Fact> hideFact = fact -> {
-            if (fact.source != null && thread.equals(fact.source.sessionId)) root.migratedIds.add("fact:" + fact.id);
-        };
-        root.facts.iterate(hideFact); root.pendingFacts.iterate(hideFact);
-        root.corrections.iterate(correction -> {
-            if (correction.targetFactId != null && root.migratedIds.contains("fact:" + correction.targetFactId))
-                root.migratedIds.add("correctionrecord:" + correction.id);
-        });
-        java.util.function.Consumer<com.javaclaw.memory.model.Fact> hideCorrected = fact -> {
-            if (fact.correctionId != null && root.migratedIds.contains("correctionrecord:" + fact.correctionId))
-                root.migratedIds.add("fact:" + fact.id);
-        };
-        root.facts.iterate(hideCorrected); root.pendingFacts.iterate(hideCorrected);
-        root.working.remove(thread);
-        return List.of(root, root.migratedIds, root.working);
     }
 }

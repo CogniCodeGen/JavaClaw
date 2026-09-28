@@ -31,6 +31,13 @@ public class Fact {
     public long createdAt;
     public long updatedAt;
 
+    /** Hash of the deferred context body, maintained on writes and checked again on fetch. */
+    public String deferredContextDigest;
+
+    /** Bounded metadata used by deferred search without scanning the fact body. */
+    public String deferredSearchText;
+    public String deferredSummary;
+
     /** 命中归因计数（被检索注入的次数），反哺保留 / 淘汰 */
     public int hitCount;
 
@@ -51,7 +58,7 @@ public class Fact {
      */
     public boolean userAsserted;
 
-    /** 来源类型（DISTILLED / USER_EXPLICIT_CORRECTION / USER_MANUAL 等），旧数据可为 null。 */
+    /** 来源类型（DISTILLED / USER_EXPLICIT_CORRECTION / USER_MANUAL 等）。 */
     public String sourceKind;
 
     /** 若来自显式纠错，指向对应 CorrectionRecord.id；否则为空。 */
@@ -67,7 +74,7 @@ public class Fact {
     /**
      * 被取代 —— 软删除标记：本事实已被后续更新的事实否定/替代（如换工作、改工具、状态变更）。
      * 由蒸馏轮后的取代检测置位；置位后不再被召回与去重/取代候选检索返回（{@code searchFacts} 统一过滤），
-     * 但仍留在库中（记忆中心可见、可恢复），不静默物理删除。缺省 false，向后兼容旧对象图。
+     * 但仍留在库中（记忆中心可见、可恢复），不静默物理删除。
      */
     public boolean superseded;
 

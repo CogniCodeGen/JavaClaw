@@ -11,7 +11,7 @@ import java.util.UUID;
 
 /** Process registry with workspace-isolated tier routing and generation-safe leases. */
 public final class SpringAiModelRegistry {
-    private static final String LEGACY_WORKSPACE = "__legacy__";
+    private static final String UNSCOPED_WORKSPACE = "__unscoped__";
     private final Map<String, LinkedHashMap<String, ChatModel>> models = new LinkedHashMap<>();
     private final Map<RouteKey, LinkedHashMap<String, String>> routes = new LinkedHashMap<>();
 
@@ -75,7 +75,7 @@ public final class SpringAiModelRegistry {
     }
 
     public void route(ModelTier tier, String policyRef) {
-        route(LEGACY_WORKSPACE, tier, policyRef);
+        route(UNSCOPED_WORKSPACE, tier, policyRef);
     }
 
     public synchronized ChatModel require(String policyRef) {
@@ -92,7 +92,7 @@ public final class SpringAiModelRegistry {
     }
 
     public ChatModel require(ModelTier tier) {
-        return require(LEGACY_WORKSPACE, tier);
+        return require(UNSCOPED_WORKSPACE, tier);
     }
 
     public synchronized String policyFor(String workspaceId, ModelTier tier) {
@@ -107,7 +107,7 @@ public final class SpringAiModelRegistry {
     }
 
     public String policyFor(ModelTier tier) {
-        return policyFor(LEGACY_WORKSPACE, tier);
+        return policyFor(UNSCOPED_WORKSPACE, tier);
     }
 
     public synchronized int size() {

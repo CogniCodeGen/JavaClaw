@@ -4,7 +4,6 @@ import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.expert.KnowledgeExpert;
-import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.interaction.ToastRequest;
@@ -46,7 +45,6 @@ final class ChatRuntimeCoordinator {
     private volatile ChatService chatService;
     private volatile PlanModeService planModeService;
     private volatile ModeRegistry modeRegistry;
-    private volatile LoopDetectionHook.LoopInteractiveHandler loopHandler;
     private UiBindings ui;
 
     ChatRuntimeCoordinator(
@@ -68,12 +66,9 @@ final class ChatRuntimeCoordinator {
             ChatModeController modes,
             SidebarController sidebar,
             WorkspaceSwitchOverlayController overlay,
-            ChatStatusController status,
-            LoopDetectionHook.LoopInteractiveHandler handler) {
+            ChatStatusController status) {
         if (ui != null) throw new IllegalStateException("ChatRuntimeCoordinator 已绑定");
         ui = new UiBindings(turns, sessions, header, modes, sidebar, overlay, status);
-        loopHandler = Objects.requireNonNull(handler, "handler");
-        chatService.setLoopInteractiveHandler(loopHandler);
     }
 
     ChatService chatService() {
@@ -273,8 +268,6 @@ final class ChatRuntimeCoordinator {
         chatService = workspace.chatService();
         planModeService = workspace.planModeService();
         modeRegistry = workspace.modeRegistry();
-        LoopDetectionHook.LoopInteractiveHandler handler = loopHandler;
-        if (handler != null) chatService.setLoopInteractiveHandler(handler);
     }
 
     private UiBindings requireUi() {

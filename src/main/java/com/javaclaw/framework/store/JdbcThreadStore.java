@@ -191,7 +191,7 @@ public final class JdbcThreadStore implements ThreadStore, com.javaclaw.framewor
             Long cutoff = jdbc.queryForObject("SELECT MAX(event_sequence) FROM agent_thread_events WHERE workspace_id=? "
                             + "AND user_id=? AND thread_id=? AND turn_id=? AND type IN ('turn/completed','turn/failed','turn/cancelled')",
                     Long.class, source.workspaceId(), source.userId(), source.sessionId(), throughTurn.value());
-            if (cutoff == null) throw new IllegalStateException("legacy turn has no forkable event history");
+            if (cutoff == null) throw new IllegalStateException("turn has no forkable event history");
             List<ThreadEvent> history = journal(source, 0, cutoff);
             ThreadConfiguration forkConfiguration = original.configuration();
             for (ThreadEvent event : history) {
@@ -242,7 +242,7 @@ public final class JdbcThreadStore implements ThreadStore, com.javaclaw.framewor
             for (String table : List.of("agent_thread_events", "agent_thread_outbox", "agent_thread_mutations"))
                 jdbc.update("DELETE FROM " + table + " WHERE workspace_id=? AND user_id=? AND thread_id=?",
                         scope.workspaceId(), scope.userId(), scope.sessionId());
-            // Legacy desktop business tables belong to local-user and have no user column.
+            // Desktop business tables belong to local-user and have no user column.
             if (scope.userId().equals("local-user")) {
                 jdbc.update("DELETE FROM chat_messages WHERE workspace_id=? AND session_id=?", scope.workspaceId(), scope.sessionId());
                 jdbc.update("DELETE FROM chat_sessions WHERE workspace_id=? AND id=?", scope.workspaceId(), scope.sessionId());

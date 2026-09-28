@@ -14,6 +14,9 @@ public record ExtensionContributions(
         List<OwnedContribution<PromptContributor>> promptContributors,
         List<OwnedContribution<ContextProvider>> contextProviders,
         List<OwnedContribution<RetrieverContribution>> retrievers,
+        List<OwnedContribution<DeferredContextSource>> deferredContextSources,
+        List<OwnedContribution<FixedContextSource>> fixedContextSources,
+        List<OwnedContribution<TurnPreparation>> turnPreparations,
         List<OwnedContribution<AdvisorSpecFactory>> advisors,
         List<OwnedContribution<OutputGuard>> outputGuards,
         List<OwnedContribution<ToolFactory>> tools,
@@ -41,6 +44,9 @@ public record ExtensionContributions(
         promptContributors = List.copyOf(promptContributors);
         contextProviders = List.copyOf(contextProviders);
         retrievers = List.copyOf(retrievers);
+        deferredContextSources = List.copyOf(deferredContextSources);
+        fixedContextSources = List.copyOf(fixedContextSources);
+        turnPreparations = List.copyOf(turnPreparations);
         advisors = List.copyOf(advisors);
         outputGuards = List.copyOf(outputGuards);
         tools = List.copyOf(tools);

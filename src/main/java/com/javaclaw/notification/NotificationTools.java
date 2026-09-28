@@ -4,6 +4,7 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
+import com.javaclaw.config.CredentialUsage;
 import com.javaclaw.config.NotificationConfig;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -227,7 +228,8 @@ public class NotificationTools {
             String body;
 
             // 如果配置了签名密钥，添加签名
-            String secret = config.getFeishuSecret();
+            String secret = CredentialUsage.requirePlaintext(
+                    config.getFeishuSecret(), "飞书签名密钥");
             if (secret != null && !secret.isBlank()) {
                 long timestamp = System.currentTimeMillis() / 1000;
                 String sign = generateFeishuSign(timestamp, secret);
@@ -277,6 +279,7 @@ public class NotificationTools {
         }
 
         try {
+            String password = CredentialUsage.requirePlaintext(emailConfig.getPassword(), "邮件密码");
             Properties props = new Properties();
             props.put("mail.smtp.host", emailConfig.getSmtpHost());
             props.put("mail.smtp.port", String.valueOf(emailConfig.getSmtpPort()));
@@ -289,7 +292,7 @@ public class NotificationTools {
             Session session = Session.getInstance(props, new Authenticator() {
                 @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(emailConfig.getUsername(), emailConfig.getPassword());
+                    return new PasswordAuthentication(emailConfig.getUsername(), password);
                 }
             });
 
@@ -443,6 +446,7 @@ public class NotificationTools {
     private String sendFeishuInternal(String title, String message) {
         try {
             NotificationConfig config = notificationConfig;
+            CredentialUsage.requirePlaintext(config.getFeishuSecret(), "飞书签名密钥");
             String body = String.format(
                     "{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}",
                     escapeJson(title + "\n" + message));
@@ -458,6 +462,7 @@ public class NotificationTools {
 
     private String sendEmailNotifyInternal(String title, String message) {
         try {
+            String password = CredentialUsage.requirePlaintext(emailConfig.getPassword(), "邮件密码");
             NotificationConfig notifyConfig = notificationConfig;
 
             if (!emailConfig.isConfigured() || notifyConfig.getEmailNotifyTo().isBlank()) {
@@ -476,7 +481,7 @@ public class NotificationTools {
             Session session = Session.getInstance(props, new Authenticator() {
                 @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(emailConfig.getUsername(), emailConfig.getPassword());
+                    return new PasswordAuthentication(emailConfig.getUsername(), password);
                 }
             });
 
@@ -515,7 +520,8 @@ public class NotificationTools {
      */
     private String buildDingtalkUrl(NotificationConfig config) throws Exception {
         String url = config.getDingtalkWebhook();
-        String secret = config.getDingtalkSecret();
+        String secret = CredentialUsage.requirePlaintext(
+                config.getDingtalkSecret(), "钉钉签名密钥");
         if (secret != null && !secret.isBlank()) {
             long timestamp = System.currentTimeMillis();
             String stringToSign = timestamp + "\n" + secret;

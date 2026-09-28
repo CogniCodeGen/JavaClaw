@@ -23,6 +23,7 @@ import java.util.UUID;
 
 /** Converts validated descriptor metadata into host-owned standard JavaFX components. */
 final class ServicePluginDeclarativePageRenderer {
+    static final String HOST_CONFIGURATION_PAGE = "host-configuration";
     static final String HOST_RUNTIME_PAGE = "host-runtime";
 
     private final ObjectMapper json;
@@ -40,11 +41,24 @@ final class ServicePluginDeclarativePageRenderer {
 
     List<Page> pages(ServicePluginInfo plugin) {
         List<Page> result = new ArrayList<>();
-        if (plugin.configurationUi() == null) {
-            result.add(fallback(plugin));
-        } else {
+        if (plugin.configurationUi() != null) {
             plugin.configurationUi().pages().forEach(page -> result.add(new Page(
                     page.id(), page.title(), page.description(), page, false)));
+        } else {
+            List<ConfigurationSection> sections = new ArrayList<>();
+            if (!plugin.configurationSchema().isBlank()) {
+                sections.add(new ConfigurationSection("configuration", ConfigurationSectionType.SCHEMA_FORM,
+                        "插件配置", "由插件 Schema 声明、由 JavaClaw 安全渲染。", List.of()));
+            }
+            if (!plugin.endpoints().isEmpty()) {
+                sections.add(new ConfigurationSection("endpoints", ConfigurationSectionType.EXTERNAL_ENDPOINTS,
+                        "外部接口", "监听、TLS、密钥与限额由宿主保存。", List.of()));
+            }
+            if (!sections.isEmpty()) {
+                ConfigurationPage page = new ConfigurationPage(HOST_CONFIGURATION_PAGE,
+                        "插件配置", "由 JavaClaw 管理的插件配置。", sections);
+                result.add(new Page(page.id(), page.title(), page.description(), page, false));
+            }
         }
         boolean ownsRuntime = result.stream()
                 .filter(page -> page.descriptor() != null)
@@ -108,12 +122,10 @@ final class ServicePluginDeclarativePageRenderer {
         VBox wrapper = new VBox(8);
         wrapper.setId("servicePluginSection-" + section.id());
         wrapper.getStyleClass().addAll("jc-card", "service-plugin-standard-section");
-        boolean selfDescribing = section.type() == ConfigurationSectionType.INFERENCE_MODELS
-                || section.type() == ConfigurationSectionType.INFERENCE_CATALOG
+        boolean selfDescribing = section.type() == ConfigurationSectionType.INFERENCE_CATALOG
                 || section.type() == ConfigurationSectionType.INFERENCE_SERVICE
                 || section.type() == ConfigurationSectionType.SERVICE_RUNTIME;
-        boolean inferenceWorkbench = section.type() == ConfigurationSectionType.INFERENCE_MODELS
-                || section.type() == ConfigurationSectionType.INFERENCE_CATALOG
+        boolean inferenceWorkbench = section.type() == ConfigurationSectionType.INFERENCE_CATALOG
                 || section.type() == ConfigurationSectionType.INFERENCE_SERVICE;
         if (inferenceWorkbench) wrapper.getStyleClass().add("service-plugin-model-workbench");
         if (!selfDescribing && !section.title().isBlank()) {
@@ -140,11 +152,6 @@ final class ServicePluginDeclarativePageRenderer {
                 wrapper.getChildren().add(pane.root());
                 closeables.add(pane);
             }
-            case INFERENCE_MODELS -> addInference(
-                    wrapper, inference.createModels(plugin, actions::runtimeConfigurationChanged,
-                            actions::reportFailure), closeables);
-            case INFERENCE_API -> addInference(
-                    wrapper, inference.createApi(plugin, actions::reportFailure), closeables);
             case INFERENCE_CATALOG -> addInference(wrapper, inference.createCatalog(
                     plugin, actions::runtimeConfigurationChanged, actions::reportFailure), closeables);
             case INFERENCE_SERVICE -> {
@@ -216,33 +223,6 @@ final class ServicePluginDeclarativePageRenderer {
         wrapper.getChildren().add(component.root());
         closeables.add(component);
         component.activate();
-    }
-
-    private Page fallback(ServicePluginInfo plugin) {
-        List<ConfigurationSection> sections = new ArrayList<>();
-        if (!plugin.configurationSchema().isBlank()) {
-            sections.add(new ConfigurationSection("configuration", ConfigurationSectionType.SCHEMA_FORM,
-                    "插件配置", "由插件 Schema 声明、由 JavaClaw 安全渲染。", List.of()));
-        }
-        if (!plugin.endpoints().isEmpty()) {
-            sections.add(new ConfigurationSection("endpoints", ConfigurationSectionType.EXTERNAL_ENDPOINTS,
-                    "外部接口", "监听、TLS、密钥与限额由宿主保存。", List.of()));
-        }
-        if (plugin.inference() != null) {
-            sections.add(new ConfigurationSection("models", ConfigurationSectionType.INFERENCE_MODELS,
-                    "模型", "模型资产、档案参数、实际探测与工作区档位。", List.of()));
-            if (!plugin.endpoints().isEmpty()) {
-                sections.add(new ConfigurationSection("inference-api", ConfigurationSectionType.INFERENCE_API,
-                        "对外接口", "OpenAI 兼容路由、别名、TLS、API Key 与限额。", List.of()));
-            }
-        }
-        if (sections.isEmpty()) {
-            sections.add(new ConfigurationSection("information", ConfigurationSectionType.INFO,
-                    "插件信息", "此插件没有声明可编辑配置。", List.of()));
-        }
-        ConfigurationPage descriptor = new ConfigurationPage(
-                "configuration", "插件配置", "宿主根据插件能力生成的通用配置页。", sections);
-        return new Page(descriptor.id(), descriptor.title(), descriptor.description(), descriptor, false);
     }
 
     private static Label title(String value) {

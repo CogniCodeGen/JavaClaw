@@ -61,51 +61,6 @@ public record ServicePluginDefinition(
         if (developmentUnsigned) startupPolicy = StartupPolicy.MANUAL;
     }
 
-    /** Backward-compatible constructor for host adapters that do not publish static UI metadata. */
-    public ServicePluginDefinition(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String publisher, boolean signatureVerified, String artifactSha256, Path pluginJar,
-            Path dataDirectory, StartupPolicy startupPolicy,
-            ResourceConfiguration resources, List<EndpointConfiguration> endpoints,
-            boolean endpointConfigurationManaged, Set<String> permissions,
-            Map<String, String> config, boolean builtIn) {
-        this(id, name, version, apiVersion, mainClass, publisher, signatureVerified,
-                artifactSha256, pluginJar, dataDirectory, startupPolicy,
-                resources, endpoints, endpointConfigurationManaged, permissions, config, builtIn,
-                "", "", null, null, Map.of(), false);
-    }
-
-    /** Compatibility constructor for verified definitions created before development mode existed. */
-    public ServicePluginDefinition(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String publisher, boolean signatureVerified, String artifactSha256, Path pluginJar,
-            Path dataDirectory, StartupPolicy startupPolicy,
-            ResourceConfiguration resources, List<EndpointConfiguration> endpoints,
-            boolean endpointConfigurationManaged, Set<String> permissions,
-            Map<String, String> config, boolean builtIn, String description,
-            String configurationSchema, PluginDescriptor.Inference inference) {
-        this(id, name, version, apiVersion, mainClass, publisher, signatureVerified,
-                artifactSha256, pluginJar, dataDirectory, startupPolicy,
-                resources, endpoints, endpointConfigurationManaged, permissions, config, builtIn,
-                description, configurationSchema, inference, null, Map.of(), false);
-    }
-
-    /** Compatibility constructor for definitions created before declarative configuration UI. */
-    public ServicePluginDefinition(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String publisher, boolean signatureVerified, String artifactSha256, Path pluginJar,
-            Path dataDirectory, StartupPolicy startupPolicy,
-            ResourceConfiguration resources, List<EndpointConfiguration> endpoints,
-            boolean endpointConfigurationManaged, Set<String> permissions,
-            Map<String, String> config, boolean builtIn, String description,
-            String configurationSchema, PluginDescriptor.Inference inference,
-            boolean developmentUnsigned) {
-        this(id, name, version, apiVersion, mainClass, publisher, signatureVerified,
-                artifactSha256, pluginJar, dataDirectory, startupPolicy, resources, endpoints,
-                endpointConfigurationManaged, permissions, config, builtIn, description,
-                configurationSchema, inference, null, Map.of(), developmentUnsigned);
-    }
-
     private static String required(String value, String label) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(label + "不能为空");
         return value.strip();

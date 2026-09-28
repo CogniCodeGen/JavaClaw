@@ -29,6 +29,11 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Unified Spring AI path for router, GEPA, critic, distillation, vision and other helper calls. */
 public final class SpringAiModelTaskGateway implements ModelTaskGateway {
@@ -38,7 +43,6 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
     private final ObjectMapper json;
     private final CancellableTaskExecutor executor;
     private final RunStore runs;
-    private final JsonSchemaValidator schemas = new JsonSchemaValidator();
     private final Map<String, ModelTaskResult> cache = new ConcurrentHashMap<>();
 
     public SpringAiModelTaskGateway(
@@ -110,9 +114,65 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         });
     }
 
+    @Override
+    public ModelTaskResult executeInline(ModelTaskRequest request) {
+        request.cancellation().throwIfCancelled();
+        if (runs != null) {
+            var owner = runs.find(request.ownerRunId()).orElseThrow(() ->
+                    new IllegalStateException("model task owner does not exist: " + request.ownerRunId()));
+            if (owner.snapshot().state() != com.javaclaw.framework.api.RunState.RUNNING) {
+                throw new IllegalStateException("model task requires an active owner turn: "
+                        + request.ownerRunId());
+            }
+        }
+        audit.started(request);
+        Duration timeout = effectiveTimeout(request);
+        // A LIGHT provider can ignore interruption. Bound the primary carrier's wait
+        // while leaving the physical call on its own virtual thread so any eventual
+        // provider usage and MODEL_TASK result are still journaled exactly once.
+        AtomicBoolean abandoned = new AtomicBoolean();
+        FutureTask<ModelTaskResult> task = new FutureTask<>(
+                () -> executeWithRetry(request, abandoned));
+        Thread.ofVirtual().name("javaclaw-inline-model-task").start(task);
+        ModelTaskResult result;
+        try {
+            result = task.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException timeoutFailure) {
+            abandoned.set(true);
+            task.cancel(true);
+            IllegalStateException failure = new IllegalStateException(
+                    "inline model task timed out: " + request.purpose(), timeoutFailure);
+            audit.failed(request, failure);
+            throw failure;
+        } catch (InterruptedException interrupted) {
+            abandoned.set(true);
+            task.cancel(true);
+            Thread.currentThread().interrupt();
+            RunCancelledException failure = new RunCancelledException();
+            audit.failed(request, failure);
+            throw failure;
+        } catch (ExecutionException executionFailure) {
+            Throwable cause = executionFailure.getCause();
+            audit.failed(request, cause);
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new IllegalStateException("inline model task failed", cause);
+        }
+        audit.completed(request, result);
+        return result;
+    }
+
     private ModelTaskResult executeWithRetry(ModelTaskRequest request) {
+        return executeWithRetry(request, null);
+    }
+
+    private ModelTaskResult executeWithRetry(
+            ModelTaskRequest request, AtomicBoolean abandoned) {
         RuntimeException last = null;
         for (int attempt = 0; attempt <= request.maxRetries(); attempt++) {
+            if (abandoned != null && abandoned.get()) {
+                throw new IllegalStateException("inline model task timed out: " + request.purpose());
+            }
             request.cancellation().throwIfCancelled();
             try {
                 return call(request, attempt);
@@ -148,7 +208,8 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         ReasoningEventSink events = runs == null ? (type, version, producer, payload) -> { }
                 : StepEvents.durableSink(runs, request.ownerRunId());
         var stepInput = json.createObjectNode().put("purpose", request.purpose())
-                .put("attempt", attempt).put("modelPolicy", modelPolicy);
+                .put("attempt", attempt).put("modelPolicy", modelPolicy)
+                .put("inputHash", DeferredContextDigest.sha256(request.input().toString()));
         stepInput.set("messages", StepMessageCodec.messages(prompt.getInstructions()));
         stepInput.set("outputSchema", request.outputSchema());
         StepEvents.started(events, step, AgentStep.Kind.MODEL_TASK, stepInput, null);
@@ -201,11 +262,7 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
             throw new IllegalStateException("model task returned no result");
         }
         String content = response.getResult().getOutput().getText();
-        JsonNode output = parseJson(content);
-        var validation = schemas.validate(request.outputSchema(), output, "/output");
-        if (!validation.isEmpty()) {
-            throw new IllegalStateException("model task output schema mismatch: " + validation);
-        }
+        JsonNode output = validatedOutput(json, request.outputSchema(), content);
         return new ModelTaskResult(output, actualModel, inputTokens, outputTokens, false,
                 Map.of("purpose", request.purpose(), "attempt", Integer.toString(attempt)));
     }
@@ -253,7 +310,8 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         if (ledgerFailure != null) throw ledgerFailure;
     }
 
-    private JsonNode parseJson(String content) {
+    /** Apply the same parse and schema checks when recovering a completed provider step. */
+    static JsonNode validatedOutput(ObjectMapper json, JsonNode schema, String content) {
         String value = content == null ? "" : content.trim();
         if (value.startsWith("```")) {
             int firstNewline = value.indexOf('\n');
@@ -262,11 +320,18 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                 value = value.substring(firstNewline + 1, closing).trim();
             }
         }
+        JsonNode output;
         try {
-            return json.readTree(value);
+            output = json.readTree(value);
         } catch (Exception failure) {
             throw new IllegalStateException("model task did not return JSON", failure);
         }
+        if (output == null) throw new IllegalStateException("model task did not return JSON");
+        var validation = new JsonSchemaValidator().validate(schema, output, "/output");
+        if (!validation.isEmpty()) {
+            throw new IllegalStateException("model task output schema mismatch: " + validation);
+        }
+        return output;
     }
 
     private static String cacheKey(ModelTaskRequest request) {

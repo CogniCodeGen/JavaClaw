@@ -25,7 +25,6 @@ public class MemoryRoot {
     /**
      * 待嵌入事实 —— 嵌入服务不可用时的降级暂存区（<b>无向量索引</b>）。
      * 服务恢复后由 {@code MemoryService.promotePending} 重嵌入并迁入 {@link #facts}。
-     * 旧库无此字段，{@code MemoryStore.open()} 反序列化后按需补建。
      */
     public GigaMap<Fact> pendingFacts = GigaMap.New();
 
@@ -49,8 +48,6 @@ public class MemoryRoot {
 
     /** Durable idempotency ledger for completed source turns and maintenance operations. */
     public java.util.Set<String> appliedOperations = new java.util.HashSet<>();
-    /** Migration assignments hide copied source text from the live legacy viewer. */
-    public java.util.Set<String> migratedIds = new java.util.HashSet<>();
     /** Durable bridge outbox; values are immutable graph snapshots pending the H2 journal. */
     public Map<String, String> pendingGraphSnapshots = new HashMap<>();
     public long graphVersion;

@@ -42,12 +42,10 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.Tab;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.AfterEach;
@@ -69,7 +67,6 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -291,14 +288,18 @@ class PluginCenterFxmlLoadTest {
     }
 
     @Test
-    void servicePluginDirectRouteUsesDefaultPageAndMissingPluginFallsBackToApproval() throws Exception {
+    void servicePluginWithoutDeclaredUiStillShowsConfigurationAndMissingPluginShowsApproval()
+            throws Exception {
         loadView(Optional.empty());
         PluginCenterController controller = handle.controller(PluginCenterController.class);
 
         runFx(() -> controller.openServicePluginConfiguration("deliverance", null));
-        awaitFx(() -> handle.root().lookup("#servicePluginPageTab-configuration") != null);
+        awaitFx(() -> handle.root().lookup("#servicePluginPageTab-host-configuration") != null);
         assertTrue(callFx(() -> ((ToggleButton) handle.root()
-                .lookup("#servicePluginPageTab-configuration")).isSelected()));
+                .lookup("#servicePluginPageTab-host-configuration")).isSelected()));
+        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSaveSchemaConfiguration") != null));
+        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSaveEndpoints") != null));
+        assertTrue(callFx(() -> handle.root().lookup("#servicePluginPageTab-host-runtime") != null));
 
         runFx(() -> controller.openServicePluginConfiguration("missing-deliverance", "models"));
         awaitFx(() -> toggleButton("installedTab").isSelected());
@@ -359,8 +360,6 @@ class PluginCenterFxmlLoadTest {
         runFx(() -> selectModelSourceTab(1));
         assertFalse(callFx(() -> button("loadSelectedAssetButton").isVisible()));
         assertFalse(callFx(() -> button("loadSelectedAssetButton").isManaged()));
-        assertFalse(callFx(() -> button("unloadSelectedAssetButton").isVisible()));
-        assertFalse(callFx(() -> button("unloadSelectedAssetButton").isManaged()));
         runFx(() -> selectModelSourceTab(1));
         awaitFx(() -> handle.root().lookup("#assetList") instanceof ListView<?>
                 && listLabels("assetList").stream().anyMatch(label -> label.contains("MiniLM")));
@@ -457,215 +456,6 @@ class PluginCenterFxmlLoadTest {
     }
 
     @Test
-    void modelsPageLoadsFromRootContextAndGuidesAnEmptyCatalogToAssetImport() throws Exception {
-        loadView(Optional.empty());
-        servicePluginService.declarativeUi = true;
-
-        runFx(() -> handle.controller(PluginCenterController.class)
-                .openServicePluginConfiguration("deliverance", "models"));
-
-        awaitFx(() -> handle.root().lookup("#emptyProfileState") != null
-                && handle.root().lookup("#emptyProfileState").isVisible());
-        runFx(() -> {
-            handle.root().resize(960, 680);
-            handle.root().applyCss();
-            handle.root().layout();
-        });
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-limits")
-                .getBoundsInParent().getWidth() > 0));
-        assertEquals(Region.USE_PREF_SIZE, callFx(() -> ((Region) handle.root()
-                .lookup("#servicePluginSection-limits")).getMaxHeight()));
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-limits")
-                .getStyleClass().contains("service-plugin-compact-config-section")));
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-limits")
-                .lookup(".service-plugin-schema-form-compact") != null));
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-model-management")
-                .getBoundsInParent().getHeight() > 0));
-        assertTrue(callFx(() -> handle.root().lookup("#inferenceModelToolbar") != null));
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-model-management")
-                .getStyleClass().contains("service-plugin-model-workbench")));
-        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-model-management")
-                .lookupAll(".label").stream().filter(Label.class::isInstance).map(Label.class::cast)
-                .noneMatch(label -> "模型文件与运行设置".equals(label.getText()))));
-        assertTrue(callFx(() -> button("inferenceLoadModelButton").isVisible()));
-        assertFalse(callFx(() -> button("inferenceBackToModelsButton").isVisible()));
-        assertFalse(callFx(() -> handle.root().lookup("#profileList").isManaged()));
-        assertTrue(callFx(() -> handle.root().lookup("#emptyProfileState")
-                .lookupAll(".button").isEmpty()));
-        assertTrue(callFx(() -> handle.root().lookup("#inferenceConfiguredModelsTab") == null));
-
-        ScrollPane pageScroll = callFx(() -> (ScrollPane) handle.root()
-                .lookup("#servicePluginPageScroll"));
-        runFx(() -> pageScroll.setVvalue(pageScroll.getVmax()));
-        runFx(() -> button("inferenceLoadModelButton").fire());
-        awaitFx(() -> handle.root().lookup("#modelSourceTabs") != null);
-        runFx(() -> selectModelSourceTab(0));
-        awaitFx(() -> handle.root().lookup("#onlineModelList") != null
-                || handle.root().lookup("#servicePluginInferenceError") != null);
-        Node inferenceError = callFx(() -> handle.root().lookup("#servicePluginInferenceError"));
-        assertTrue(callFx(() -> handle.root().lookup("#onlineModelList") != null),
-                inferenceError == null ? "模型目录未挂载"
-                        : callFx(() -> inferenceError.lookupAll(".label").stream()
-                                .filter(Label.class::isInstance).map(Label.class::cast)
-                                .map(Label::getText).toList().toString()));
-        assertTrue(callFx(() -> button("onlineDownloadButton").isDisabled()));
-        runFx(() -> selectModelSourceTab(1));
-        awaitFx(() -> handle.root().lookup("#assetList") != null);
-        awaitFx(() -> pageScroll.getVvalue() == pageScroll.getVmin());
-        runFx(() -> {
-            handle.root().applyCss();
-            handle.root().layout();
-        });
-        assertTrue(callFx(() -> ((ListView<?>) handle.root().lookup("#assetList"))
-                .getPlaceholder() != null));
-        assertTrue(callFx(() -> button("loadSelectedAssetButton").isDisabled()));
-        assertTrue(callFx(() -> ((Button) handle.root().lookup("#deleteAssetButton")).isDisabled()));
-        assertTrue(callFx(() -> ((TabPane) handle.root().lookup("#modelSourceTabs"))
-                .getSelectionModel().getSelectedItem().getText().startsWith("本地模型")));
-        assertTrue(callFx(() -> button("inferenceBackToModelsButton").isVisible()));
-        assertFalse(callFx(() -> button("inferenceLoadModelButton").isVisible()));
-    }
-
-    @Test
-    void modelsAreClassifiedByPurposeAndDualPurposeFilesAppearInBothCategories() throws Exception {
-        loadView(Optional.empty());
-        servicePluginService.declarativeUi = true;
-        inferenceService.snapshot = categorizedModels();
-
-        runFx(() -> handle.controller(PluginCenterController.class)
-                .openServicePluginConfiguration("deliverance", "models"));
-
-        awaitFx(() -> handle.root().lookup("#inferenceGenerationKindTab") != null);
-        assertEquals("推理模型", callFx(() -> ((ToggleButton) handle.root()
-                .lookup("#inferenceGenerationKindTab")).getText()));
-        assertEquals("向量化模型", callFx(() -> ((ToggleButton) handle.root()
-                .lookup("#inferenceEmbeddingKindTab")).getText()));
-        assertEquals(List.of("Qwen 运行设置 · 可用"), callFx(() -> listLabels("profileList")));
-        assertFalse(callFx(() -> ((TitledPane) handle.root()
-                .lookup("#workspaceRoutingPane")).isExpanded()));
-        expandTitledPane("workspaceRoutingPane");
-        awaitFx(() -> handle.root().lookup("#bindingStatusLabel") != null);
-        assertTrue(callFx(() -> handle.root().lookup("#profileActionsMenu") != null));
-        assertEquals(1L, callFx(() -> handle.root()
-                .lookup("#servicePluginSection-model-management").lookupAll(".button").stream()
-                .filter(Button.class::isInstance).map(Button.class::cast)
-                .filter(button -> "加载模型".equals(button.getText())).count()));
-        assertEquals("更改后自动保存", callFx(() -> ((Label) handle.root()
-                .lookup("#bindingStatusLabel")).getText()));
-        assertTrue(callFx(() -> ((Button) handle.root().lookup("#editProfileButton")).isDisabled()));
-        runFx(() -> {
-            ((ListView<?>) handle.root().lookup("#profileList")).getSelectionModel().selectFirst();
-            ((Button) handle.root().lookup("#editProfileButton")).fire();
-        });
-        assertTrue(callFx(() -> handle.root().lookup("#parametersPanel").isVisible()));
-        assertFalse(callFx(() -> ((TitledPane) handle.root()
-                .lookup("#profileAdvancedPane")).isExpanded()));
-        runFx(() -> button("backToModelsFromParametersButton").fire());
-        assertTrue(callFx(() -> handle.root().lookup("#catalogPanel").isVisible()));
-
-        runFx(() -> button("inferenceLoadModelButton").fire());
-        awaitFx(() -> handle.root().lookup("#modelSourceTabs") != null);
-        runFx(() -> selectModelSourceTab(1));
-        awaitFx(() -> handle.root().lookup("#assetList") != null);
-        assertTrue(callFx(() -> listLabels("assetList").stream()
-                .anyMatch(label -> label.contains("Qwen"))));
-        assertTrue(callFx(() -> listLabels("assetList").stream()
-                .anyMatch(label -> label.contains("Hybrid"))));
-
-        runFx(() -> ((ToggleButton) handle.root().lookup("#inferenceEmbeddingKindTab")).fire());
-        awaitFx(() -> handle.root().lookup("#modelSourceTabs") != null);
-        runFx(() -> selectModelSourceTab(1));
-        awaitFx(() -> listLabels("assetList").stream().anyMatch(label -> label.contains("MiniLM")));
-        assertTrue(callFx(() -> listLabels("assetList").stream()
-                .anyMatch(label -> label.contains("Hybrid"))));
-
-        runFx(() -> button("inferenceBackToModelsButton").fire());
-        awaitFx(() -> handle.root().lookup("#profileList") != null);
-        assertEquals(List.of("MiniLM 运行设置 · 可用"), callFx(() -> listLabels("profileList")));
-        expandTitledPane("workspaceRoutingPane");
-        awaitFx(() -> handle.root().lookup("#embeddingBindingCombo") != null);
-        assertFalse(callFx(() -> handle.root().lookup("#generationBindingsBox").isVisible()));
-        assertTrue(callFx(() -> handle.root().lookup("#embeddingBindingBox").isVisible()));
-        runFx(() -> ((ComboBox<?>) handle.root().lookup("#embeddingBindingCombo")).setValue(null));
-        awaitFx(() -> inferenceService.bindingCalls == 1);
-        assertEquals(Set.of(InferenceCatalogPort.ModelTier.NORMAL),
-                inferenceService.lastBindings.keySet());
-        assertEquals("已自动保存", callFx(() -> ((Label) handle.root()
-                .lookup("#bindingStatusLabel")).getText()));
-        runFx(() -> {
-            ((ListView<?>) handle.root().lookup("#profileList")).getSelectionModel().selectFirst();
-            button("editProfileButton").fire();
-        });
-        assertEquals(1, callFx(() -> ((ComboBox<?>) handle.root()
-                .lookup("#profileRuntimeCombo")).getItems().size()));
-        assertFalse(callFx(() -> handle.root().lookup("#generationParametersSection").isVisible()));
-        assertTrue(callFx(() -> handle.root().lookup("#embeddingDimensionsBox").isVisible()));
-    }
-
-    @Test
-    void addingASinglePurposeModelMovesToItsDetectedCategory() throws Exception {
-        loadView(Optional.empty());
-        servicePluginService.declarativeUi = true;
-        inferenceService.snapshot = categorizedModels();
-        inferenceService.downloadedModel = model("Downloaded MiniLM", "bert", "e");
-
-        runFx(() -> handle.controller(PluginCenterController.class)
-                .openServicePluginConfiguration("deliverance", "models"));
-        awaitFx(() -> handle.root().lookup("#inferenceLoadModelButton") != null);
-        runFx(() -> button("inferenceLoadModelButton").fire());
-        awaitFx(() -> handle.root().lookup("#modelSourceTabs") != null);
-        runFx(() -> selectModelSourceTab(0));
-        awaitFx(() -> handle.root().lookup("#onlineModelList") instanceof ListView<?> list
-                && list.getItems().size() == 1);
-        runFx(() -> ((ListView<?>) handle.root().lookup("#onlineModelList"))
-                .getSelectionModel().selectFirst());
-        awaitFx(() -> !button("onlineDownloadButton").isDisabled());
-        runFx(() -> button("onlineDownloadButton").fire());
-
-        awaitFx(() -> inferenceService.snapshot.assets().stream()
-                .anyMatch(asset -> "Downloaded MiniLM".equals(asset.displayName())));
-        runFx(() -> ((ToggleButton) handle.root()
-                .lookup("#inferenceEmbeddingKindTab")).fire());
-        awaitFx(() -> handle.root().lookup("#modelSourceTabs") != null);
-        runFx(() -> selectModelSourceTab(1));
-        awaitFx(() -> listLabels("assetList").stream()
-                .anyMatch(label -> label.contains("Downloaded MiniLM")));
-        runFx(() -> {
-            ListView<?> list = (ListView<?>) handle.root().lookup("#assetList");
-            for (int index = 0; index < list.getItems().size(); index++) {
-                if (list.getItems().get(index).toString().contains("Downloaded MiniLM")) {
-                    list.getSelectionModel().select(index);
-                    break;
-                }
-            }
-        });
-        awaitFx(() -> !button("loadSelectedAssetButton").isDisabled());
-        runFx(() -> button("loadSelectedAssetButton").fire());
-        awaitFx(() -> handle.root().lookup("#parametersPanel") != null
-                && handle.root().lookup("#parametersPanel").isVisible());
-        expandTitledPane("profileAdvancedPane");
-        awaitFx(() -> handle.root().lookup("#profileAssetCombo") != null);
-        assertTrue(callFx(() -> ((ComboBox<?>) handle.root().lookup("#profileAssetCombo"))
-                .getValue().toString().startsWith("Downloaded MiniLM ·")));
-        assertTrue(interaction.confirmed);
-        runFx(() -> button("parameterSaveProfileButton").fire());
-        awaitFx(() -> inferenceService.saveCalls == 1 && inferenceService.startCalls == 1);
-        awaitFx(() -> handle.root().lookup("#catalogPanel").isVisible());
-        assertEquals(List.of("MiniLM 运行设置 · 可用", "Downloaded MiniLM · 已加载"),
-                callFx(() -> listLabels("profileList")));
-        assertEquals("1 个已加载 · 2 个已配置", callFx(() -> ((Label) handle.root()
-                .lookup("#inferenceModelCount")).getText()));
-        assertEquals("服务运行中", callFx(() -> ((Label) handle.root()
-                .lookup("#inferenceServiceState")).getText()));
-        runFx(() -> ((ListView<?>) handle.root().lookup("#profileList"))
-                .getSelectionModel().selectLast());
-        assertEquals("卸载", callFx(() -> button("runtimeProfileButton").getText()));
-        runFx(() -> button("runtimeProfileButton").fire());
-        awaitFx(() -> inferenceService.stopCalls == 1);
-        awaitFx(() -> listLabels("profileList").getLast().endsWith("· 可用"));
-    }
-
-    @Test
     void aFailedDeclarativeSectionStaysVisibleAndRetryRestoresItWithoutHidingSiblings()
             throws Exception {
         loadView(Optional.empty());
@@ -676,7 +466,7 @@ class PluginCenterFxmlLoadTest {
                 .openServicePluginConfiguration("deliverance", "models"));
 
         awaitFx(() -> handle.root().lookup("#servicePluginSectionError-limits") != null);
-        assertTrue(callFx(() -> handle.root().lookup("#emptyProfileState").isVisible()));
+        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-model-catalog") != null));
         assertEquals("加载插件配置区块失败", callFx(() -> interaction.lastToast.title()));
         assertTrue(callFx(() -> interaction.lastToast.message().contains("Unrecognized token")));
 
@@ -684,46 +474,7 @@ class PluginCenterFxmlLoadTest {
         runFx(() -> ((Button) handle.root().lookup("#servicePluginSectionRetry-limits")).fire());
         awaitFx(() -> handle.root().lookup("#servicePluginSaveSchemaConfiguration") != null);
         assertTrue(callFx(() -> handle.root().lookup("#servicePluginSectionError-limits") == null));
-        assertTrue(callFx(() -> handle.root().lookup("#emptyProfileState").isVisible()));
-    }
-
-    @Test
-    void successfulBindingSaveNotifiesRuntimeRebuildButFailureDoesNot() throws Exception {
-        loadView(Optional.empty());
-        servicePluginService.declarativeUi = true;
-        inferenceService.snapshot = categorizedModels();
-        AtomicInteger rebuilds = new AtomicInteger();
-        PluginCenterController controller = handle.controller(PluginCenterController.class);
-        runFx(() -> {
-            controller.configure(rebuilds::incrementAndGet);
-            controller.openServicePluginConfiguration("deliverance", "models");
-        });
-        awaitFx(() -> handle.root().lookup("#workspaceRoutingPane") != null);
-        expandTitledPane("workspaceRoutingPane");
-        awaitFx(() -> handle.root().lookup("#normalBindingCombo") != null);
-
-        runFx(() -> {
-            ((ComboBox<?>) handle.root().lookup("#normalBindingCombo")).setValue(null);
-            ((ComboBox<?>) handle.root().lookup("#highBindingCombo"))
-                    .getSelectionModel().selectFirst();
-        });
-        awaitFx(() -> inferenceService.bindingCalls == 1 && rebuilds.get() == 1);
-        assertEquals("test", inferenceService.lastBindingWorkspace);
-        assertEquals(Set.of(InferenceCatalogPort.ModelTier.HIGH,
-                        InferenceCatalogPort.ModelTier.EMBEDDING),
-                inferenceService.lastBindings.keySet());
-
-        inferenceService.failBindings = true;
-        runFx(() -> {
-            ComboBox<?> normal = (ComboBox<?>) handle.root().lookup("#normalBindingCombo");
-            normal.getSelectionModel().selectFirst();
-            ((ComboBox<?>) handle.root().lookup("#highBindingCombo")).setValue(null);
-        });
-        awaitFx(() -> inferenceService.bindingCalls == 2);
-        assertEquals(1, rebuilds.get());
-        awaitFx(() -> ((Button) handle.root().lookup("#retryBindingsButton")).isVisible());
-        assertTrue(callFx(() -> ((Label) handle.root().lookup("#bindingStatusLabel"))
-                .getText().contains("自动保存失败")));
+        assertTrue(callFx(() -> handle.root().lookup("#servicePluginSection-model-catalog") != null));
     }
 
     @Test
@@ -905,7 +656,8 @@ class PluginCenterFxmlLoadTest {
     private static InferenceModelAsset model(String name, String type, String hash) {
         return new InferenceModelAsset(UUID.randomUUID(), InferenceModelAsset.Source.LOCAL_DIRECTORY,
                 name, type, hash.repeat(64), "/tmp/" + name, "", "", List.of(), 1,
-                InferenceModelAsset.State.READY, "", Instant.now());
+                InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(1));
     }
 
     private static InferenceModelProfile setting(
@@ -1132,7 +884,7 @@ class PluginCenterFxmlLoadTest {
         private final List<EndpointConfiguration> endpoints = List.of(
                 new EndpointConfiguration("openai", Protocol.HTTP, "127.0.0.1", 18080,
                         false, false, null, "", "********", 60, 100_000,
-                        1, 64, 16L * 1024 * 1024));
+                        1, 64, 16L * 1024 * 1024, 120));
 
         @Override public List<ServicePluginInfo> list() {
             listCalls++;
@@ -1146,9 +898,9 @@ class PluginCenterFxmlLoadTest {
                     0, List.of(), "", List.of(), Map.of(),
                     "本地 Deliverance 推理服务",
                     invalidSchema ? "not-json" : "{\"type\":\"object\",\"properties\":{"
-                            + "\"maxGenerationResident\":{\"type\":\"integer\","
+                            + "\"maxConcurrentRequests\":{\"type\":\"integer\","
                             + "\"minimum\":1,\"maximum\":8,\"default\":1}}}",
-                    Map.of("maxGenerationResident", "1"),
+                    Map.of("maxConcurrentRequests", "1"),
                     dualUi ? dualConfigurationUi() : declarativeUi ? configurationUi() : null,
                     inference(),
                     Map.of("openai", java.util.Set.of("models", "chat", "sse"))));
@@ -1165,9 +917,9 @@ class PluginCenterFxmlLoadTest {
                     new PluginDescriptor.ConfigurationPage("models", "模型", "模型配置", List.of(
                             new PluginDescriptor.ConfigurationSection("limits",
                                     PluginDescriptor.ConfigurationSectionType.SCHEMA_FORM,
-                                    "驻留数量", "", List.of("maxGenerationResident")),
-                            new PluginDescriptor.ConfigurationSection("model-management",
-                                    PluginDescriptor.ConfigurationSectionType.INFERENCE_MODELS,
+                                    "并发请求数", "", List.of("maxConcurrentRequests")),
+                            new PluginDescriptor.ConfigurationSection("model-catalog",
+                                    PluginDescriptor.ConfigurationSectionType.INFERENCE_CATALOG,
                                     "模型文件与运行设置", "", List.of()))),
                     new PluginDescriptor.ConfigurationPage("api", "对外接口", "接口信息", List.of(
                             new PluginDescriptor.ConfigurationSection("api-info",
@@ -1242,6 +994,7 @@ class PluginCenterFxmlLoadTest {
         @Override
         public HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
                 HuggingFaceModelCatalogPort.SearchRequest request,
+                java.util.function.Consumer<HuggingFaceModelCatalogPort.SearchProgress> progress,
                 BooleanSupplier cancelled) {
             return downloadedModel == null
                     ? new HuggingFaceModelCatalogPort.SearchPage(List.of(), "")

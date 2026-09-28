@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.inference.api.InferenceChatRequest;
 import com.javaclaw.inference.api.InferenceChatResponse;
 import com.javaclaw.inference.api.InferenceMessage;
+import com.javaclaw.inference.api.InferenceRequestPriority;
 import com.javaclaw.inference.api.InferenceStreamEvent;
 import com.javaclaw.inference.api.InferenceTool;
 import com.javaclaw.inference.api.InferenceToolCall;
+import com.javaclaw.inference.api.InferenceToolChoice;
 import com.javaclaw.inference.api.InferenceUsage;
 import com.javaclaw.inference.api.LocalInferenceGateway;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -124,10 +126,13 @@ public final class ManagedInferenceChatModel implements ChatModel {
         List<InferenceTool> tools = new ArrayList<>();
         ChatOptions options = prompt.getOptions();
         if (options instanceof ToolCallingChatOptions toolOptions) {
-            for (ToolCallback callback : toolOptions.getToolCallbacks()) {
-                var definition = callback.getToolDefinition();
-                tools.add(new InferenceTool(definition.name(), definition.description(),
-                        parseSchema(definition.inputSchema())));
+            List<ToolCallback> callbacks = toolOptions.getToolCallbacks();
+            if (callbacks != null) {
+                for (ToolCallback callback : callbacks) {
+                    var definition = callback.getToolDefinition();
+                    tools.add(new InferenceTool(definition.name(), definition.description(),
+                            parseSchema(definition.inputSchema())));
+                }
             }
         }
         Map<String, Object> parameters = new LinkedHashMap<>();
@@ -142,7 +147,9 @@ public final class ManagedInferenceChatModel implements ChatModel {
             }
         }
         return new InferenceChatRequest(UUID.randomUUID().toString(), profileId,
-                messages, tools, parameters, timeout);
+                messages, tools, parameters,
+                tools.isEmpty() ? InferenceToolChoice.none() : InferenceToolChoice.auto(),
+                true, timeout, InferenceRequestPriority.INTERNAL);
     }
 
     private InferenceMessage assistant(AssistantMessage message) {

@@ -35,6 +35,19 @@ final class StepMessageCodec {
             response.getResponses().forEach(value -> values.addObject()
                     .put("id", value.id()).put("name", value.name()).put("data", value.responseData()));
         } else if (message instanceof UserMessage user) {
+            if (SpringAiPromptFactory.isOriginalTask(user)) result.put("originalTask", true);
+            if (SpringAiPromptFactory.isResumeCommand(user)) result.put("resumeCommand", true);
+            if (Boolean.TRUE.equals(user.getMetadata().get(OnDemandContextSession.CONTEXT_METADATA))) {
+                result.put("deferredContext", true);
+                Object use = user.getMetadata().get(OnDemandContextSession.CONTEXT_USE_METADATA);
+                if (use instanceof String name) result.put("contextUse", name);
+            }
+            Object fixedSource = user.getMetadata().get(FixedContextSession.SOURCE_METADATA);
+            Object fixedVersion = user.getMetadata().get(FixedContextSession.VERSION_METADATA);
+            if (fixedSource instanceof String source && fixedVersion instanceof String version) {
+                result.put("fixedContextSource", source);
+                result.put("fixedContextVersion", version);
+            }
             ArrayNode media = result.putArray("media");
             for (Media value : user.getMedia()) {
                 ObjectNode item = media.addObject().put("mimeType", value.getMimeType().toString());
@@ -76,7 +89,28 @@ final class StepMessageCodec {
                     else builder.data(URI.create(item.path("uri").asText()));
                     media.add(builder.build());
                 });
-                yield UserMessage.builder().text(text).media(media).build();
+                java.util.Map<String, Object> metadata = new java.util.HashMap<>();
+                if (value.path("originalTask").asBoolean(false)) {
+                    metadata.put(SpringAiPromptFactory.ORIGINAL_TASK_METADATA, true);
+                }
+                if (value.path("resumeCommand").asBoolean(false)) {
+                    metadata.put(SpringAiPromptFactory.RESUME_COMMAND_METADATA, true);
+                }
+                if (value.path("deferredContext").asBoolean(false)) {
+                    metadata.put(OnDemandContextSession.CONTEXT_METADATA, true);
+                    if (value.path("contextUse").isTextual()) {
+                        metadata.put(OnDemandContextSession.CONTEXT_USE_METADATA,
+                                value.path("contextUse").asText());
+                    }
+                }
+                if (value.path("fixedContextSource").isTextual()
+                        && value.path("fixedContextVersion").isTextual()) {
+                    metadata.put(FixedContextSession.SOURCE_METADATA,
+                            value.path("fixedContextSource").asText());
+                    metadata.put(FixedContextSession.VERSION_METADATA,
+                            value.path("fixedContextVersion").asText());
+                }
+                yield UserMessage.builder().text(text).media(media).metadata(metadata).build();
             }
             default -> throw new IllegalStateException("unknown persisted message role: " + value.path("role"));
         };

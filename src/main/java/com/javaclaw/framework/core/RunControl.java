@@ -98,6 +98,11 @@ public final class RunControl implements CancellationToken {
 
     public int toolCallCount() { return toolCalls.get(); }
 
+    /** Remaining calls under the effective Run budget, including catalog calls. */
+    public int remainingToolCalls() {
+        return Math.max(0, budget.maxToolCalls() - toolCalls.get());
+    }
+
     public void approveToolCall(ToolApprovalGrant grant) {
         Objects.requireNonNull(grant, "grant");
         if (!grant.approved()) throw new IllegalArgumentException("cannot store a denied tool grant");

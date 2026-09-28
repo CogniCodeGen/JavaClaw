@@ -4,6 +4,7 @@ import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
+import com.javaclaw.infrastructure.knowledge.KnowledgeDeferredContextSource;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.util.ProjectAccessPolicy;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KnowledgeExpertBehaviorTest {
 
@@ -39,6 +41,62 @@ class KnowledgeExpertBehaviorTest {
     private AnnotationConfigApplicationContext context;
     private TestEmbeddingGatewayFactory.Fixture embeddings;
     private KnowledgeExpert expert;
+
+    @Test
+    void deferredKnowledgeSourceReadsSelectedChunkAndRejectsDisabledDocument() {
+        AgentConfig config = config(true);
+        config.setRagScoreThreshold(-1.0);
+        embeddings = TestEmbeddingGatewayFactory.create(4,
+                (text, timeout) -> new double[]{1, 0, 0, 0});
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
+                temporaryDirectory.resolve("deferred-global"),
+                temporaryDirectory.resolve("deferred-workspace"), new Preferences());
+        assertTrue(expert.importText("alpha public reference", "deferred-doc",
+                KnowledgeExpert.Scope.WORKSPACE).contains("已导入"));
+        KnowledgeDeferredContextSource source = new KnowledgeDeferredContextSource(expert);
+
+        var candidate = source.search(null, "alpha", 3).getFirst();
+        var chunk = expert.allKnowledgeChunks().getFirst();
+        assertEquals(chunk.deferredContextDigest, candidate.version());
+        assertTrue(source.fetch(null, candidate.id(), candidate.version())
+                .contains("alpha public reference"));
+        chunk.content = "alpha revised reference";
+        assertEquals(candidate.version(), source.search(null, "alpha", 3).getFirst().version(),
+                "search must use the persisted metadata version, not read unselected content");
+        assertThrows(IllegalStateException.class,
+                () -> source.fetch(null, candidate.id(), candidate.version()));
+        assertTrue(expert.reindexDocument("deferred-doc") > 0);
+        var revised = source.search(null, "alpha", 3).getFirst();
+        assertFalse(revised.version().equals(candidate.version()));
+        assertTrue(source.fetch(null, revised.id(), revised.version()).contains("revised"));
+        expert.setDocEnabled("deferred-doc", false);
+        assertThrows(IllegalStateException.class,
+                () -> source.fetch(null, revised.id(), revised.version()));
+    }
+
+    @Test
+    void deferredKnowledgeKeywordFallbackUsesBoundedSearchMetadata() {
+        AgentConfig config = config(true);
+        config.setRagChunkSize(1600);
+        AtomicBoolean offline = new AtomicBoolean();
+        embeddings = TestEmbeddingGatewayFactory.create(4, (text, timeout) -> {
+            if (offline.get()) throw new IllegalStateException("offline");
+            return new double[]{1, 0, 0, 0};
+        });
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
+                temporaryDirectory.resolve("bounded-global"),
+                temporaryDirectory.resolve("bounded-workspace"), new Preferences());
+        String body = "front-marker " + "x".repeat(1_000) + " tail-marker";
+        assertTrue(expert.importText(body, "bounded-doc", KnowledgeExpert.Scope.WORKSPACE)
+                .contains("已导入"));
+        var chunk = expert.allKnowledgeChunks().getFirst();
+        assertTrue(chunk.deferredSearchText.length() <= 768);
+        assertTrue(chunk.deferredSummary.length() <= 181);
+        offline.set(true);
+        KnowledgeDeferredContextSource source = new KnowledgeDeferredContextSource(expert);
+        assertFalse(source.search(null, "front-marker", 3).isEmpty());
+        assertTrue(source.search(null, "tail-marker", 3).isEmpty());
+    }
 
     @AfterEach
     void closeResources() {

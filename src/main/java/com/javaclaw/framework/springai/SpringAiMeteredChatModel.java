@@ -1,0 +1,160 @@
+package com.javaclaw.framework.springai;
+
+import com.javaclaw.framework.core.RunUsageLedger;
+import com.javaclaw.framework.core.ReasoningRequest;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.tool.ToolCallback;
+import reactor.core.publisher.Flux;
+
+import java.util.Objects;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+/** 在 Advisor 执行工具或重试前持久化并计量每个 Provider 响应。 */
+final class SpringAiMeteredChatModel implements ChatModel {
+    private final ChatModel delegate;
+    private final ModelStepJournal journal;
+    private final AtomicInteger attempt;
+    private final Supplier<RunUsageLedger.ModelCall> admission;
+    private final Runnable cancelled;
+    private final Consumer<ChatResponse> meter;
+    private final Consumer<ManagedInferenceChatModel.ManagedInferenceModelException> failureMeter;
+    private final StepContextProjector projector;
+    private final ToolCatalogSession catalog;
+    private final ReasoningRequest request;
+    private final ProviderContextBoundary boundary;
+
+    SpringAiMeteredChatModel(
+            ChatModel delegate,
+            ModelStepJournal journal,
+            AtomicInteger attempt,
+            Supplier<RunUsageLedger.ModelCall> admission,
+            Runnable cancelled,
+            Consumer<ChatResponse> meter,
+            Consumer<ManagedInferenceChatModel.ManagedInferenceModelException> failureMeter,
+            StepContextProjector projector,
+            ToolCatalogSession catalog,
+            ReasoningRequest request,
+            ProviderContextBoundary boundary) {
+        this.delegate = Objects.requireNonNull(delegate, "delegate");
+        this.journal = Objects.requireNonNull(journal, "journal");
+        this.attempt = Objects.requireNonNull(attempt, "attempt");
+        this.admission = Objects.requireNonNull(admission, "admission");
+        this.cancelled = Objects.requireNonNull(cancelled, "cancelled");
+        this.meter = Objects.requireNonNull(meter, "meter");
+        this.failureMeter = Objects.requireNonNull(failureMeter, "failureMeter");
+        this.projector = Objects.requireNonNull(projector, "projector");
+        this.catalog = catalog;
+        this.request = Objects.requireNonNull(request, "request");
+        this.boundary = Objects.requireNonNull(boundary, "boundary");
+    }
+
+    @Override
+    public ChatResponse call(Prompt prompt) {
+        try (var ignored = admission.get()) {
+            cancelled.run();
+            validate(prompt);
+            var step = journal.started(prompt, attempt.get(),
+                    boundary.toolCandidateStepId());
+            ChatResponse response = invoke(prompt, step);
+            RuntimeException journalFailure = completeJournal(step, response);
+            try {
+                meter.accept(response);
+            } catch (RuntimeException failure) {
+                if (journalFailure != null) failure.addSuppressed(journalFailure);
+                throw failure;
+            }
+            if (journalFailure != null) throw journalFailure;
+            return response;
+        }
+    }
+
+    private ChatResponse invoke(Prompt prompt, com.javaclaw.framework.api.StepId step) {
+        try {
+            ChatResponse response = delegate.call(prompt);
+            if (response == null) throw new IllegalStateException("model returned no response");
+            return response;
+        } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+            failJournal(step, failure);
+            try {
+                failureMeter.accept(failure);
+            } catch (RuntimeException meteringFailure) {
+                meteringFailure.addSuppressed(failure);
+                throw meteringFailure;
+            }
+            throw failure;
+        } catch (RuntimeException failure) {
+            failJournal(step, failure);
+            throw failure;
+        }
+    }
+
+    private RuntimeException completeJournal(
+            com.javaclaw.framework.api.StepId step, ChatResponse response) {
+        try {
+            journal.completed(step, response);
+            return null;
+        } catch (RuntimeException failure) {
+            return failure;
+        }
+    }
+
+    private void failJournal(com.javaclaw.framework.api.StepId step, RuntimeException failure) {
+        try {
+            journal.failed(step, failure);
+        } catch (RuntimeException journalFailure) {
+            failure.addSuppressed(journalFailure);
+        }
+    }
+
+    @Override
+    public ChatOptions getOptions() {
+        return delegate.getOptions();
+    }
+
+    @Override
+    public Flux<ChatResponse> stream(Prompt prompt) {
+        validate(prompt);
+        return delegate.stream(prompt);
+    }
+
+    private void validate(Prompt prompt) {
+        if (request.plan().descriptor().stepContextPolicy() == null) return;
+        if (request.plan().descriptor().onDemandContextPolicy() != null
+                && (boundary.expected() == null || !StepMessageCodec.messages(
+                        prompt.getInstructions()).equals(StepMessageCodec.messages(boundary.expected())))) {
+            throw new IllegalStateException("provider messages differ from the planned step selection");
+        }
+        projector.validate(prompt.getInstructions(), request, boundary.expected());
+        if (!(prompt.getOptions() instanceof ToolCallingChatOptions options)) {
+            throw new IllegalStateException("provider request has no tool calling options");
+        }
+        List<ToolCallback> actual = options.getToolCallbacks() == null
+                ? List.of() : options.getToolCallbacks();
+        if (request.plan().descriptor().onDemandContextPolicy() != null) {
+            if (boundary.expectedTools() == null || !actual.equals(boundary.expectedTools())) {
+                throw new IllegalStateException("provider tools differ from the planned step selection");
+            }
+            int characters = actual.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
+            if (actual.size() > request.plan().descriptor().stepContextPolicy().maxTools()
+                    || characters > request.plan().descriptor().stepContextPolicy()
+                            .maxToolSchemaCharacters()) {
+                throw new IllegalStateException("provider tool selection exceeds context policy");
+            }
+            return;
+        }
+        if (catalog == null) {
+            if (!actual.isEmpty()) {
+                throw new IllegalStateException("provider exposed tools outside the authorized projection");
+            }
+        } else {
+            catalog.validateActual(actual, prompt.getInstructions());
+        }
+    }
+}

@@ -22,11 +22,12 @@ import java.util.Objects;
  * 基于 AES-256-GCM 的进程级凭据加密服务。
  *
  * <p>主密钥保存在当前 3.0 数据库的 {@code app_state} 表，并由数据库主键保证首次创建互斥。
- * 每个根 Spring Context 拥有独立实例与缓存，不读取静态数据库指针。每个值使用随机盐和 IV；
- * 旧版设备派生口令仅用于解密兼容，任何加密都必须取得持久主密钥。</p>
+ * 每个根 Spring Context 拥有独立实例与缓存，不读取静态数据库指针。
+ * 每个值使用随机盐和 IV，且必须取得持久主密钥。</p>
  *
  * <p>实例线程安全。解密失败时原样返回 {@code ENC(...)}，防止调用方保存空值后不可逆地
- * 覆盖原密文；加密失败则抛异常，绝不降级保存明文。</p>
+ * 覆盖原密文；运行时使用前必须经 {@link CredentialUsage} 拒绝未解密值。
+ * 加密失败则抛异常，绝不降级保存明文。</p>
  */
 public final class CredentialEncryptor implements CredentialCipher {
 
@@ -108,15 +109,8 @@ public final class CredentialEncryptor implements CredentialCipher {
         try {
             return decrypt(payload, masterPassphrase());
         } catch (Exception primaryFailure) {
-            try {
-                String plain = decrypt(payload, legacyPassphrase());
-                log.info("凭据经旧版设备密钥解密成功；重新保存后将迁移到数据库主密钥");
-                return plain;
-            } catch (Exception legacyFailure) {
-                log.error("凭据解密失败，已原样保留密文；跨机迁移时请确认数据库主密钥完整",
-                        primaryFailure);
-                return encryptedText;
-            }
+            log.error("凭据解密失败，已原样保留密文；请确认数据库主密钥完整", primaryFailure);
+            return encryptedText;
         }
     }
 
@@ -213,19 +207,6 @@ public final class CredentialEncryptor implements CredentialCipher {
             return new SecretKeySpec(factory.generateSecret(specification).getEncoded(), "AES");
         } finally {
             specification.clearPassword();
-        }
-    }
-
-    private static String legacyPassphrase() {
-        return System.getProperty("user.name", "javaclaw")
-                + "@" + hostName() + "#JavaClaw";
-    }
-
-    private static String hostName() {
-        try {
-            return java.net.InetAddress.getLocalHost().getHostName();
-        } catch (Exception ignored) {
-            return "localhost";
         }
     }
 

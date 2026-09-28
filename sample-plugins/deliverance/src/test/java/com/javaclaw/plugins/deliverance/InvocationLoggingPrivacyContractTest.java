@@ -25,9 +25,10 @@ class InvocationLoggingPrivacyContractTest {
         assertTrue(logging.path("x-javaclaw-hidden").asBoolean(false));
         for (String legacy : new String[]{"maxGenerationResident", "maxEmbeddingResident"}) {
             var field = root.path("configurationSchema").path("properties").path(legacy);
-            assertTrue(field.path("deprecated").asBoolean(false), legacy);
-            assertTrue(field.path("x-javaclaw-hidden").asBoolean(false), legacy);
+            assertTrue(field.isMissingNode(), legacy);
         }
+        assertTrue(root.path("inference").path("parameterSchema").path("properties")
+                .path("load").path("properties").path("jvmHeapMiB").isMissingNode());
         assertFalse(root.path("configurationUi").toString().contains("驻留数量"));
     }
 

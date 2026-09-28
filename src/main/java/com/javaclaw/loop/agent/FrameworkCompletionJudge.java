@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -77,7 +78,7 @@ public final class FrameworkCompletionJudge implements CompletionJudge {
         try {
             CancellationToken token = cancelled::getAsBoolean;
             ModelTaskResult result = models.execute(new ModelTaskRequest(
-                    purpose, tier, input, verdictSchema(), owner, "loop-critic",
+                    purpose, tier, input, List.of(), verdictSchema(), owner, "loop-critic",
                     Duration.ofSeconds(LoopConstants.JUDGE_TIMEOUT_SECONDS), 1, token, false))
                     .toCompletableFuture().get(
                             LoopConstants.JUDGE_TIMEOUT_SECONDS + 2L, TimeUnit.SECONDS);

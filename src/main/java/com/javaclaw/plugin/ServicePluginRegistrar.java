@@ -255,7 +255,7 @@ final class ServicePluginRegistrar {
                         Protocol.valueOf(endpoint.protocol().name()), "127.0.0.1", 0,
                         endpoint.protocol() == PluginDescriptor.EndpointProtocol.HTTPS,
                         false, null, "", randomApiKey(), 60, 100_000,
-                        1, 64, 16L * 1024 * 1024))
+                        1, 64, 16L * 1024 * 1024, 120))
                 .toList();
         Optional<ServicePluginDefinition> previousDefinition = processes.definition(descriptor.id());
         StartupPolicy startupPolicy = manualOnFirstApproval && previousDefinition.isEmpty()

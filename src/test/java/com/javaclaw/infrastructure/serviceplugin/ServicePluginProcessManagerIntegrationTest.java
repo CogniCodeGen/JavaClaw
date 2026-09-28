@@ -25,6 +25,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,7 +54,7 @@ class ServicePluginProcessManagerIntegrationTest {
                     "host-data/run/service-plugins/fixture.json").toFile());
             assertEquals("com.javaclaw.service.runner.ServicePluginProcessMain",
                     pidRecord.path("runnerMainClass").asText());
-            assertTrue(pidRecord.path("runnerPath").isNull());
+            assertFalse(pidRecord.has("runnerPath"));
             assertEquals(pluginJar.toString(), pidRecord.path("pluginPath").asText());
 
             manager.stop("fixture");
@@ -126,7 +127,7 @@ class ServicePluginProcessManagerIntegrationTest {
             long pid = manager.list().getFirst().pid();
             EndpointConfiguration endpoint = new EndpointConfiguration(
                     "hot", Protocol.HTTP, "127.0.0.1", 0, false, false,
-                    null, "", "x".repeat(32), 60, 100_000, 1, 4, 1024);
+                    null, "", "x".repeat(32), 60, 100_000, 1, 4, 1024, 120);
             ServicePluginDefinition candidate = definition(
                     pluginJar, hash, List.of(endpoint));
 
@@ -149,7 +150,7 @@ class ServicePluginProcessManagerIntegrationTest {
                 IsolatedFixtureServicePlugin.class.getName(), "Test Publisher", true, hash,
                 pluginJar, temporary.resolve("plugin-data"), StartupPolicy.MANUAL,
                 new ResourceConfiguration(128, 0, 1, 4, 64), endpoints, true,
-                Set.of(), Map.of(), false);
+                Set.of(), Map.of(), false, "", "", null, null, Map.of(), false);
     }
 
     private Path fixtureJar() throws Exception {

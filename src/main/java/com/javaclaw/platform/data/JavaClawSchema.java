@@ -14,7 +14,7 @@ final class JavaClawSchema {
 
     /**
      * 创建 JavaClaw 3 初始 schema。DDL 全部幂等；生产启动链只由根 Spring Context
-     * 的 schema 初始化器调用一次，静态连接门面保留到旧调用方完成迁移为止。
+     * 的 schema 初始化器调用一次。
      */
     void initialize(Connection c) throws SQLException {
         try (Statement st = c.createStatement()) {
@@ -124,52 +124,19 @@ final class JavaClawSchema {
                         fail_count INT NOT NULL,
                         notify_enabled BOOLEAN NOT NULL,
                         notify_channel VARCHAR(64),
-                        execution_history_json CLOB,
-                        exec_records_json CLOB,
+                        exec_records_json CLOB NOT NULL,
                         unattended_authorized BOOLEAN DEFAULT FALSE,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, id)
                     )
                     """);
-            // 既有库迁移：为早于本列的 scheduled_tasks 补列（IF NOT EXISTS 幂等，新库已由上面 CREATE 带列）
-            st.execute("ALTER TABLE scheduled_tasks "
-                    + "ADD COLUMN IF NOT EXISTS unattended_authorized BOOLEAN DEFAULT FALSE");
-            st.execute("ALTER TABLE scheduled_tasks "
-                    + "ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0");
-            // 旧工具创建 interval 任务时只更新 interval_minutes，遗留的 UI 字段仍可能是默认 60。
-            // Quartz 一直以 interval_minutes 为准，迁移时同步展示字段以保持实际运行语义不变。
-            st.execute("""
-                    UPDATE scheduled_tasks
-                    SET interval_value = CASE WHEN interval_minutes > 0 THEN interval_minutes ELSE 60 END,
-                        interval_unit = 'minute'
-                    WHERE trigger_type = 'interval'
-                      AND (interval_value IS NULL OR interval_value <= 0
-                           OR interval_minutes <> interval_value *
-                              CASE interval_unit WHEN 'hour' THEN 60 WHEN 'day' THEN 1440 ELSE 1 END)
-                    """);
-
-            st.execute("""
-                    CREATE TABLE IF NOT EXISTS custom_agents (
-                        workspace_id VARCHAR(128) NOT NULL,
-                        id VARCHAR(128) NOT NULL,
-                        name VARCHAR(512),
-                        tool_name VARCHAR(256),
-                        description CLOB,
-                        sys_prompt CLOB,
-                        max_iters INT NOT NULL,
-                        enabled BOOLEAN NOT NULL,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (workspace_id, id)
-                    )
-                    """);
-
             st.execute("""
                     CREATE TABLE IF NOT EXISTS plugin_state (
                         workspace_id VARCHAR(128) NOT NULL,
                         plugin_id VARCHAR(256) NOT NULL,
                         enabled BOOLEAN NOT NULL,
-                        granted_json CLOB,
-                        config_json CLOB,
+                        granted_json CLOB NOT NULL,
+                        config_json CLOB NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, plugin_id)
                     )
@@ -226,11 +193,6 @@ final class JavaClawSchema {
                         PRIMARY KEY (workspace_id, session_id, position)
                     )
                     """);
-            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivery_state VARCHAR(32)");
-            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS input_tokens BIGINT");
-            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS output_tokens BIGINT");
-            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS duration_ms BIGINT");
-
             st.execute("""
                     CREATE TABLE IF NOT EXISTS token_usage_daily (
                         workspace_id VARCHAR(128) NOT NULL,
@@ -315,19 +277,6 @@ final class JavaClawSchema {
                     """);
 
             st.execute("""
-                    CREATE TABLE IF NOT EXISTS browser_state (
-                        workspace_id VARCHAR(128) NOT NULL,
-                        state_key VARCHAR(128) NOT NULL,
-                        state_json CLOB,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (workspace_id, state_key)
-                    )
-                    """);
-            // 旧版把整个工作区所有网站的 Cookie/localStorage 存在单行中，任一聊天都会继承，
-            // 会造成跨会话串号。认证态现已迁移为 site_sessions（按账号）+ 会话 Context（内存）。
-            st.execute("DELETE FROM browser_state WHERE state_key = 'playwright-storage-state'");
-
-            st.execute("""
                     CREATE TABLE IF NOT EXISTS workflow_definitions (
                         workspace_id VARCHAR(128) NOT NULL,
                         id VARCHAR(128) NOT NULL,
@@ -366,21 +315,19 @@ final class JavaClawSchema {
                         thread_id VARCHAR(512) NOT NULL,
                         definition_json CLOB NOT NULL,
                         state_json CLOB NOT NULL,
-                        status VARCHAR(32) NOT NULL,
+                        status VARCHAR(64) NOT NULL,
                         current_node_id VARCHAR(256),
                         next_node_id VARCHAR(256),
                         step_count INT NOT NULL,
                         output_text CLOB,
                         error_text CLOB,
                         interrupt_json CLOB,
-                        extension_locks_json CLOB,
+                        extension_locks_json CLOB NOT NULL,
                         created_at BIGINT NOT NULL,
                         updated_at BIGINT NOT NULL,
                         PRIMARY KEY (workspace_id, id)
                     )
                     """);
-            st.execute("ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS extension_locks_json CLOB");
-            st.execute("ALTER TABLE workflow_runs ALTER COLUMN status VARCHAR(64) NOT NULL");
             st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_thread "
                     + "ON workflow_runs(workspace_id, workflow_id, thread_id, updated_at)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_status "
@@ -538,9 +485,6 @@ final class JavaClawSchema {
                         PRIMARY KEY (extension_id, extension_version, artifact_sha256)
                     )
                     """);
-            st.execute("ALTER TABLE extension_artifact_cache ADD COLUMN IF NOT EXISTS "
-                    + "enabled_for_new_runs BOOLEAN NOT NULL DEFAULT TRUE");
-
             // 本地推理资产与运行时属于进程根 Context；工作区仅保存档位绑定。
             st.execute("""
                     CREATE TABLE IF NOT EXISTS inference_runtimes (
@@ -592,35 +536,6 @@ final class JavaClawSchema {
                         failure CLOB,
                         created_at BIGINT NOT NULL
                     )
-                    """);
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "display_name VARCHAR(512)");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "model_type VARCHAR(128)");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "artifact_format VARCHAR(32) NOT NULL DEFAULT 'SAFETENSORS'");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "quantization_type VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "source_size_bytes BIGINT NOT NULL DEFAULT 0");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "quantized_size_bytes BIGINT NOT NULL DEFAULT 0");
-            st.execute("ALTER TABLE inference_model_assets ADD COLUMN IF NOT EXISTS "
-                    + "source_updated_at BIGINT NOT NULL DEFAULT 0");
-            st.execute("UPDATE inference_model_assets SET quantized_size_bytes = size_bytes "
-                    + "WHERE quantized_size_bytes = 0 AND size_bytes > 0");
-            st.execute("""
-                    UPDATE inference_model_assets
-                    SET display_name = CASE
-                      WHEN hf_repository IS NOT NULL AND TRIM(hf_repository) <> ''
-                        THEN REGEXP_REPLACE(hf_repository, '^.*/', '')
-                      ELSE SUBSTRING(content_sha256, 1, 12)
-                    END
-                    WHERE display_name IS NULL OR TRIM(display_name) = ''
-                    """);
-            st.execute("""
-                    UPDATE inference_model_assets SET model_type = 'unknown'
-                    WHERE model_type IS NULL OR TRIM(model_type) = ''
                     """);
             st.execute("""
                     CREATE TABLE IF NOT EXISTS inference_model_profiles (
@@ -693,10 +608,6 @@ final class JavaClawSchema {
                         updated_at BIGINT NOT NULL
                     )
                     """);
-            st.execute("ALTER TABLE inference_gateway_config ADD COLUMN IF NOT EXISTS "
-                    + "allow_insecure_lan BOOLEAN NOT NULL DEFAULT FALSE");
-            st.execute("ALTER TABLE inference_gateway_config ADD COLUMN IF NOT EXISTS "
-                    + "invocation_logging_enabled BOOLEAN NOT NULL DEFAULT FALSE");
             st.execute("""
                     CREATE TABLE IF NOT EXISTS inference_api_keys (
                         key_id VARCHAR(128) PRIMARY KEY,
@@ -744,8 +655,6 @@ final class JavaClawSchema {
                         updated_at BIGINT NOT NULL
                     )
                     """);
-            st.execute("ALTER TABLE service_plugin_config ADD COLUMN IF NOT EXISTS "
-                    + "plugin_config_json CLOB DEFAULT '{}' NOT NULL");
         }
     }
 }

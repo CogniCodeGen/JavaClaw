@@ -23,7 +23,7 @@ import com.javaclaw.application.task.SddTaskApplicationService;
 import com.javaclaw.infrastructure.knowledge.AgentConfigKnowledgeSettingsAdapter;
 import com.javaclaw.infrastructure.knowledge.KnowledgeExpertAdapter;
 import com.javaclaw.infrastructure.memory.MemoryServiceAdapter;
-import com.javaclaw.infrastructure.skill.LegacySkillManagementAdapter;
+import com.javaclaw.infrastructure.skill.SkillManagementAdapter;
 import com.javaclaw.loop.LoopService;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
@@ -146,7 +146,7 @@ class WorkspaceIntelligenceConfiguration {
             SkillInstaller installer,
             com.javaclaw.config.AgentConfig settings,
             com.javaclaw.system.JShellRunner jshellRunner) {
-        return new LegacySkillManagementAdapter(
+        return new SkillManagementAdapter(
                 skills, usage, proposals, installer, settings, jshellRunner);
     }
 
@@ -214,7 +214,7 @@ class WorkspaceIntelligenceConfiguration {
             ObjectMapper json,
             com.javaclaw.framework.store.JdbcThreadStore threadStore) {
         var memory = new com.javaclaw.memory.MemoryService(
-                modelTasks, embeddings, tasks, settings);
+                modelTasks, embeddings, tasks, settings, json);
         memory.setOnEmbeddingDegraded(reason -> {
             var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
             if (port != null) {
@@ -226,10 +226,6 @@ class WorkspaceIntelligenceConfiguration {
         memory.open(workspace.globalDataRoot().resolve("memory-stores")
                 .resolve(workspace.workspaceId()), workspace.workspaceId(), "local-user");
         memory.bindThreadJournal(json, threadStore, threadStore);
-        memory.migrateLegacy(json, id -> threadStore.find(new com.javaclaw.framework.api.RunScope(
-                        workspace.workspaceId(), "local-user", id))
-                .filter(thread -> thread.status() == com.javaclaw.framework.api.ThreadStatus.ACTIVE
-                        || thread.status() == com.javaclaw.framework.api.ThreadStatus.ARCHIVED).isPresent());
         return memory;
     }
 
@@ -239,6 +235,12 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.framework.spi.ModelTaskGateway modelTasks) {
         return new com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter(
                 memory, modelTasks);
+    }
+
+    @Bean
+    com.javaclaw.infrastructure.memory.MemoryPersonaFixedContextSource memoryPersonaFixedContextSource(
+            com.javaclaw.memory.MemoryService memory) {
+        return new com.javaclaw.infrastructure.memory.MemoryPersonaFixedContextSource(memory);
     }
 
     @Bean(destroyMethod = "close")
@@ -259,6 +261,7 @@ class WorkspaceIntelligenceConfiguration {
             WorkspaceContext workspace,
             com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry registry,
             com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter memory,
+            com.javaclaw.infrastructure.memory.MemoryPersonaFixedContextSource persona,
             KnowledgeExpert knowledge,
             SkillRuntimeServices skills) {
         com.javaclaw.framework.spi.RetrieverContribution retriever = (query, request) -> {
@@ -270,7 +273,11 @@ class WorkspaceIntelligenceConfiguration {
         com.javaclaw.framework.spi.PromptContributor skillContributor = (request, state) ->
                 skills.manager().buildSkillCatalogPrompt(null);
         return registry.register(workspace.workspaceId(), memory, memory,
-                retriever, skillContributor);
+                retriever, skillContributor,
+                memory,
+                new com.javaclaw.infrastructure.knowledge.KnowledgeDeferredContextSource(knowledge),
+                new com.javaclaw.skill.SkillDeferredContextSource(skills.manager()),
+                persona);
     }
 
     @Bean

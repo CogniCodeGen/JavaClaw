@@ -29,6 +29,7 @@ public final class ChatInlineImageRenderer {
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(
             "png", "jpg", "jpeg", "gif", "bmp", "webp");
     private static final double PREVIEW_WIDTH = 400;
+    private static final double DETAIL_PREVIEW_WIDTH = 220;
 
     private final ImageViewerFactory imageViewer;
 
@@ -38,6 +39,15 @@ public final class ChatInlineImageRenderer {
 
     /** Adds newly discovered images to a message container and records their canonical text paths. */
     public void displayInline(String text, VBox container, Set<String> displayedPaths) {
+        display(text, container, displayedPaths, PREVIEW_WIDTH);
+    }
+
+    /** Adds project-local image previews to an execution detail without changing its text. */
+    void displayInDetail(String text, VBox container, Set<String> displayedPaths) {
+        display(text, container, displayedPaths, DETAIL_PREVIEW_WIDTH);
+    }
+
+    private void display(String text, VBox container, Set<String> displayedPaths, double width) {
         if (container == null || text == null || displayedPaths == null) {
             return;
         }
@@ -45,7 +55,7 @@ public final class ChatInlineImageRenderer {
             if (displayedPaths.contains(path)) {
                 continue;
             }
-            ImageView preview = loadPreview(new File(path));
+            ImageView preview = loadPreview(new File(path), width);
             if (preview != null) {
                 container.getChildren().add(preview);
                 displayedPaths.add(path);
@@ -64,7 +74,7 @@ public final class ChatInlineImageRenderer {
             if (path == null) {
                 continue;
             }
-            ImageView preview = loadPreview(new File(path));
+            ImageView preview = loadPreview(new File(path), PREVIEW_WIDTH);
             if (preview != null) {
                 images.add(preview);
             }
@@ -90,14 +100,14 @@ public final class ChatInlineImageRenderer {
         });
     }
 
-    private ImageView loadPreview(File file) {
+    private ImageView loadPreview(File file, double width) {
         if (!isReadableProjectImage(file)) {
             return null;
         }
         try {
-            Image image = new Image(file.toURI().toString(), PREVIEW_WIDTH, 0, true, true);
+            Image image = new Image(file.toURI().toString(), width, 0, true, true);
             ImageView imageView = new ImageView(image);
-            imageView.setFitWidth(PREVIEW_WIDTH);
+            imageView.setFitWidth(width);
             imageView.setPreserveRatio(true);
             imageView.setSmooth(true);
             imageView.getStyleClass().add("screenshot-image");

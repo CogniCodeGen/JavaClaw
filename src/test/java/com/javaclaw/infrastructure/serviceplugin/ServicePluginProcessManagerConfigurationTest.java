@@ -101,7 +101,7 @@ class ServicePluginProcessManagerConfigurationTest {
             assertEquals(37, saved.requestTimeoutSeconds());
             assertThrows(IllegalArgumentException.class, () -> manager.updateEndpoint("fixture",
                     new EndpointConfiguration("undeclared", Protocol.HTTP, "127.0.0.1", 0,
-                            false, false, null, "", "secret", 1, 1, 1, 1, 1)));
+                            false, false, null, "", "secret", 1, 1, 1, 1, 1, 120)));
         }
     }
 
@@ -243,7 +243,7 @@ class ServicePluginProcessManagerConfigurationTest {
     private EndpointConfiguration endpoint(String id, Protocol protocol, int port) {
         return new EndpointConfiguration(id, protocol, "127.0.0.1", port,
                 protocol == Protocol.HTTPS, false, null, "",
-                "abcdefghijklmnopqrstuvwxyz123456", 60, 100_000, 1, 4, 1024);
+                "abcdefghijklmnopqrstuvwxyz123456", 60, 100_000, 1, 4, 1024, 120);
     }
 
     private ServicePluginDefinition definition(
@@ -253,7 +253,8 @@ class ServicePluginProcessManagerConfigurationTest {
                 "example.Fixture", "Test Publisher", true, hash,
                 temporary.resolve("plugin.jar"), temporary.resolve("data"), StartupPolicy.MANUAL,
                 new ResourceConfiguration(256, 0, 1, 4, 64), endpoints,
-                endpointConfigurationManaged, Set.of(), Map.of(), false);
+                endpointConfigurationManaged, Set.of(), Map.of(), false,
+                "", "", null, null, Map.of(), false);
     }
 
     private ServicePluginDefinition configuredDefinition() {
@@ -271,7 +272,7 @@ class ServicePluginProcessManagerConfigurationTest {
                 base.endpoints(), base.endpointConfigurationManaged(), base.permissions(),
                 Map.of("editable", "initial", "managed", "host-source",
                         "hidden", "internal-source"), base.builtIn(),
-                "", schema, null, false);
+                "", schema, null, null, Map.of(), false);
     }
 
     private static final class FailingStore implements ServicePluginConfigurationStore {

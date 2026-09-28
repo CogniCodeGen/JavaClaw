@@ -1,5 +1,6 @@
 package com.javaclaw.schedule;
 
+import com.javaclaw.config.FileDatabaseAccess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,7 +32,7 @@ class ScheduledTaskStoreTest {
     }
 
     @Test
-    void executionResultDoesNotRestoreDisabledConfiguration() {
+    void executionResultDoesNotRestoreDisabledConfiguration() throws Exception {
         ScheduledTaskStore store = store();
         ScheduledTask runningSnapshot = store.insert("ws", task("race", true));
 
@@ -49,20 +50,32 @@ class ScheduledTaskStoreTest {
         assertEquals(disabled.getVersion(), afterRun.getVersion());
         assertEquals(1, afterRun.getRunCount());
         assertEquals(0, afterRun.getFailCount());
+        ScheduledTask reloaded = store.find("ws", runningSnapshot.getId());
+        assertEquals(1, reloaded.getExecRecords().size());
+        assertEquals("done", reloaded.getExecRecords().getFirst().getNote());
+        try (var connection = new FileDatabaseAccess(dataDir).open();
+             var query = connection.prepareStatement(
+                     "SELECT exec_records_json FROM scheduled_tasks WHERE workspace_id = ? AND id = ?")) {
+            query.setString(1, "ws");
+            query.setString(2, runningSnapshot.getId());
+            try (var rows = query.executeQuery()) {
+                assertTrue(rows.next());
+                assertNotNull(rows.getString(1));
+                assertTrue(rows.getString(1).contains("done"));
+            }
+        }
     }
 
     @Test
-    void cancellationIsNeutralAndIntervalUsesQuartzMinutesAsSourceOfTruth() {
+    void cancellationIsNeutralAndInconsistentIntervalIsRejected() {
         ScheduledTaskStore store = store();
         ScheduledTask inconsistent = task("cancelled", true);
         inconsistent.setIntervalMinutes(15);
         inconsistent.setIntervalValue(2);
         inconsistent.setIntervalUnit("hour");
 
-        ScheduledTask saved = store.insert("ws", inconsistent);
-        assertEquals(15, saved.getIntervalMinutes());
-        assertEquals(15, saved.getIntervalValue());
-        assertEquals("minute", saved.getIntervalUnit());
+        assertThrows(IllegalArgumentException.class, () -> store.insert("ws", inconsistent));
+        ScheduledTask saved = store.insert("ws", task("cancelled", true));
 
         ScheduledTask cancelled = store.recordExecution("ws", saved.getId(),
                 new ScheduledTaskStore.ExecutionResult(
@@ -71,6 +84,22 @@ class ScheduledTaskStoreTest {
         assertEquals(1, cancelled.getRunCount());
         assertEquals(0, cancelled.getFailCount());
         assertEquals("已取消", cancelled.getExecRecords().getFirst().getStatus());
+    }
+
+    @Test
+    void malformedExecutionHistoryIsRejectedInsteadOfDiscarded() throws Exception {
+        ScheduledTaskStore store = store();
+        ScheduledTask saved = store.insert("ws", task("history", true));
+        try (var connection = new FileDatabaseAccess(dataDir).open();
+             var update = connection.prepareStatement(
+                     "UPDATE scheduled_tasks SET exec_records_json = ? WHERE workspace_id = ? AND id = ?")) {
+            update.setString(1, "broken-json");
+            update.setString(2, "ws");
+            update.setString(3, saved.getId());
+            update.executeUpdate();
+        }
+        assertThrows(SchedulePersistenceException.class,
+                () -> store.find("ws", saved.getId()));
     }
 
     private ScheduledTaskStore store() {

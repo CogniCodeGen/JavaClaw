@@ -8,26 +8,6 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {
-      "maxGenerationResident": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 8,
-        "default": 1,
-        "title": "最多驻留推理模型（已弃用）",
-        "description": "仅兼容旧配置；运行时忽略该字段。",
-        "deprecated": true,
-        "x-javaclaw-hidden": true
-      },
-      "maxEmbeddingResident": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 8,
-        "default": 1,
-        "title": "最多驻留向量化模型（已弃用）",
-        "description": "仅兼容旧配置；运行时忽略该字段。",
-        "deprecated": true,
-        "x-javaclaw-hidden": true
-      },
       "external.enabled": {
         "type": "boolean",
         "default": false,
@@ -124,7 +104,6 @@
         "load": {
           "type": "object",
           "properties": {
-            "jvmHeapMiB": {"type": "integer", "minimum": 512, "maximum": 262144, "default": 4096, "title": "旧版单模型 JVM 内存", "deprecated": true, "x-javaclaw-hidden": true},
             "workerThreads": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 4, "title": "推理线程"},
             "tensorBackend": {"type": "string", "enum": ["auto", "simd", "jvector"], "default": "auto", "title": "计算后端"},
             "workingMemoryType": {"type": "string", "enum": ["F32", "BF16", "F16"], "default": "F32", "title": "工作内存精度"},

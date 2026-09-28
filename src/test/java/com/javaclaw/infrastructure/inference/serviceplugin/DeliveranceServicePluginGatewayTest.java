@@ -56,13 +56,13 @@ class DeliveranceServicePluginGatewayTest {
     }
 
     @Test
-    void normalizesLegacyQwenToolCallMarkupAtTheHostBoundary() {
+    void mapsStructuredToolCallsAtTheHostBoundary() {
         DeliveranceServicePluginGateway gateway = new DeliveranceServicePluginGateway(
                 null, null, null, new ObjectMapper(), null);
         InferencePluginProtocol.ChatResponse wire = new InferencePluginProtocol.ChatResponse(
-                "request-1", "qwen", "before<tool_call>\n"
-                + "{\"name\":\"weather\",\"arguments\":{\"city\":\"北京\"}}\n"
-                + "</tool_call>after", "", List.of(), "STOP",
+                "request-1", "qwen", "beforeafter", "",
+                List.of(new InferencePluginProtocol.ToolCall(
+                        "call_weather", "weather", "{\"city\":\"北京\"}")), "TOOL_CALLS",
                 new InferencePluginProtocol.Usage(10, 5), 1, 2);
 
         InferenceChatResponse response = gateway.map(wire);
@@ -71,14 +71,8 @@ class DeliveranceServicePluginGatewayTest {
         assertEquals(InferenceChatResponse.FinishReason.TOOL_CALLS, response.finishReason());
         assertEquals(1, response.toolCalls().size());
         assertEquals("weather", response.toolCalls().getFirst().name());
-        assertTrue(response.toolCalls().getFirst().id().startsWith("call_"));
+        assertEquals("call_weather", response.toolCalls().getFirst().id());
         assertEquals("{\"city\":\"北京\"}", response.toolCalls().getFirst().argumentsJson());
-
-        InferenceChatResponse malformed = gateway.map(new InferencePluginProtocol.ChatResponse(
-                "request-2", "qwen", "<tool_call>not-json</tool_call>", "", List.of(),
-                "STOP", new InferencePluginProtocol.Usage(1, 1), 0, 0));
-        assertTrue(malformed.toolCalls().isEmpty());
-        assertEquals("<tool_call>not-json</tool_call>", malformed.content());
     }
 
     private ServicePluginDefinition definition(Path pluginJar) throws Exception {
@@ -87,7 +81,8 @@ class DeliveranceServicePluginGatewayTest {
                 IsolatedFixtureServicePlugin.class.getName(), "Test Publisher", true,
                 sha256(pluginJar), pluginJar, temporary.resolve("plugin-data"),
                 StartupPolicy.MANUAL, new ResourceConfiguration(256, 0, 1, 4, 64),
-                List.of(), true, Set.of(), Map.of(), false);
+                List.of(), true, Set.of(), Map.of(), false,
+                "", "", null, null, Map.of(), false);
     }
 
     private Path fixtureJar() throws Exception {

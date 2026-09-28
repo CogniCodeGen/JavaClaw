@@ -74,7 +74,8 @@ class JdbcInferenceCatalogTest {
         InferenceModelAsset value = new InferenceModelAsset(UUID.randomUUID(),
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, "Qwen local", "qwen2", "d".repeat(64),
                 "/tmp/qwen", "", "", List.of(), 0,
-                InferenceModelAsset.State.READY, "", Instant.now());
+                InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(0));
         catalog.saveAsset(value);
         var gateway = new InferenceCatalogPort.GatewayConfiguration(true,
                 "192.168.1.20", 18080, false, true, "", "",
@@ -85,43 +86,6 @@ class JdbcInferenceCatalogTest {
         assertEquals("qwen2", catalog.asset(value.id()).orElseThrow().modelType());
         assertTrue(catalog.gatewayConfiguration().allowInsecureLanWithoutTls());
         assertTrue(catalog.gatewayConfiguration().invocationLoggingEnabled());
-    }
-
-    @Test
-    void schemaBackfillsDisplayNamesForEarlyInferenceAssets() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
-                "jdbc:h2:mem:inference-migration-" + UUID.randomUUID()
-                        + ";DB_CLOSE_DELAY=-1", "sa", "");
-        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        jdbc.execute("""
-                CREATE TABLE inference_model_assets (
-                  asset_id VARCHAR(128) PRIMARY KEY,
-                  source_type VARCHAR(32) NOT NULL,
-                  content_sha256 VARCHAR(64) NOT NULL UNIQUE,
-                  asset_path CLOB NOT NULL,
-                  hf_repository VARCHAR(512),
-                  hf_commit VARCHAR(128),
-                  files_json CLOB NOT NULL,
-                  size_bytes BIGINT NOT NULL,
-                  asset_state VARCHAR(32) NOT NULL,
-                  failure CLOB,
-                  created_at BIGINT NOT NULL)
-                """);
-        jdbc.update("INSERT INTO inference_model_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                UUID.randomUUID().toString(), "HUGGING_FACE", "e".repeat(64), "/tmp/hf",
-                "owner/model-name", "commit", "[]", 0, "READY", null,
-                Instant.now().toEpochMilli());
-        jdbc.update("INSERT INTO inference_model_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                UUID.randomUUID().toString(), "LOCAL_DIRECTORY", "f".repeat(64), "/tmp/local",
-                null, null, "[]", 0, "READY", null, Instant.now().toEpochMilli());
-
-        new SchemaInitializer(dataSource).initialize();
-
-        assertEquals(List.of("model-name", "ffffffffffff"), jdbc.queryForList(
-                "SELECT display_name FROM inference_model_assets ORDER BY asset_path",
-                String.class));
-        assertEquals(List.of("unknown", "unknown"), jdbc.queryForList(
-                "SELECT model_type FROM inference_model_assets ORDER BY asset_path", String.class));
     }
 
     @Test
@@ -178,9 +142,10 @@ class JdbcInferenceCatalogTest {
 
     private static InferenceModelAsset asset() {
         return new InferenceModelAsset(UUID.randomUUID(), InferenceModelAsset.Source.LOCAL_DIRECTORY,
-                "b".repeat(64), "/tmp/asset-test", "", "",
+                "test", "qwen2", "b".repeat(64), "/tmp/asset-test", "", "",
                 List.of(new InferenceModelAsset.AssetFile("config.json", 1, "c".repeat(64))),
-                1, InferenceModelAsset.State.READY, "", Instant.now());
+                1, InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(1));
     }
 
     private static InferenceModelProfile profile(String runtimeId, UUID assetId) {

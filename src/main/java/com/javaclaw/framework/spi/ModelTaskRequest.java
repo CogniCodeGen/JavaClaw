@@ -38,21 +38,6 @@ public record ModelTaskRequest(
         }
     }
 
-    /** Source-compatible constructor for text-only helper tasks. */
-    public ModelTaskRequest(
-            String purpose,
-            ModelTier tier,
-            JsonNode input,
-            JsonNode outputSchema,
-            RunId ownerRunId,
-            String budgetAccount,
-            Duration timeout,
-            int maxRetries,
-            CancellationToken cancellation,
-            boolean cacheAllowed) {
-        this(purpose, tier, input, List.of(), outputSchema, ownerRunId, budgetAccount,
-                timeout, maxRetries, cancellation, cacheAllowed);
-    }
     @Override public JsonNode input() { return input.deepCopy(); }
     @Override public JsonNode outputSchema() { return outputSchema.deepCopy(); }
 }

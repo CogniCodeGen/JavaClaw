@@ -7,7 +7,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Arrays;
@@ -16,18 +15,13 @@ import java.util.List;
 /** Persists child-process identity and removes processes that outlive their Desktop lease. */
 final class ServicePluginProcessLeaseStore {
     private static final Logger log = LoggerFactory.getLogger(ServicePluginProcessLeaseStore.class);
-    private static final String LEGACY_RUNNER =
-            "plugin-runner/javaclaw-service-plugin-runner.jar";
-
     private final Path runDirectory;
-    private final Path legacyRunner;
     private final ObjectMapper json;
     private final String runnerMainClass;
 
     ServicePluginProcessLeaseStore(Path dataRoot, ObjectMapper json, String runnerMainClass) {
         Path normalized = dataRoot.toAbsolutePath().normalize();
         runDirectory = normalized.resolve("run/service-plugins");
-        legacyRunner = normalized.resolve(LEGACY_RUNNER);
         this.json = java.util.Objects.requireNonNull(json, "json");
         this.runnerMainClass = java.util.Objects.requireNonNull(runnerMainClass, "runnerMainClass");
     }
@@ -35,7 +29,6 @@ final class ServicePluginProcessLeaseStore {
     void init() throws IOException {
         Files.createDirectories(runDirectory);
         cleanupStaleProcesses();
-        cleanupLegacyRunner();
     }
 
     void write(ServicePluginSession session, ServicePluginDefinition definition,
@@ -43,7 +36,7 @@ final class ServicePluginProcessLeaseStore {
         try {
             PidRecord record = new PidRecord(session.pid(), startedAt.toEpochMilli(),
                     definition.id(), definition.version(), definition.artifactSha256(),
-                    desktopGeneration, null, runnerMainClass, definition.pluginJar().toString());
+                    desktopGeneration, runnerMainClass, definition.pluginJar().toString());
             AtomicFileWriter.writeJson(json, pidFile(definition.id()).toFile(), record);
         } catch (IOException failure) {
             log.warn("写入服务插件 PID 记录失败: {}", safeMessage(failure));
@@ -94,29 +87,8 @@ final class ServicePluginProcessLeaseStore {
     static boolean matches(PidRecord record, List<String> arguments) {
         if (record.pluginPath() == null || record.pluginPath().isBlank()
                 || !arguments.contains(record.pluginPath())) return false;
-        if (record.runnerMainClass() != null && !record.runnerMainClass().isBlank()) {
-            return arguments.contains(record.runnerMainClass());
-        }
-        return record.runnerPath() != null && !record.runnerPath().isBlank()
-                && arguments.contains(record.runnerPath());
-    }
-
-    private void cleanupLegacyRunner() {
-        Path parent = legacyRunner.getParent();
-        if (Files.isSymbolicLink(parent)) {
-            log.warn("跳过符号链接中的旧服务插件 Runner 缓存: {}", parent);
-            return;
-        }
-        try {
-            if (Files.deleteIfExists(legacyRunner)) {
-                log.info("已清理旧版服务插件 Runner 缓存: {}", legacyRunner);
-            }
-            if (Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) Files.deleteIfExists(parent);
-        } catch (java.nio.file.DirectoryNotEmptyException ignored) {
-            // Preserve any unrelated cache entries in the legacy directory.
-        } catch (IOException failure) {
-            log.debug("清理旧版服务插件 Runner 缓存失败: {}", legacyRunner, failure);
-        }
+        return record.runnerMainClass() != null && !record.runnerMainClass().isBlank()
+                && arguments.contains(record.runnerMainClass());
     }
 
     private Path pidFile(String pluginId) {
@@ -129,5 +101,5 @@ final class ServicePluginProcessLeaseStore {
 
     record PidRecord(long pid, long startedAtEpochMilli, String pluginId,
                      String pluginVersion, String artifactSha256, long desktopGeneration,
-                     String runnerPath, String runnerMainClass, String pluginPath) { }
+                     String runnerMainClass, String pluginPath) { }
 }

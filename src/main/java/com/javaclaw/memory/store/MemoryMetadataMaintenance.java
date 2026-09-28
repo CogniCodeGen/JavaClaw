@@ -18,7 +18,6 @@ public final class MemoryMetadataMaintenance {
         try {
             MemoryRoot root = manager.root();
             if (root == null) return;
-            MemoryStoreSchema.complete(root, manager);
             persist(manager, root, change);
         } finally { manager.shutdown(); }
     }

@@ -195,11 +195,6 @@ public class EmbeddingGateway {
         return null;
     }
 
-    /** 旧调用方默认视为后台写入；新代码应显式传 purpose。 */
-    public float[] embed(String text) {
-        return embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
-    }
-
     /** 主动探测：3 秒超时、绕过熔断器；成功会立即恢复健康。 */
     public EmbeddingHealthSnapshot probe() {
         if (invoker == null) {

@@ -43,8 +43,8 @@ public final class ScheduledTaskStore {
             id, name, description, trigger_type, interval_minutes, interval_value,
             interval_unit, daily_time, cron_expression, once_date_time, prompt,
             enabled, version, last_run_time, last_run_status, last_duration, run_count,
-            fail_count, notify_enabled, notify_channel, execution_history_json,
-            exec_records_json, unattended_authorized
+            fail_count, notify_enabled, notify_channel, exec_records_json,
+            unattended_authorized
             """;
 
     private final JdbcTemplate jdbc;
@@ -81,16 +81,16 @@ public final class ScheduledTaskStore {
 
     ScheduledTask insert(String workspaceId, ScheduledTask source) {
         ScheduledTask task = source.copy();
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         task.setVersion(0L);
         String sql = """
                 INSERT INTO scheduled_tasks(
                     workspace_id, id, name, description, trigger_type, interval_minutes, interval_value,
                     interval_unit, daily_time, cron_expression, once_date_time, prompt,
                     enabled, version, last_run_time, last_run_status, last_duration, run_count,
-                    fail_count, notify_enabled, notify_channel, execution_history_json,
-                    exec_records_json, unattended_authorized, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    fail_count, notify_enabled, notify_channel, exec_records_json,
+                    unattended_authorized, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
         try {
             jdbc.update(sql, workspaceId, task.getId(), task.getName(), task.getDescription(),
@@ -99,8 +99,8 @@ public final class ScheduledTaskStore {
                     task.getOnceDateTime(), task.getPrompt(), task.isEnabled(), task.getVersion(),
                     task.getLastRunTime(), task.getLastRunStatus(), task.getLastDuration(),
                     task.getRunCount(), task.getFailCount(), task.isNotifyEnabled(),
-                    task.getNotifyChannel(), encode(task.getExecutionHistory()),
-                    encode(task.getExecRecords()), task.isUnattendedToolsAuthorized());
+                    task.getNotifyChannel(), encode(task.getExecRecords()),
+                    task.isUnattendedToolsAuthorized());
             return task.copy();
         } catch (DataAccessException failure) {
             throw persistence("创建定时任务失败：" + task.getId(), failure);
@@ -109,7 +109,7 @@ public final class ScheduledTaskStore {
 
     ScheduledTask updateDefinition(String workspaceId, ScheduledTask source) {
         ScheduledTask task = source.copy();
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         String sql = """
                 UPDATE scheduled_tasks SET
                     name = ?, description = ?, trigger_type = ?, interval_minutes = ?, interval_value = ?,
@@ -156,7 +156,7 @@ public final class ScheduledTaskStore {
         String update = """
                 UPDATE scheduled_tasks SET
                     last_run_time = ?, last_run_status = ?, last_duration = ?, run_count = ?, fail_count = ?,
-                    execution_history_json = ?, exec_records_json = ?, updated_at = CURRENT_TIMESTAMP
+                    exec_records_json = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE workspace_id = ? AND id = ?
                 """;
         try {
@@ -173,10 +173,9 @@ public final class ScheduledTaskStore {
                 String now = LocalDateTime.now().format(ScheduledTask.FORMATTER);
                 task.addExecRecord(new ScheduledTask.ExecRecord(
                         now, result.status().label(), result.duration(), note));
-                task.addExecutionRecord(now + " [" + result.status().label() + "] " + note);
                 int changed = jdbc.update(update, task.getLastRunTime(), task.getLastRunStatus(),
                         task.getLastDuration(), task.getRunCount(), task.getFailCount(),
-                        encode(task.getExecutionHistory()), encode(task.getExecRecords()),
+                        encode(task.getExecRecords()),
                         workspaceId, id);
                 return changed == 1 ? task.copy() : null;
             });
@@ -214,10 +213,9 @@ public final class ScheduledTaskStore {
         task.setFailCount(rs.getInt("fail_count"));
         task.setNotifyEnabled(rs.getBoolean("notify_enabled"));
         task.setNotifyChannel(rs.getString("notify_channel"));
-        task.setExecutionHistory(readStringList(rs.getString("execution_history_json")));
         task.setExecRecords(readExecRecords(rs.getString("exec_records_json")));
         task.setUnattendedToolsAuthorized(rs.getBoolean("unattended_authorized"));
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         return task;
     }
 
@@ -229,23 +227,18 @@ public final class ScheduledTaskStore {
         }
     }
 
-    private List<String> readStringList(String source) {
-        if (source == null || source.isBlank()) return new ArrayList<>();
-        try {
-            List<String> result = json.decode(source, new TypeReference<>() { });
-            return result == null ? new ArrayList<>() : result;
-        } catch (JsonProcessingException ignored) {
-            return new ArrayList<>();
-        }
-    }
-
     private List<ScheduledTask.ExecRecord> readExecRecords(String source) {
-        if (source == null || source.isBlank()) return new ArrayList<>();
+        if (source == null || source.isBlank()) {
+            throw new SchedulePersistenceException("定时任务执行历史缺失");
+        }
         try {
             List<ScheduledTask.ExecRecord> result = json.decode(source, new TypeReference<>() { });
-            return result == null ? new ArrayList<>() : result;
-        } catch (JsonProcessingException ignored) {
-            return new ArrayList<>();
+            if (result == null || result.contains(null)) {
+                throw new SchedulePersistenceException("定时任务执行历史格式无效");
+            }
+            return result;
+        } catch (JsonProcessingException failure) {
+            throw persistence("定时任务执行历史格式无效", failure);
         }
     }
 

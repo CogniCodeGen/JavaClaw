@@ -3,6 +3,7 @@ package com.javaclaw.framework.springai;
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.CredentialUsage;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.framework.api.ModelPolicyRefs;
 import com.javaclaw.framework.spi.EmbeddingModelProvider;
@@ -14,6 +15,8 @@ import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
@@ -26,6 +29,7 @@ import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -50,10 +54,6 @@ public final class SpringAiModelFactory implements AutoCloseable {
     private SpringAiModelRegistry installedRegistry;
     private final Map<String, ChatModel> installedModels = new LinkedHashMap<>();
     private SpringAiModelRegistry.Registration installedRegistration;
-
-    public SpringAiModelFactory(AgentConfig config, ObservationRegistry observations) {
-        this(config, observations, null, null, null, null);
-    }
 
     public SpringAiModelFactory(
             AgentConfig config,
@@ -155,14 +155,19 @@ public final class SpringAiModelFactory implements AutoCloseable {
     private ChatModel create(TierSpec spec) {
         String provider = PROVIDERS.normalizeId(spec.provider());
         if (provider.isBlank()) provider = "openai";
-        return switch (provider) {
-            case DefaultModelProviderCatalog.DELIVERANCE -> managed(spec);
-            case "anthropic" -> anthropic(spec);
-            case "gemini", "google", "google-genai" -> google(spec);
-            case "ollama" -> ollama(spec);
-            case "dashscope", "openai" -> openAi(spec);
-            default -> openAi(spec);
-        };
+        try {
+            return switch (provider) {
+                case DefaultModelProviderCatalog.DELIVERANCE -> managed(spec);
+                case "anthropic" -> anthropic(spec);
+                case "gemini" -> google(spec);
+                case "ollama" -> ollama(spec);
+                case "dashscope", "openai" -> openAi(spec);
+                default -> throw new IllegalArgumentException("Unsupported model provider: " + provider);
+            };
+        } catch (CredentialUsage.UnreadableCredentialException unreadable) {
+            // Keep the workspace and settings available so the user can replace the key.
+            return new UnavailableCredentialChatModel(unreadable.getMessage());
+        }
     }
 
     private ChatModel managed(TierSpec spec) {
@@ -258,7 +263,8 @@ public final class SpringAiModelFactory implements AutoCloseable {
     }
 
     private static String apiKey(String value) {
-        return value == null || value.isBlank() ? "not-needed" : value;
+        return CredentialUsage.requirePlaintext(
+                value == null || value.isBlank() ? "not-needed" : value);
     }
 
     @Override
@@ -292,6 +298,18 @@ public final class SpringAiModelFactory implements AutoCloseable {
     private record TierSpec(
             String provider, String baseUrl, String model, String apiKey,
             boolean thinking, UUID profileId) {}
+
+    private record UnavailableCredentialChatModel(String error) implements ChatModel {
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            throw new IllegalStateException(error);
+        }
+
+        @Override
+        public Flux<ChatResponse> stream(Prompt prompt) {
+            return Flux.error(new IllegalStateException(error));
+        }
+    }
 
     private static EmbeddingModelProvider embeddingProvider(
             boolean configured, EmbeddingModel model, String error) {

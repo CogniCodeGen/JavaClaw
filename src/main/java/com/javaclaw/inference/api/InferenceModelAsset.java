@@ -36,63 +36,9 @@ public record InferenceModelAsset(
         if (state == null) throw new IllegalArgumentException("资产状态不能为空");
         failure = normalize(failure);
         createdAt = createdAt == null ? Instant.now() : createdAt;
-        artifactMetadata = artifactMetadata == null
-                ? ArtifactMetadata.unknown(sizeBytes) : artifactMetadata;
-    }
-
-    /** Compatibility constructor for assets persisted before artifact metadata was introduced. */
-    public InferenceModelAsset(
-            UUID id,
-            Source source,
-            String displayName,
-            String modelType,
-            String contentSha256,
-            String location,
-            String huggingFaceRepository,
-            String huggingFaceCommit,
-            List<AssetFile> files,
-            long sizeBytes,
-            State state,
-            String failure,
-            Instant createdAt) {
-        this(id, source, displayName, modelType, contentSha256, location,
-                huggingFaceRepository, huggingFaceCommit, files, sizeBytes, state,
-                failure, createdAt, ArtifactMetadata.unknown(sizeBytes));
-    }
-
-    /** 兼容尚未持久化 model_type 的 3.0 早期调用方。 */
-    public InferenceModelAsset(
-            UUID id,
-            Source source,
-            String displayName,
-            String contentSha256,
-            String location,
-            String huggingFaceRepository,
-            String huggingFaceCommit,
-            List<AssetFile> files,
-            long sizeBytes,
-            State state,
-            String failure,
-            Instant createdAt) {
-        this(id, source, displayName, "unknown", contentSha256, location,
-                huggingFaceRepository, huggingFaceCommit, files, sizeBytes, state, failure, createdAt);
-    }
-
-    /** 兼容 3.0 早期资产记录；旧本地导入无法恢复源目录名时使用摘要前缀。 */
-    public InferenceModelAsset(
-            UUID id,
-            Source source,
-            String contentSha256,
-            String location,
-            String huggingFaceRepository,
-            String huggingFaceCommit,
-            List<AssetFile> files,
-            long sizeBytes,
-            State state,
-            String failure,
-            Instant createdAt) {
-        this(id, source, "", "unknown", contentSha256, location, huggingFaceRepository, huggingFaceCommit,
-                files, sizeBytes, state, failure, createdAt);
+        if (artifactMetadata == null) {
+            throw new IllegalArgumentException("模型工件元数据不能为空");
+        }
     }
 
     public enum Source { LOCAL_DIRECTORY, HUGGING_FACE }

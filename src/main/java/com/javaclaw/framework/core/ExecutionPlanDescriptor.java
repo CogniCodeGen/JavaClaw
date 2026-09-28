@@ -1,14 +1,19 @@
 package com.javaclaw.framework.core;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.javaclaw.framework.api.*;
-import com.javaclaw.framework.spi.ExtensionLock;
+import com.javaclaw.framework.api.AgentDefinitionRef;
+import com.javaclaw.framework.api.CapabilityId;
+import com.javaclaw.framework.api.PermissionSet;
+import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.spi.AdvisorSpec;
+import com.javaclaw.framework.spi.ExtensionLock;
 
 import java.util.List;
 import java.util.Map;
 
-/** Fully serializable plan locked at run start. */
+/** Run 启动时锁定的可序列化计划；上下文策略为 null 时关闭该能力。 */
 public record ExecutionPlanDescriptor(
         String id,
         AgentDefinitionRef definition,
@@ -24,6 +29,9 @@ public record ExecutionPlanDescriptor(
         JsonNode toolPolicy,
         PermissionSet permissions,
         RunBudget budget,
+        @JsonProperty(required = true) StepContextPolicy stepContextPolicy,
+        @JsonProperty(required = true) OnDemandContextPolicy onDemandContextPolicy,
+        @JsonProperty(required = true) List<String> fixedContextSourceIds,
         List<AdvisorSpec> advisors,
         JsonNode outputContract,
         String checksum) {
@@ -37,6 +45,7 @@ public record ExecutionPlanDescriptor(
                 capabilityCopies.put(capabilityId, value.deepCopy()));
         compiledCapabilities = Map.copyOf(capabilityCopies);
         toolPolicy = toolPolicy.deepCopy();
+        fixedContextSourceIds = List.copyOf(fixedContextSourceIds);
         advisors = List.copyOf(advisors);
         outputContract = outputContract.deepCopy();
     }

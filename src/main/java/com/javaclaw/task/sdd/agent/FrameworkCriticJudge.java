@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -65,7 +66,7 @@ public final class FrameworkCriticJudge implements CriticJudge {
         try {
             CancellationToken token = cancelled::getAsBoolean;
             ModelTaskResult result = models.execute(new ModelTaskRequest(
-                    "sdd.scenario-critic", ModelTier.HIGH, input, schema(), owner,
+                    "sdd.scenario-critic", ModelTier.HIGH, input, List.of(), schema(), owner,
                     "sdd-verify", Duration.ofSeconds(timeoutSec), 1, token, false))
                     .toCompletableFuture().get(timeoutSec + 2, TimeUnit.SECONDS);
             tokens.record("verify", result.inputTokens(), result.outputTokens());

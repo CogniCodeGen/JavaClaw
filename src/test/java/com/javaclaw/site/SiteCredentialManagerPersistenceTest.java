@@ -60,7 +60,7 @@ class SiteCredentialManagerPersistenceTest {
     }
 
     @Test
-    void plaintextPasswordAndSessionAreMigratedAtomicallyOnLoad(@TempDir Path dir)
+    void plaintextPasswordIsRejectedWithoutRewritingIt(@TempDir Path dir)
             throws Exception {
         DatabaseAccess database = new FileDatabaseAccess(dir);
         try (var c = database.open()) {
@@ -69,22 +69,20 @@ class SiteCredentialManagerPersistenceTest {
                         workspace_id, id, name, host_pattern, username, password_enc,
                         created_at, last_used_at, has_session)
                     VALUES ('ws-a', 'cred-1', '旧站点', 'example.com', 'tester',
-                            'legacy-password', 1, 0, TRUE)
+                            'plaintext-password', 1, 0, TRUE)
                     """)) {
                 credential.executeUpdate();
             }
             try (PreparedStatement session = c.prepareStatement("""
                     INSERT INTO site_sessions(workspace_id, credential_id, storage_state_json)
-                    VALUES ('ws-a', 'cred-1', '{"cookies":[{"value":"legacy-cookie"}]}')
+                    VALUES ('ws-a', 'cred-1', '{"cookies":[{"value":"plaintext-cookie"}]}')
                     """)) {
                 session.executeUpdate();
             }
         }
 
-        SiteCredentialManager manager = manager(database, new AtomicReference<>("ws-a"));
-
-        assertEquals("legacy-password", manager.get("cred-1").getPassword());
-        assertTrue(manager.readSession("cred-1").contains("legacy-cookie"));
+        assertThrows(IllegalStateException.class,
+                () -> manager(database, new AtomicReference<>("ws-a")));
         try (var c = database.open();
              PreparedStatement ps = c.prepareStatement("""
                      SELECT c.password_enc, s.storage_state_json
@@ -92,11 +90,35 @@ class SiteCredentialManagerPersistenceTest {
                        ON s.workspace_id = c.workspace_id AND s.credential_id = c.id
                      WHERE c.workspace_id = 'ws-a' AND c.id = 'cred-1'
                      """);
-             ResultSet rs = ps.executeQuery()) {
+            ResultSet rs = ps.executeQuery()) {
             assertTrue(rs.next());
-            assertEncryptedWithout(rs.getString(1), "legacy-password");
-            assertEncryptedWithout(rs.getString(2), "legacy-cookie");
+            assertEquals("plaintext-password", rs.getString(1));
+            assertTrue(rs.getString(2).contains("plaintext-cookie"));
         }
+    }
+
+    @Test
+    void plaintextSessionIsRejectedOnRead(@TempDir Path dir) throws Exception {
+        DatabaseAccess database = new FileDatabaseAccess(dir);
+        try (var c = database.open()) {
+            try (PreparedStatement credential = c.prepareStatement("""
+                    INSERT INTO site_credentials(
+                        workspace_id, id, name, host_pattern, username, password_enc,
+                        created_at, last_used_at, has_session)
+                    VALUES ('ws-a', 'cred-1', '站点', 'example.com', 'tester', ?, 1, 0, TRUE)
+                    """)) {
+                credential.setString(1, encrypt("password"));
+                credential.executeUpdate();
+            }
+            try (PreparedStatement session = c.prepareStatement("""
+                    INSERT INTO site_sessions(workspace_id, credential_id, storage_state_json)
+                    VALUES ('ws-a', 'cred-1', '{"cookies":[]}')
+                    """)) {
+                session.executeUpdate();
+            }
+        }
+        SiteCredentialManager manager = manager(database, new AtomicReference<>("ws-a"));
+        assertThrows(IllegalStateException.class, () -> manager.readSession("cred-1"));
     }
 
     @Test

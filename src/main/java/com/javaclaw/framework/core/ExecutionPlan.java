@@ -44,6 +44,32 @@ public final class ExecutionPlan implements AutoCloseable {
     public List<PromptContributor> promptContributors() { return values(contributions.promptContributors()); }
     public List<ContextProvider> contextProviders() { return values(contributions.contextProviders()); }
     public List<RetrieverContribution> retrievers() { return values(contributions.retrievers()); }
+    public List<DeferredContextSource> deferredContextSources() {
+        return values(contributions.deferredContextSources());
+    }
+    /** 固定来源仅按此计划冻结的 ID 暴露，旧计划不接入新来源。 */
+    public List<FixedContextSource> fixedContextSources() {
+        java.util.Map<String, FixedContextSource> available = contributions.fixedContextSources()
+                .stream().map(com.javaclaw.framework.extension.OwnedContribution::value)
+                .collect(java.util.stream.Collectors.toMap(FixedContextSource::id,
+                        java.util.function.Function.identity()));
+        return descriptor.fixedContextSourceIds().stream().map(id -> {
+            FixedContextSource source = available.get(id);
+            if (source == null) {
+                throw new IllegalStateException("locked fixed context source is unavailable: " + id);
+            }
+            return source;
+        }).toList();
+    }
+    public List<TurnPreparation> turnPreparations() {
+        return values(contributions.turnPreparations());
+    }
+    public List<PromptContributor> fixedPromptContributors() {
+        return promptContributors().stream()
+                .filter(value -> value instanceof OnDemandClassified classified
+                        && classified.classification() == OnDemandClassified.Classification.FIXED)
+                .toList();
+    }
     public List<AdvisorSpecFactory> advisorFactories() { return values(contributions.advisors()); }
     public List<OutputGuard> outputGuards() { return values(contributions.outputGuards()); }
     public List<EvaluationPolicy> evaluationPolicies() { return values(contributions.evaluationPolicies()); }

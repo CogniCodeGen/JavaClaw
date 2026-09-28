@@ -8,7 +8,7 @@ import java.util.Objects;
 
 /** Explicit graph identity. Content categories never substitute for an ownership boundary. */
 public record MemoryGraphScope(String workspaceId, String userId, String threadId, Kind kind) {
-    public enum Kind { WORKSPACE_HABITS, THREAD, LEGACY }
+    public enum Kind { WORKSPACE_HABITS, THREAD }
 
     public MemoryGraphScope {
         workspaceId = required(workspaceId, "workspaceId");
@@ -26,7 +26,6 @@ public record MemoryGraphScope(String workspaceId, String userId, String threadI
     }
 
     public Path directory(Path workspaceMemoryRoot) {
-        if (kind == Kind.LEGACY) return workspaceMemoryRoot;
         Path user = workspaceMemoryRoot.resolve("graphs").resolve(encode(userId));
         return kind == Kind.WORKSPACE_HABITS ? user.resolve("habits")
                 : user.resolve("threads").resolve(encode(threadId));
@@ -36,7 +35,6 @@ public record MemoryGraphScope(String workspaceId, String userId, String threadI
         return switch (kind) {
             case WORKSPACE_HABITS -> "个人习惯";
             case THREAD -> "会话 · " + threadId;
-            case LEGACY -> "历史待归属（不参与召回）";
         };
     }
 

@@ -45,26 +45,15 @@ public final class GraphRun {
                     GraphDefinition definition, GraphState state, RunStatus status,
                     String currentNodeId, String nextNodeId, int stepCount, int checkpointSeq,
                     String output, String error, NodeResult.Interrupt interrupt,
-                    long createdAt, long updatedAt) {
-        this(id, workflowId, workflowVersion, threadId, definition, state, status,
-                currentNodeId, nextNodeId, stepCount, checkpointSeq, output, error, interrupt,
-                List.of(), createdAt, updatedAt);
-    }
-
-    public GraphRun(String id, String workflowId, int workflowVersion, String threadId,
-                    GraphDefinition definition, GraphState state, RunStatus status,
-                    String currentNodeId, String nextNodeId, int stepCount, int checkpointSeq,
-                    String output, String error, NodeResult.Interrupt interrupt,
                     List<ExtensionLock> extensionLocks, long createdAt, long updatedAt) {
         this.id = Objects.requireNonNull(id);
         this.workflowId = Objects.requireNonNull(workflowId);
         this.workflowVersion = workflowVersion;
         this.threadId = Objects.requireNonNull(threadId);
         this.definition = Objects.requireNonNull(definition);
-        this.extensionLocks = List.copyOf(
-                extensionLocks == null ? List.of() : extensionLocks);
-        this.state = state == null ? new GraphState() : state;
-        this.status = status == null ? RunStatus.CREATED : status;
+        this.extensionLocks = List.copyOf(Objects.requireNonNull(extensionLocks, "extensionLocks"));
+        this.state = Objects.requireNonNull(state, "state");
+        this.status = Objects.requireNonNull(status, "status");
         this.currentNodeId = currentNodeId;
         this.nextNodeId = nextNodeId;
         this.stepCount = stepCount;

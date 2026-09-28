@@ -550,7 +550,7 @@ class WorkflowControllerBehaviorTest {
         GraphDefinition graph = service.draftItem().graph();
         return new GraphRun("run-" + status, graph.id(), graph.version(), "thread", graph,
                 new GraphState(), status, null, graph.startNodeId(), 1, 1,
-                "", "", null, 1, 2);
+                "", "", null, List.of(), 1, 2);
     }
 
     private static WorkflowViewModel model(WorkflowViewController controller) {

@@ -14,22 +14,12 @@ public interface HuggingFaceModelCatalogPort {
     SearchPage search(SearchRequest request, Set<String> supportedModelTypes,
                       BooleanSupplier cancelled) throws Exception;
 
-    /**
-     * Searches while publishing immutable progress snapshots. Implementations that do not support
-     * incremental verification remain source-compatible and publish one final READY snapshot.
-     */
-    default SearchPage searchIncrementally(
+    /** Searches while publishing immutable progress snapshots. */
+    SearchPage searchIncrementally(
             SearchRequest request,
             Set<String> supportedModelTypes,
             Consumer<SearchProgress> progress,
-            BooleanSupplier cancelled) throws Exception {
-        SearchPage page = search(request, supportedModelTypes, cancelled);
-        if (progress != null) {
-            progress.accept(new SearchProgress(SearchState.READY, page.models(),
-                    page.models().size(), page.models().size(), Instant.now(), "", true, Map.of()));
-        }
-        return page;
-    }
+            BooleanSupplier cancelled) throws Exception;
 
     ModelDetail detail(String repository, Set<String> supportedModelTypes,
                        BooleanSupplier cancelled) throws Exception;
@@ -132,6 +122,18 @@ public interface HuggingFaceModelCatalogPort {
         public SearchPage search(SearchRequest request, Set<String> supportedModelTypes,
                                  BooleanSupplier cancelled) {
             return new SearchPage(List.of(), "");
+        }
+
+        @Override
+        public SearchPage searchIncrementally(
+                SearchRequest request, Set<String> supportedModelTypes,
+                Consumer<SearchProgress> progress, BooleanSupplier cancelled) {
+            SearchPage page = search(request, supportedModelTypes, cancelled);
+            if (progress != null) {
+                progress.accept(new SearchProgress(SearchState.READY, page.models(), 0, 0,
+                        Instant.now(), "", true, Map.of()));
+            }
+            return page;
         }
 
         @Override

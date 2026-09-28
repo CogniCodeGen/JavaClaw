@@ -761,7 +761,7 @@
 
 /* ==================== 处理进度面板 · 设计稿状态卡片 ==================== */
 
-/* 顶部卡片：tag + elapsed + 阶段 pill + 三联指标 */
+/* 顶部卡片：当前状态、耗时与用量 */
 .tp-status-card {
     -fx-background-color: -jc-surface-panel;
     -fx-border-color: -jc-neutral-200;
@@ -810,40 +810,6 @@
     -fx-text-fill: -jc-neutral-400;
 }
 
-/* 阶段 pill（● 思考 · ● 规划 · ● 执行 · ● 回复） */
-.tp-stage-pill {
-    -fx-background-radius: 999;
-    -fx-padding: 2 8 2 8;
-    -fx-font-size: 10.5px;
-    -fx-font-weight: 500;
-}
-
-.tp-stage-pill-thinking {
-    -fx-background-color: rgba(107,124,199,0.12);
-}
-.tp-stage-pill-planning {
-    -fx-background-color: rgba(212,154,71,0.12);
-}
-.tp-stage-pill-executing {
-    -fx-background-color: rgba(47,161,124,0.12);
-}
-.tp-stage-pill-replying {
-    -fx-background-color: rgba(75,135,168,0.12);
-}
-
-.tp-stage-pill-dot {
-    -fx-font-size: 9px;
-}
-
-.tp-stage-pill-text {
-    -fx-font-size: 10.5px;
-}
-
-.tp-stage-pill-thinking .tp-stage-pill-text { -fx-text-fill: #6B7CC7; }
-.tp-stage-pill-planning .tp-stage-pill-text { -fx-text-fill: #D49A47; }
-.tp-stage-pill-executing .tp-stage-pill-text { -fx-text-fill: #2FA17C; }
-.tp-stage-pill-replying .tp-stage-pill-text { -fx-text-fill: #4B87A8; }
-
 /* 指标三联（TOKENS IN / TOKENS OUT / 费用） */
 .tp-metrics {
     -fx-border-color: -jc-neutral-200 transparent transparent transparent;
@@ -865,7 +831,7 @@
     -fx-text-fill: -jc-neutral-800;
 }
 
-/* 工具调用 mono 行（⚡ name · input · status） */
+/* 工具调用摘要（⚡ 名称 · 状态） */
 .tp-tool-row {
     -fx-background-color: -jc-surface-card;
     -fx-border-color: -jc-neutral-200;
@@ -884,12 +850,6 @@
     -fx-font-size: 11.5px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-neutral-800;
-}
-
-.tp-tool-input {
-    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
-    -fx-font-size: 11px;
-    -fx-text-fill: -jc-neutral-400;
 }
 
 .tp-tool-status {
@@ -926,6 +886,7 @@
 .tp-pipeline-dot-running { -fx-text-fill: #D49A47; }
 .tp-pipeline-dot-done    { -fx-text-fill: #2FA17C; }
 .tp-pipeline-dot-skipped { -fx-text-fill: -jc-neutral-400; }
+.tp-pipeline-dot-stopped { -fx-text-fill: -jc-neutral-500; }
 .tp-pipeline-dot-error   { -fx-text-fill: #EF4444; }
 
 .tp-pipeline-name {
@@ -946,12 +907,31 @@
 .tp-pipeline-status-running { -fx-text-fill: #B97818; -fx-background-color: #FBEBD0; }
 .tp-pipeline-status-done    { -fx-text-fill: #1E7A5C; -fx-background-color: #D9F1E5; }
 .tp-pipeline-status-skipped { -fx-text-fill: -jc-neutral-600; -fx-background-color: -jc-neutral-200; }
+.tp-pipeline-status-stopped { -fx-text-fill: -jc-neutral-600; -fx-background-color: -jc-neutral-200; }
 .tp-pipeline-status-error   { -fx-text-fill: #B71C1C; -fx-background-color: #FBD9D9; }
+
+.tp-tool-status-waiting { -fx-text-fill: #B97818; }
 
 .tp-pipeline-detail {
     -fx-font-size: 11px;
     -fx-text-fill: -jc-neutral-600;
     -fx-padding: 0 0 0 14;
+}
+
+.tp-detail-text {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-neutral-700;
+    -fx-line-spacing: 3px;
+}
+
+.tp-detail-toggle {
+    -fx-font-size: 10px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-primary-500;
+}
+
+.tp-detail-toggle:hover {
+    -fx-text-fill: -jc-primary-700;
 }
 
 /* ==================== 底部组合框（键盘提示） ==================== */
@@ -1620,24 +1600,6 @@
 .chat-top-help-btn:hover {
     -fx-background-color: -jc-neutral-200;
     -fx-text-fill: -jc-neutral-700;
-}
-
-/* ==================== 标题栏（保留兼容） ==================== */
-
-.title-bar {
-    -fx-background-color: #15130E;
-    -fx-padding: 12 18 12 18;
-}
-
-.title-label {
-    -fx-text-fill: white;
-    -fx-font-size: 18px;
-    -fx-font-weight: bold;
-}
-
-.subtitle-label {
-    -fx-text-fill: #706B5F;
-    -fx-font-size: 11px;
 }
 
 .settings-button {
@@ -3022,27 +2984,6 @@
     -fx-background-color: -jc-primary-300;
 }
 
-/* 状态指示条 */
-.thinking-panel-status-bar {
-    -fx-background-color: -jc-surface-card;
-    -fx-background-radius: 12;
-    -fx-padding: 8 12 8 12;
-    -fx-border-color: -jc-neutral-200;
-    -fx-border-radius: 12;
-    -fx-border-width: 1;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.03), 4, 0, 0, 1);
-}
-
-.thinking-panel-status-dot {
-    -fx-font-size: 8px;
-}
-
-.thinking-panel-status-text {
-    -fx-text-fill: -jc-neutral-500;
-    -fx-font-size: 12px;
-    -fx-font-weight: 500;
-}
-
 /* 状态颜色 */
 .status-thinking {
     -fx-text-fill: -jc-accent-500;
@@ -3064,34 +3005,6 @@
     -fx-text-fill: -jc-neutral-300;
 }
 
-/* 状态图例 */
-.tp-status-legend {
-    -fx-padding: 2 10 6 10;
-}
-
-.tp-legend-dot {
-    -fx-font-size: 8px;
-}
-
-.tp-legend-text {
-    -fx-text-fill: -jc-neutral-400;
-    -fx-font-size: 10px;
-}
-
-/* 可折叠 section 头部 */
-.tp-collapsible-header {
-    -fx-padding: 2 0 2 0;
-}
-
-.tp-collapsible-header:hover {
-    -fx-opacity: 0.8;
-}
-
-.tp-collapse-arrow {
-    -fx-text-fill: -jc-neutral-400;
-    -fx-font-size: 10px;
-}
-
 /* 空状态提示 */
 .thinking-panel-empty-hint {
     -fx-text-fill: -jc-neutral-400;
@@ -3109,34 +3022,6 @@
     -fx-padding: 0 0 2 0;
 }
 
-/* 思考区域 */
-.tp-thinking-section {
-    -fx-background-color: -jc-thinking-bg;
-    -fx-background-radius: 12;
-    -fx-border-color: -jc-primary-100;
-    -fx-border-radius: 12;
-    -fx-border-width: 1;
-}
-
-.tp-thinking-text {
-    -fx-fill: -jc-primary-700;
-    -fx-font-size: 11px;
-}
-
-/* 规划区域 */
-.tp-plan-section {
-    -fx-background-color: -jc-primary-50;
-    -fx-background-radius: 12;
-    -fx-border-color: -jc-primary-200;
-    -fx-border-radius: 12;
-    -fx-border-width: 1;
-}
-
-.tp-plan-text {
-    -fx-fill: -jc-neutral-800;
-    -fx-font-size: 11px;
-}
-
 /* 智能体执行区域 */
 .tp-agents-section {
     -fx-background-color: -jc-surface-card;
@@ -3145,6 +3030,15 @@
     -fx-border-radius: 12;
     -fx-border-width: 1;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.03), 4, 0, 0, 1);
+}
+
+.tp-thinking-section,
+.tp-plan-section {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
 }
 
 /* 子智能体卡片 */
@@ -3175,15 +3069,12 @@
     -fx-text-fill: #10B981;
 }
 
-.tp-agent-thinking-text {
-    -fx-fill: -jc-neutral-500;
-    -fx-font-size: 10px;
+.agent-status-stopped {
+    -fx-text-fill: -jc-neutral-500;
 }
 
-.tp-agent-result-brief {
-    -fx-text-fill: -jc-neutral-400;
-    -fx-font-size: 10px;
-    -fx-padding: 2 0 0 0;
+.agent-status-failed {
+    -fx-text-fill: #EF4444;
 }
 
 /* ==================== 统一弹窗样式 ==================== */
@@ -4383,15 +4274,10 @@
     -fx-font-size: 11px;
 }
 
-/* 回复气泡内「生成中」占位（首个 chunk 前显示） */
+/* 回复气泡内的生成动画，完成前保持为紧凑的三点提示。 */
 .gen-placeholder-dot {
     -fx-text-fill: -jc-primary-400;
-    -fx-font-size: 8px;
-}
-
-.gen-placeholder-text {
-    -fx-text-fill: -jc-neutral-400;
-    -fx-font-size: 12.5px;
+    -fx-font-size: 10px;
 }
 
 /* ==================== 任务管理 ==================== */

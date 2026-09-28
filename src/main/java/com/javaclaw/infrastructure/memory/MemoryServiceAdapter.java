@@ -87,38 +87,28 @@ public final class MemoryServiceAdapter implements MemoryPort {
         return new MemoryServiceAdapter(memory.inScope(scope), knowledge, files);
     }
 
-    private void requireWritable() {
-        if (scope() != null && scope().kind() == com.javaclaw.memory.MemoryGraphScope.Kind.LEGACY) {
-            throw new IllegalStateException("历史待归属记忆为只读，不参与自动召回");
-        }
-    }
-
     @Override public String probeEmbedding() { return memory.probeEmbedding(); }
-    @Override public int promoteAllPending() { requireWritable(); return memory.promoteAllPending(); }
+    @Override public int promoteAllPending() { return memory.promoteAllPending(); }
     @Override public MemoryGraph graph() { return memory.graph(); }
-    @Override public void addFact(String section, String text) { requireWritable(); memory.addFact(section, text); }
+    @Override public void addFact(String section, String text) { memory.addFact(section, text); }
 
     @Override
     public void editFact(String id, String text) {
-        requireWritable();
         memory.editFact(requireFact(id), text);
     }
 
     @Override
     public void toggleFactPin(String id) {
-        requireWritable();
         memory.togglePin(requireFact(id));
     }
 
     @Override
     public void restoreFact(String id) {
-        requireWritable();
         memory.restoreFact(requireFact(id));
     }
 
     @Override
     public int deleteFacts(List<String> ids) {
-        requireWritable();
         int removed = 0;
         for (String id : ids) {
             memory.deleteFact(requireFact(id));
@@ -127,12 +117,11 @@ public final class MemoryServiceAdapter implements MemoryPort {
         return removed;
     }
 
-    @Override public int reindexDocument(String name) { requireWritable(); return knowledge.reindexDocument(name); }
-    @Override public int deleteDocument(String name) { requireWritable(); return knowledge.deleteDocument(name); }
+    @Override public int reindexDocument(String name) { return knowledge.reindexDocument(name); }
+    @Override public int deleteDocument(String name) { return knowledge.deleteDocument(name); }
 
     @Override
     public void savePersona(PersonaDraft persona) {
-        requireWritable();
         memory.setPersonaStructured(persona.identity(), persona.tone(),
                 persona.preferences(), persona.taboos());
     }
@@ -154,13 +143,11 @@ public final class MemoryServiceAdapter implements MemoryPort {
 
     @Override
     public void revokeCorrection(String id) {
-        requireWritable();
         memory.revokeCorrection(requireCorrection(id));
     }
 
     @Override
     public void deleteCorrection(String id) {
-        requireWritable();
         memory.deleteCorrection(requireCorrection(id));
     }
 

@@ -3,7 +3,7 @@ package com.javaclaw.platform.data;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-/** Additive, restartable schema for task identities, ordered journals and projections. */
+/** Schema for task identities, ordered journals and projections. */
 final class ThreadSchema {
     private ThreadSchema() { }
     static void initialize(Statement st) throws SQLException {
@@ -41,7 +41,6 @@ final class ThreadSchema {
                     mutation_id VARCHAR(256) NOT NULL,event_sequence BIGINT NOT NULL,
                     PRIMARY KEY(workspace_id,user_id,thread_id,mutation_id))
                 """);
-        st.execute("DROP INDEX IF EXISTS idx_agent_runs_idempotency");
         st.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_turns_idempotency ON agent_runs"
                 + "(workspace_id,user_id,session_id,idempotency_key)");
         st.execute("CREATE INDEX IF NOT EXISTS idx_agent_turns_thread ON agent_runs"

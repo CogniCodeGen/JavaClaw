@@ -40,7 +40,7 @@ public class CommandLineTools {
 
     private static final Logger log = LoggerFactory.getLogger(CommandLineTools.class);
 
-    /** 调用来源令牌（装配期绑定）：托管任务来源走统一确认路径（白名单/目录放行），其余走本地白名单机制。 */
+    /** 调用来源令牌（装配期绑定）：托管任务来源走统一确认路径（任务白名单/只读命令），其余走本地白名单机制。 */
     private final ToolCallOrigin origin;
     private final AgentConfig settings;
     private final CommandWhitelistManager whitelist;
@@ -536,7 +536,7 @@ public class CommandLineTools {
             }
             // 高风险命令走人工底线入口（AUTO 总闸不生效）：托管任务恰是模型自发破坏性命令
             // 最可能出现的半无人值守路径，这道底线不能只护交互来源；漏斗其余环节
-            // （任务白名单/只读直放/目录范围评估）照常生效。
+            // （任务白名单/只读直放）照常生效。
             // 其余命令保持统一路径（AUTO 放行是用户对注册表工具可预期的授权）
             boolean confirmed = highRisk
                     ? ToolConfirmationManager.requestHighRiskCommandConfirmation(

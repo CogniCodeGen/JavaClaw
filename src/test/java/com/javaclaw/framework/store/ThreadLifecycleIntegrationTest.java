@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.framework.api.*;
 import com.javaclaw.framework.core.*;
 import com.javaclaw.framework.spi.*;
-import com.javaclaw.infrastructure.agent.LegacyThreadImporter;
 import com.javaclaw.platform.data.SchemaInitializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -82,21 +81,6 @@ class ThreadLifecycleIntegrationTest {
         f.client.resume(a);
         f.complete(a, "new", "resumed", null);
         assertEquals(2, f.client.turns(a).size());
-    }
-
-    @Test void legacyChatImportIsRestartableAndDoesNotInventSteps() {
-        Fixture f = new Fixture(directory);
-        f.jdbc.update("INSERT INTO chat_sessions(workspace_id,id,title,created_at) VALUES('w','old','old','2026-01-01 00:00:00')");
-        f.jdbc.update("INSERT INTO chat_messages(workspace_id,session_id,position,role,content,timestamp,adopted) VALUES('w','old',0,'USER','old question','2026-01-01 00:00:00',FALSE)");
-        f.jdbc.update("INSERT INTO chat_messages(workspace_id,session_id,position,role,content,timestamp,adopted) VALUES('w','old',1,'ASSISTANT','old answer','2026-01-01 00:01:00',FALSE)");
-        var importer = new LegacyThreadImporter(f.jdbc, f.tx, f.json, f.runs);
-        importer.migrate(); importer.migrate();
-        var turns = f.client.turns(new RunScope("w", "local-user", "old"));
-        assertEquals(1, turns.size());
-        assertEquals("old answer", turns.getFirst().output().path("text").asText());
-        assertTrue(new RunStepQuery(f.runs).steps(turns.getFirst().id()).isEmpty());
-        assertTrue(f.runs.find(turns.getFirst().id()).orElseThrow().request().attributes()
-                .get("framework.legacyStepHistoryUnavailable").asBoolean());
     }
 
     @Test void graphMutationsAreIdempotentAndForkHonorsTheChosenEventCutoff() {

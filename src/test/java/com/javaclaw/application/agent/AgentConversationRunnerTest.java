@@ -318,17 +318,6 @@ class AgentConversationRunnerTest {
         assertEquals("255392", budgetFailure.actual());
         assertEquals("250000", budgetFailure.limit());
 
-        TestRunHandle legacyBudget = agents.enqueue("failed-legacy-budget");
-        RecordingCallbacks legacyBudgetCallbacks = new RecordingCallbacks();
-        runner.start(request("failed-legacy-budget"), ToolCallOrigin.UNKNOWN,
-                legacyBudgetCallbacks);
-        legacyBudget.complete(RunState.FAILED,
-                "com.javaclaw.framework.core.BudgetExceededException: "
-                        + "model usage budget exceeded");
-        assertInstanceOf(BudgetExceededException.class,
-                assertInstanceOf(ConversationOutcome.Failed.class,
-                        legacyBudgetCallbacks.outcomes.getFirst()).error());
-
         IllegalStateException root = new IllegalStateException("root cause");
         TestRunHandle completionWrapped = agents.enqueue("completion-wrapped");
         RecordingCallbacks completionCallbacks = new RecordingCallbacks();

@@ -244,7 +244,7 @@ public class PlaywrightBrowserManager {
         if (currentHeadless) {
             String state = context.storageState();
             String interactionBaseline = userInteractionBaselineState;
-            closeBrowserResources(false);
+            closeBrowserResources();
             try {
                 launch(false, new ScopeSnapshot(state, transientPersistenceBaseline));
                 userInteractionBaselineState = interactionBaseline;
@@ -295,7 +295,7 @@ public class PlaywrightBrowserManager {
             return visiblePage;
         }
 
-        closeBrowserResources(false);
+        closeBrowserResources();
         launch(true, new ScopeSnapshot(state, transientPersistenceBaseline));
         Page page = getActivePage();
         if (page != null && returnUrl != null && !returnUrl.isBlank()
@@ -459,16 +459,6 @@ public class PlaywrightBrowserManager {
         if (context == null) return;
         context.clearCookies();
         log.info("已清除所有 Cookie");
-    }
-
-    /**
-     * 兼容生命周期调用点，不持久化工作区级浏览器认证态。
-     *
-     * <p>登录持久化只能通过 {@code SiteCredentialManager.tryWriteSession(...)} 写入具体
-     * 账号配置；当前 Context 永远不会成为整个工作区的隐式默认账号。</p>
-     */
-    public synchronized void saveCookies() {
-        // 3.0 格式从空 schema 启动，不读取也不写入旧版工作区级认证态。
     }
 
     // ==================== 视口与配置 ====================
@@ -719,7 +709,7 @@ public class PlaywrightBrowserManager {
      * 只有明确绑定的站点账号可从 site_sessions 恢复。</p>
      */
     public synchronized void rebindWorkspace(Path newBrowserDir, Path newScreenshotDir) {
-        closeBrowserResources(false);
+        closeBrowserResources();
         scopeSnapshots.clear();
         activeScopeId = DEFAULT_SCOPE_ID;
         requestedScopeId = DEFAULT_SCOPE_ID;
@@ -748,7 +738,7 @@ public class PlaywrightBrowserManager {
         if (transientPersistenceBaseline != null) {
             String baseline = transientPersistenceBaseline;
             transientPersistenceBaseline = null;
-            closeBrowserResources(false);
+            closeBrowserResources();
             launch(headless, new ScopeSnapshot(baseline, null));
         }
 
@@ -772,9 +762,6 @@ public class PlaywrightBrowserManager {
             }
         }
 
-        // 只清除旧版全局认证态；站点账号状态由 site_sessions 独立持久化
-        saveCookies();
-
         log.info("浏览器状态已重置");
     }
 
@@ -784,7 +771,7 @@ public class PlaywrightBrowserManager {
     public synchronized void shutdown() {
         log.info("正在关闭 Playwright 浏览器...");
 
-        closeBrowserResources(true);
+        closeBrowserResources();
         scopeSnapshots.clear();
         activeScopeId = DEFAULT_SCOPE_ID;
         requestedScopeId = DEFAULT_SCOPE_ID;
@@ -793,11 +780,7 @@ public class PlaywrightBrowserManager {
     }
 
     /** 释放当前 Playwright 对象；工作区切换时可禁止把旧上下文保存到新的 workspace id。 */
-    private void closeBrowserResources(boolean saveState) {
-
-        // 保存 Cookie
-        if (saveState) saveCookies();
-
+    private void closeBrowserResources() {
         closeCurrentContext();
 
         // 关闭浏览器

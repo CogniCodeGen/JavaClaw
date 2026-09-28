@@ -23,13 +23,13 @@ class OnboardingUseCaseTest {
         FakeSettings settings = new FakeSettings();
         OnboardingUseCase useCase = new OnboardingUseCase(settings, uri -> 401);
 
-        assertEquals("DashScope", useCase.providers().getFirst().id());
+        assertEquals("dashscope", useCase.providers().getFirst().id());
         assertThrows(UnsupportedOperationException.class, () -> useCase.providers().clear());
 
         ProviderSetup saved = useCase.save(new ProviderSetupCommand(
-                "OpenAI", " https://example.com/v1 ", " model-a ", " secret "));
+                "openai", " https://example.com/v1 ", " model-a ", " secret "));
 
-        assertEquals("OpenAI", saved.provider().id());
+        assertEquals("openai", saved.provider().id());
         assertEquals("https://example.com/v1", saved.baseUrl());
         assertEquals("model-a", saved.modelName());
         assertEquals(saved, settings.setup);

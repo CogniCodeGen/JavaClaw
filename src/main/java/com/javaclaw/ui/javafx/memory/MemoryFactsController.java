@@ -84,7 +84,7 @@ public final class MemoryFactsController
         selected.clear(); expandedGroups.clear(); batchMode = false;
     }
     @Override public boolean readOnly() {
-        return useCases.scope() != null && useCases.scope().kind() == com.javaclaw.memory.MemoryGraphScope.Kind.LEGACY;
+        return false;
     }
     @Override public boolean isBusy() { return action.busyProperty().get(); }
 

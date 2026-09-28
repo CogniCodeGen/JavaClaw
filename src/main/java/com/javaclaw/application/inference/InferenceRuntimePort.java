@@ -20,7 +20,7 @@ public interface InferenceRuntimePort {
     ProfileProbeResult probeDraft(ProfileProbeCommand command, BooleanSupplier cancelled) throws Exception;
     List<String> recentLogs(java.util.UUID profileId, int maxLines);
 
-    /** 默认从签名 manifest 读取；具体运行时可为旧版 manifest 提供受控兼容映射。 */
+    /** Reads the supported model types declared by the verified runtime manifest. */
     default Set<String> supportedModelTypes(
             InferenceRuntimeManifest manifest, InferenceModelProfile.Kind kind) {
         return manifest == null ? Set.of() : manifest.supportedModelTypes(kind);

@@ -100,7 +100,7 @@ class MemoryFxmlLoadTest {
     }
 
     @Test
-    void scopeSelectorSeparatesEmptyThreadAndReadOnlyLegacyFromPersonalHabits() throws Exception {
+    void scopeSelectorSeparatesEmptyThreadFromPersonalHabits() throws Exception {
         openReady();
         runFx(() -> selector().setValue(FakeService.THREAD));
         awaitFx(() -> text("scaleMain").equals("0 事实 · 0 情景") && !loading());
@@ -110,17 +110,6 @@ class MemoryFxmlLoadTest {
         assertEquals(0, callFx(() -> section(MemoryFactsController.class, "facts").renderedGroupCount()));
         runFx(() -> button("graphButton").fire());
         awaitFx(() -> section(MemoryGraphController.class, "graph").statusText().contains("0 个节点"));
-        runFx(() -> selector().setValue(FakeService.LEGACY));
-        awaitFx(() -> text("scaleMain").equals("1 事实 · 1 情景") && !loading());
-        assertFalse(callFx(() -> button("refillButton").isVisible()), "旧混库不能通过回填成为自动召回图谱");
-        runFx(() -> button("factsButton").fire());
-        assertTrue(callFx(() -> button("addButton").isDisabled()));
-        assertTrue(callFx(() -> button("batchButton").isDisabled()));
-        assertTrue(callFx(() -> button("pinButton").isDisabled()));
-        runFx(() -> button("correctionsButton").fire());
-        assertEquals(1, callFx(() -> section(MemoryCorrectionsController.class, "corrections").renderedCorrectionCount()));
-        assertTrue(callFx(() -> button("revokeButton").isDisabled()));
-        assertTrue(callFx(() -> button("deleteButton").isDisabled()));
         runFx(() -> selector().setValue(FakeService.HABITS));
         awaitFx(() -> !loading());
         assertFalse(callFx(() -> button("personaButton").isDisabled()));
@@ -408,7 +397,6 @@ class MemoryFxmlLoadTest {
     private static final class FakeService implements MemoryApplicationService {
         private static final MemoryGraphScope HABITS = new MemoryGraphScope("workspace", "user", "", MemoryGraphScope.Kind.WORKSPACE_HABITS);
         private static final MemoryGraphScope THREAD = new MemoryGraphScope("workspace", "user", "thread", MemoryGraphScope.Kind.THREAD);
-        private static final MemoryGraphScope LEGACY = new MemoryGraphScope("workspace", "user", "", MemoryGraphScope.Kind.LEGACY);
         private volatile Snapshot snapshot;
         private final MemoryGraphScope scope;
         private final java.util.Map<MemoryGraphScope, FakeService> views;
@@ -420,9 +408,6 @@ class MemoryFxmlLoadTest {
             this(HABITS, sampleSnapshot(), new java.util.LinkedHashMap<>());
             views.put(HABITS, this);
             views.put(THREAD, new FakeService(THREAD, new Snapshot(null, null, null, null, null, null, null, null, null), views));
-            Snapshot sample = sampleSnapshot();
-            views.put(LEGACY, new FakeService(LEGACY, new Snapshot(sample.statistics(), sample.facts(), sample.episodes(),
-                    sample.entities(), sample.documents(), sample.persona(), sample.corrections(), sample.changes(), new EmbeddingState("", 2)), views));
         }
         FakeService(MemoryGraphScope scope, Snapshot snapshot, java.util.Map<MemoryGraphScope, FakeService> views) {
             this.scope = scope; this.snapshot = snapshot; this.views = views;

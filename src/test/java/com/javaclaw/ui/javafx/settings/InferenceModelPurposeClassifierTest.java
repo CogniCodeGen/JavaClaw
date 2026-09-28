@@ -62,6 +62,7 @@ class InferenceModelPurposeClassifierTest {
     private static InferenceModelAsset model(String type, String hashPrefix) {
         return new InferenceModelAsset(UUID.randomUUID(), InferenceModelAsset.Source.LOCAL_DIRECTORY,
                 type, type, hashPrefix.repeat(64), "/tmp/" + type, "", "", List.of(), 1,
-                InferenceModelAsset.State.READY, "", Instant.now());
+                InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(1));
     }
 }

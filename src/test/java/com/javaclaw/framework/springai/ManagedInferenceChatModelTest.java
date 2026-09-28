@@ -6,11 +6,15 @@ import com.javaclaw.inference.api.InferenceChatResponse;
 import com.javaclaw.inference.api.InferenceEmbeddingRequest;
 import com.javaclaw.inference.api.InferenceEmbeddingResponse;
 import com.javaclaw.inference.api.InferenceStreamEvent;
+import com.javaclaw.inference.api.InferenceToolChoice;
 import com.javaclaw.inference.api.InferenceUsage;
 import com.javaclaw.inference.api.LocalInferenceGateway;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,8 +31,51 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ManagedInferenceChatModelTest {
 
     @Test
+    void toolChoiceMatchesAvailableCallbacks() {
+        AtomicReference<InferenceChatRequest> sent = new AtomicReference<>();
+        LocalInferenceGateway gateway = new LocalInferenceGateway() {
+            @Override public InferenceChatResponse chat(InferenceChatRequest request) {
+                sent.set(request);
+                return response(request.requestId());
+            }
+            @Override public StreamSession streamChat(
+                    InferenceChatRequest request, Consumer<InferenceStreamEvent> events) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public InferenceEmbeddingResponse embeddings(InferenceEmbeddingRequest request) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public boolean cancel(String requestId) { return false; }
+        };
+        var model = new ManagedInferenceChatModel(gateway, UUID.randomUUID(), false,
+                Duration.ofSeconds(5), new ObjectMapper());
+        UserMessage message = new UserMessage("hello");
+
+        model.call(new Prompt(message));
+        assertEquals(List.of(), sent.get().tools());
+        assertEquals(InferenceToolChoice.none(), sent.get().toolChoice());
+
+        model.call(new Prompt(List.of(message), ToolCallingChatOptions.builder().build()));
+        assertEquals(List.of(), sent.get().tools());
+        assertEquals(InferenceToolChoice.none(), sent.get().toolChoice());
+
+        ToolCallback callback = new ToolCallback() {
+            @Override public ToolDefinition getToolDefinition() {
+                return ToolDefinition.builder().name("web_content")
+                        .description("Read a page").inputSchema("{}").build();
+            }
+            @Override public String call(String input) { return "{}"; }
+        };
+        model.call(new Prompt(List.of(message), ToolCallingChatOptions.builder()
+                .toolCallbacks(List.of(callback)).build()));
+        assertEquals(List.of("web_content"), sent.get().tools().stream().map(tool -> tool.name()).toList());
+        assertEquals(InferenceToolChoice.auto(), sent.get().toolChoice());
+    }
+
+    @Test
     void successfulStreamCompletionDoesNotCancelTheFinishedPluginRequest() {
         AtomicInteger cancellations = new AtomicInteger();
+        AtomicReference<InferenceChatRequest> sent = new AtomicReference<>();
         LocalInferenceGateway gateway = new LocalInferenceGateway() {
             @Override public InferenceChatResponse chat(InferenceChatRequest request) {
                 return response(request.requestId());
@@ -36,6 +84,7 @@ class ManagedInferenceChatModelTest {
             @Override
             public StreamSession streamChat(
                     InferenceChatRequest request, Consumer<InferenceStreamEvent> events) {
+                sent.set(request);
                 InferenceChatResponse response = response(request.requestId());
                 events.accept(new InferenceStreamEvent(request.requestId(),
                         InferenceStreamEvent.Type.CONTENT_DELTA, "ok", List.of(), null,
@@ -66,6 +115,7 @@ class ManagedInferenceChatModelTest {
         var chunks = model.stream(new Prompt(new UserMessage("hello"))).collectList().block();
 
         assertEquals(2, chunks == null ? 0 : chunks.size());
+        assertEquals(InferenceToolChoice.none(), sent.get().toolChoice());
         assertEquals(0, cancellations.get(), "正常完成不能被 onDispose 误判成客户端取消");
     }
 

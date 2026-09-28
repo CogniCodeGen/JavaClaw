@@ -6,6 +6,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.framework.api.*;
 import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.framework.spi.ThreadJournal;
+import com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter;
 import com.javaclaw.infrastructure.memory.ThreadMemoryProjectionAdapter;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
 import com.javaclaw.memory.model.*;
@@ -110,53 +111,6 @@ class MemoryGraphJournalTest {
         }
     }
 
-    @Test void migrationHidesAssignedOriginalsPermanentlyAfterThreadDeletion() {
-        Path path = temporary.resolve("legacy");
-        try (var fixture = fixture(path, false)) {
-            MemoryService old = fixture.memory;
-            old.setPersona("个人旧人格", "user");
-            var episode = new Episode("known", "迁移会话的原始问题", "迁移会话的原始回复");
-            old.store().addPendingEpisode(episode, "test");
-            Fact assigned = new Fact("项目", "明确归属的历史事实", null);
-            assigned.source = episode;
-            old.store().addPendingFact(assigned, "test");
-            var correction = new CorrectionRecord();
-            correction.type = CorrectionRecord.Type.FACT_REPLACEMENT;
-            correction.scope = CorrectionRecord.Scope.PROJECT;
-            correction.status = CorrectionRecord.Status.ACTIVE;
-            correction.targetFactId = assigned.id;
-            correction.sourceInput = "迁移会话的私密纠错原文";
-            old.store().addCorrection(correction, "test");
-            old.store().addPendingFact(new Fact("其它", "没有来源的待归属事实", null), "test");
-            Fact habit = new Fact("习惯", "旧库归纳的稳定习惯", null);
-            habit.sourceKind = "HABIT_REVIEW";
-            old.store().addPendingFact(habit, "test");
-        }
-        try (var fixture = fixture(path, true)) {
-            assertEquals(3, fixture.memory.migrateLegacy(json, "known"::equals));
-            assertEquals(0, fixture.memory.migrateLegacy(json, "known"::equals));
-            assertEquals("个人旧人格", fixture.memory.getPersona().content);
-            assertEquals(1, fixture.memory.facts().size());
-            MemoryGraphScope legacy = new MemoryGraphScope("workspace", "local-user", "", MemoryGraphScope.Kind.LEGACY);
-            MemoryService quarantined = fixture.memory.inScope(legacy);
-            assertEquals(List.of("没有来源的待归属事实"), quarantined.facts().stream().map(f -> f.text).toList());
-            assertTrue(quarantined.episodes().isEmpty());
-            assertTrue(quarantined.corrections().isEmpty());
-            assertFalse(quarantined.graph().nodes().stream().anyMatch(n -> n.detail().contains("迁移会话")));
-            fixture.memory.deleteThread(scope("known"));
-            assertTrue(quarantined.episodes().isEmpty());
-            assertFalse(quarantined.recentChangeLog(500).stream().anyMatch(log -> log.detail.contains("迁移会话")));
-        }
-        try (var fixture = fixture(path, true)) {
-            MemoryGraphScope legacy = new MemoryGraphScope("workspace", "local-user", "", MemoryGraphScope.Kind.LEGACY);
-            assertTrue(fixture.memory.inScope(legacy).episodes().isEmpty());
-            assertEquals(1, fixture.memory.inScope(legacy).facts().size());
-            assertTrue(fixture.memory.inScope(legacy).corrections().isEmpty());
-            assertFalse(fixture.memory.inScope(legacy).recentChangeLog(500).stream()
-                    .anyMatch(log -> log.detail.contains("私密纠错原文")));
-        }
-    }
-
     @Test void missingGraphRestoresFromJournalAndDeletedThreadNeverRecreatesFiles() throws Exception {
         Path path = temporary.resolve("lost-graph");
         List<ThreadEvent> history = new ArrayList<>();
@@ -201,6 +155,8 @@ class MemoryGraphJournalTest {
             episode.sourceEventSequence = 2;
             episode.distilled = true;
             source.store().addPendingEpisode(episode, "test");
+            Fact fact = new Fact("约定", "原始事实", new float[]{1, 0, 0, 0});
+            source.store().addFact(fact, "test");
             var serialized = json.valueToTree(com.javaclaw.memory.graph.MemoryGraphSnapshot.capture(source.store(), 1));
             RunRequest request = RunRequest.builder().agent(AgentDefinitionRef.latest("test"))
                     .profile(RunProfileRef.latest("chat")).source(InvocationSource.chat())
@@ -222,6 +178,21 @@ class MemoryGraphJournalTest {
             assertEquals("new-run", copied.ownerRunId);
             assertEquals("original:old-run", copied.evidenceKey());
             assertEquals("copied", copied.sessionId);
+            assertEquals(MemoryContextBody.digest(MemoryContextBody.episode(copied)),
+                    copied.deferredContextDigest);
+            assertEquals("原始用户输入\n已确认的输出", copied.deferredSearchText);
+            Fact copiedFact = fixture.memory.inScope(scope("copied")).facts().getFirst();
+            assertEquals(MemoryContextBody.digest(MemoryContextBody.fact(copiedFact)),
+                    copiedFact.deferredContextDigest);
+            var deferred = new EclipseStoreMemoryExtensionAdapter(fixture.memory,
+                    ignored -> CompletableFuture.failedFuture(new AssertionError("search must not call model")));
+            var candidates = deferred.search(request, "原始", 10);
+            var factCandidate = candidates.stream().filter(value -> value.id().equals("thread:fact:" + copiedFact.id))
+                    .findFirst().orElseThrow();
+            var episodeCandidate = candidates.stream().filter(value -> value.id().equals("thread:episode:" + copied.id))
+                    .findFirst().orElseThrow();
+            assertTrue(deferred.fetch(request, factCandidate.id(), factCandidate.version()).contains("原始事实"));
+            assertTrue(deferred.fetch(request, episodeCandidate.id(), episodeCandidate.version()).contains("原始用户输入"));
         }
     }
 
@@ -339,7 +310,8 @@ class MemoryGraphJournalTest {
             var output = JsonNodeFactory.instance.objectNode();
             output.putArray("facts"); output.putArray("entities"); output.putArray("habits");
             return CompletableFuture.completedFuture(new ModelTaskResult(output, "test", 0, 0, false, Map.of()));
-        }, embedding.gateway(), embedding.tasks(), settings);
+        }, embedding.gateway(), embedding.tasks(), settings,
+                new com.fasterxml.jackson.databind.ObjectMapper());
         if (scoped) memory.open(path, "workspace", "local-user"); else memory.open(path);
         return new Fixture(memory, embedding);
     }

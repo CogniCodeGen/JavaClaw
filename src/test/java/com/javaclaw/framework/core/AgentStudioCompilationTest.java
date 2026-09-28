@@ -235,7 +235,7 @@ class AgentStudioCompilationTest {
                 public ToolDescriptor descriptor() {
                     return new ToolDescriptor("ci_critic", "Review a value",
                             JsonNodeFactory.instance.objectNode().put("type", "object"),
-                            PermissionSet.of("tool.read"), true);
+                            "extension", PermissionSet.of("tool.read"), true);
                 }
 
                 @Override

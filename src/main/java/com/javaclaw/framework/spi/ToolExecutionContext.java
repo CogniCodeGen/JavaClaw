@@ -9,8 +9,14 @@ public record ToolExecutionContext(
         String invocationId,
         CancellationToken cancellation,
         Instant deadline,
-        String causationStepId) {
+        String causationStepId,
+        boolean internalContextRead) {
     public ToolExecutionContext(RunId runId, String invocationId, CancellationToken cancellation, Instant deadline) {
-        this(runId, invocationId, cancellation, deadline, null);
+        this(runId, invocationId, cancellation, deadline, null, false);
+    }
+
+    public ToolExecutionContext(RunId runId, String invocationId, CancellationToken cancellation,
+                                Instant deadline, String causationStepId) {
+        this(runId, invocationId, cancellation, deadline, causationStepId, false);
     }
 }

@@ -4,6 +4,7 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
+import com.javaclaw.config.CredentialUsage;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import jakarta.mail.*;
@@ -42,6 +43,7 @@ public class EmailTools {
      * 获取 SMTP 发送会话
      */
     private Session getSmtpSession() {
+        String password = CredentialUsage.requirePlaintext(config.getPassword(), "邮件密码");
         Properties props = new Properties();
         props.put("mail.smtp.host", config.getSmtpHost());
         props.put("mail.smtp.port", String.valueOf(config.getSmtpPort()));
@@ -57,7 +59,7 @@ public class EmailTools {
             @Override
             protected PasswordAuthentication getPasswordAuthentication() {
                 return new PasswordAuthentication(
-                        config.getUsername(), config.getPassword());
+                        config.getUsername(), password);
             }
         });
     }
@@ -66,6 +68,7 @@ public class EmailTools {
      * 获取 IMAP 接收会话并连接到 Store
      */
     private Store getImapStore() throws MessagingException {
+        String password = CredentialUsage.requirePlaintext(config.getPassword(), "邮件密码");
         Properties props = new Properties();
         props.put("mail.imap.host", config.getImapHost());
         props.put("mail.imap.port", String.valueOf(config.getImapPort()));
@@ -78,7 +81,7 @@ public class EmailTools {
             @Override
             protected PasswordAuthentication getPasswordAuthentication() {
                 return new PasswordAuthentication(
-                        config.getUsername(), config.getPassword());
+                        config.getUsername(), password);
             }
         });
 
@@ -427,7 +430,8 @@ public class EmailTools {
             // 使用 SMTP 会话发送
             try (Transport transport = smtpSession.getTransport("smtp")) {
                 transport.connect(config.getSmtpHost(),
-                        config.getUsername(), config.getPassword());
+                        config.getUsername(),
+                        CredentialUsage.requirePlaintext(config.getPassword(), "邮件密码"));
                 transport.sendMessage(reply, reply.getAllRecipients());
             }
 

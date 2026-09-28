@@ -12,7 +12,7 @@ import java.util.List;
  * <p><b>结构化字段</b>：在保留 {@link #content}（实际注入文本）的同时，新增结构化字段
  * {@link #identity}/{@link #tone}/{@link #preferences}/{@link #taboos}。当 {@link #structured}
  * 为真时，{@code content} 由这些字段组装而成（见 {@code MemoryService.assemblePersona}）；
- * 旧的纯正文人格 {@code structured=false}，仍按原样注入，向后兼容。</p>
+ * 为假时直接使用正文，供手动编辑的人格使用。</p>
  *
  * @author JavaClaw
  */
@@ -23,7 +23,7 @@ public class Persona {
 
     public long updatedAt;
 
-    // ==================== 结构化字段（可空，EclipseStore 反射持久化向后兼容） ====================
+    // ==================== 结构化字段 ====================
 
     /** 是否以结构化字段为真相（true 时 content 由下列字段组装） */
     public boolean structured;

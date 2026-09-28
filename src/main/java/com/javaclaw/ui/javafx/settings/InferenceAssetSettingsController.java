@@ -38,7 +38,7 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
             onlineModelList;
     @FXML private TextArea onlineModelDetailArea, localModelDetailArea;
     @FXML private Button onlineDownloadButton, onlineNextButton, loadSelectedAssetButton,
-            unloadSelectedAssetButton, deleteAssetButton, importLocalButton, emptyLocalCatalogButton,
+            deleteAssetButton, importLocalButton, emptyLocalCatalogButton,
             onlineRetryButton, openAssetDirectoryButton;
     @FXML private ListView<InferenceSettingsChoice<UUID>> assetList;
     @FXML private javafx.scene.control.ProgressBar assetProgress, onlineCatalogProgress;
@@ -58,13 +58,13 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
     private HuggingFaceModelCatalogPort.ModelDetail onlineDetail;
     private long detailRequestSerial;
     private boolean onlineInitialized;
-    private Mode mode = Mode.LEGACY;
+    private Mode mode = Mode.CATALOG;
     private Runnable openCatalog = () -> { };
     private InferenceAssetProgressView progressView;
     private InferenceOnlineCatalogCoordinator onlineCatalog;
     private List<InferenceSettingsChoice<UUID>> localModels = List.of();
 
-    enum Mode { LEGACY, CATALOG, LOCAL_ONLY_PICKER }
+    enum Mode { CATALOG, LOCAL_ONLY_PICKER }
 
     public InferenceAssetSettingsController(
             InferenceManagementApplicationService useCases, DialogService dialogs,
@@ -100,10 +100,6 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
         modelSelected = (ignored, purposes) -> reloadAll.run();
     }
 
-    void configure(Runnable reload, InferenceModelProfile.Kind kind, BiConsumer<InferenceModelAsset, Set<InferenceModelProfile.Kind>> selected) {
-        configure(reload, kind, selected, Mode.LEGACY, () -> { });
-    }
-
     void configure(Runnable reload, InferenceModelProfile.Kind kind,
                    BiConsumer<InferenceModelAsset, Set<InferenceModelProfile.Kind>> selected,
                    Mode mode, Runnable openCatalog) {
@@ -120,7 +116,6 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
         }
         InferenceProfilePresentation.show(importLocalButton, !picker);
         InferenceProfilePresentation.show(loadSelectedAssetButton, mode != Mode.CATALOG);
-        InferenceProfilePresentation.show(unloadSelectedAssetButton, mode == Mode.LEGACY);
         InferenceProfilePresentation.show(deleteAssetButton, !picker);
         InferenceProfilePresentation.show(emptyLocalCatalogButton, picker);
         updatePurposePresentation();
@@ -134,13 +129,7 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
         snapshot = Objects.requireNonNull(value, "value");
         runtimeStatuses = statuses == null ? Map.of() : Map.copyOf(statuses);
         UUID selectedId = selectedModelId();
-        localModels = value.assets().stream()
-                .filter(asset -> {
-                    Set<InferenceModelProfile.Kind> compatible = purposes(asset);
-                    return compatible.isEmpty() || mode != Mode.LEGACY
-                            || compatible.contains(selectedKind);
-                })
-                .map(this::choice).toList();
+        localModels = value.assets().stream().map(this::choice).toList();
         renderLocalModels();
         localModelsTab.setText("本地模型 " + localModels.size());
         localModels.stream().filter(item -> item.value().equals(selectedId)).findFirst()
@@ -215,11 +204,10 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
 
     @FXML
     private void loadSelectedAssetRequested() {
-        if (mode == Mode.CATALOG) return;
+        if (mode != Mode.LOCAL_ONLY_PICKER) return;
         InferenceModelAsset model = selectedAsset();
         Set<InferenceModelProfile.Kind> purposes = model == null ? Set.of() : purposes(model);
-        if (model != null && (mode == Mode.LOCAL_ONLY_PICKER
-                ? !purposes.isEmpty() : purposes.contains(selectedKind))) {
+        if (model != null && !purposes.isEmpty()) {
             modelSelected.accept(model, purposes);
         }
     }
@@ -237,21 +225,6 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
     @FXML private void openAssetDirectoryRequested() {
         InferenceModelAsset selected = selectedAsset();
         if (selected != null) directories.open(java.nio.file.Path.of(selected.location()));
-    }
-
-    @FXML
-    private void unloadSelectedAssetRequested() {
-        InferenceModelAsset asset = selectedAsset();
-        if (asset == null || snapshot == null) return;
-        snapshot.profiles().stream().filter(profile -> profile.assetId().equals(asset.id()))
-                .filter(profile -> runtimeStatuses.containsKey(profile.id())).findFirst()
-                .ifPresent(profile -> ui.run("卸载本地模型", context -> {
-                    useCases.setProfileRunning(profile.id(), false);
-                    return null;
-                }, ignored -> {
-                    reloadAll.run();
-                    ui.status("模型已从内存卸载，本地文件仍保留");
-                }));
     }
 
     @FXML
@@ -300,11 +273,9 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
     private void updateActions() {
         InferenceModelAsset selected = selectedAsset();
         boolean loadable = selected != null && selected.state() == InferenceModelAsset.State.READY
-                && (mode == Mode.LOCAL_ONLY_PICKER ? !purposes(selected).isEmpty()
-                : purposes(selected).contains(selectedKind));
+                && !purposes(selected).isEmpty();
         boolean loaded = selected != null && hasLoadedProfile(selected.id());
         loadSelectedAssetButton.setDisable(mode == Mode.CATALOG || !loadable || loaded);
-        unloadSelectedAssetButton.setDisable(!loaded);
         deleteAssetButton.setDisable(selected == null || loaded);
         openAssetDirectoryButton.setDisable(selected == null);
     }
@@ -361,7 +332,7 @@ public final class InferenceAssetSettingsController implements AutoCloseable {
         if (modelPurposeLabel != null) {
             modelPurposeLabel.setText(mode == Mode.LOCAL_ONLY_PICKER
                     ? "选择本地" + InferenceModelPurposeClassifier.kindLabel(selectedKind)
-                    : mode == Mode.CATALOG ? "模型目录" : InferenceModelPurposeClassifier.kindLabel(selectedKind));
+                    : "模型目录");
         }
     }
 

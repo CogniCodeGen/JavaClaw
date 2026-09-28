@@ -6,8 +6,7 @@ import java.util.List;
  * 目标分解结果：用户请求分解后的可验证目标列表 + 结构化成功准则。
  *
  * <p>{@link #criteria} 为结构化谓词列表，便于事后核验；{@link #successCriteria}
- * 为自由文本总结，向后兼容旧逻辑与人类可读展示。两者由 {@link GoalManager}
- * 一次模型调用同时产出。</p>
+ * 为供人阅读的自由文本总结。</p>
  */
 public class GoalDecomposition {
 
@@ -24,11 +23,6 @@ public class GoalDecomposition {
         this.goals = goals != null ? goals : List.of();
         this.successCriteria = successCriteria != null ? successCriteria : "";
         this.criteria = criteria != null ? criteria : List.of();
-    }
-
-    /** 兼容旧调用：无结构化准则时使用 */
-    public GoalDecomposition(String originalRequest, List<String> goals, String successCriteria) {
-        this(originalRequest, goals, successCriteria, List.of());
     }
 
     public String getOriginalRequest() { return originalRequest; }

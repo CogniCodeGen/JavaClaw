@@ -1,6 +1,7 @@
 package com.javaclaw.infrastructure.inference;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.application.inference.InferenceAssetPreparationPort;
@@ -121,7 +122,26 @@ class ManagedInferenceAssetStoreTest {
     }
 
     @Test
-    void migratesLegacyInferenceAssetsAndPreservesIdentity() throws Exception {
+    void doesNotRecoverManifestWithoutArtifactMetadata() throws Exception {
+        var asset = store.importLocalDirectory(modelDirectory("metadata-required"),
+                ignored -> { }, () -> false);
+        catalog.saveAsset(asset);
+        Path manifest = pluginModels().resolve("metadata").resolve(asset.id() + ".json");
+        ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+        ObjectNode document = (ObjectNode) json.readTree(manifest.toFile());
+        ((ObjectNode) document.path("asset")).remove("artifactMetadata");
+        json.writeValue(manifest.toFile(), document);
+        catalog.deleteAsset(asset.id());
+
+        store = newStore();
+        store.reconcileManagedAssets();
+
+        assertTrue(catalog.asset(asset.id()).isEmpty(),
+                "缺少当前必需工件元数据的旧清单不能恢复为可用资产");
+    }
+
+    @Test
+    void doesNotImportObsoleteAssetDirectories() throws Exception {
         var asset = store.importLocalDirectory(modelDirectory("legacy"), ignored -> { }, () -> false);
         catalog.saveAsset(asset);
         Path canonical = Path.of(asset.location());
@@ -139,11 +159,11 @@ class ManagedInferenceAssetStoreTest {
         store = newStore();
         store.reconcileManagedAssets();
 
-        var migrated = catalog.asset(asset.id()).orElseThrow();
-        assertEquals(asset.id(), migrated.id());
-        assertTrue(Path.of(migrated.location()).startsWith(pluginModels().resolve("assets/sha256")));
-        assertTrue(Files.isRegularFile(Path.of(migrated.location()).resolve("model.safetensors")));
-        assertFalse(Files.exists(legacy));
+        var recovered = catalog.asset(asset.id()).orElseThrow();
+        assertEquals(asset.id(), recovered.id());
+        assertEquals(com.javaclaw.inference.api.InferenceModelAsset.State.FAILED, recovered.state());
+        assertFalse(Files.exists(canonical));
+        assertTrue(Files.isRegularFile(legacy.resolve("model.safetensors")));
     }
 
     @Test

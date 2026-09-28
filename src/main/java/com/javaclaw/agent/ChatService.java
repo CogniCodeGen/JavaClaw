@@ -1,7 +1,5 @@
 package com.javaclaw.agent;
 
-import com.javaclaw.agent.execution.ExecutionMonitor;
-import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationHandle;
@@ -184,21 +182,6 @@ public final class ChatService {
 
     public com.javaclaw.memory.MemoryService getMemoryService() {
         return memoryService;
-    }
-
-    public String getCurrentPlanMarkdown() {
-        return null;
-    }
-
-    /** Loop policy now belongs to RunControl; kept as a UI compatibility no-op. */
-    public void setLoopInteractiveHandler(LoopDetectionHook.LoopInteractiveHandler handler) {
-        // The framework emits a durable loop/budget event instead of retaining a UI callback.
-    }
-
-    /** @deprecated execution observations are available from RunEvent/EventStore. */
-    @Deprecated(forRemoval = true)
-    public ExecutionMonitor getExecutionMonitor() {
-        return null;
     }
 
     public void shutdown() {

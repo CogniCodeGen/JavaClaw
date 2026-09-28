@@ -14,6 +14,14 @@ public interface ExtensionRegistrar {
 
     void retriever(RetrieverContribution retriever);
 
+    void deferredContextSource(DeferredContextSource source);
+
+    default void fixedContextSource(FixedContextSource source) {
+        throw new UnsupportedOperationException("fixed context sources are unavailable");
+    }
+
+    void turnPreparation(TurnPreparation preparation);
+
     void advisor(AdvisorSpecFactory advisorFactory);
 
     void outputGuard(OutputGuard outputGuard);

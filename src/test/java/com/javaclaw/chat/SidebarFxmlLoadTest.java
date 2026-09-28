@@ -4,7 +4,12 @@ import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
+import com.javaclaw.loop.model.Decision;
+import com.javaclaw.loop.model.LoopStatus;
 import javafx.application.Platform;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.StackPane;
 import org.junit.jupiter.api.BeforeAll;
@@ -21,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -117,11 +123,51 @@ class SidebarFxmlLoadTest {
                     getClass().getResource("/fxml/chat/thinking-panel.fxml")));
             ThinkingPanelController controller =
                     handle.controller(ThinkingPanelController.class);
+            VBox sections = (VBox) injectedField(controller, "dynamicSectionsHost");
             callFx(() -> {
                 controller.startNewStream();
-                controller.appendThinking("分析中");
+                controller.appendThinking("思考明细：筛选亲子地点");
+                controller.updatePlan("规划明细：先确认交通再安排景点");
                 controller.recordPipelineProgress(
-                        "route", "路由", "done", "已选择普通对话");
+                        "route", "路由", "done", "阶段明细：已选择普通对话");
+                controller.appendSubAgentThinking("知识专家", "智能体过程：核对开放时间");
+                controller.markSubAgentReplying("知识专家");
+                assertTrue(renderedText(sections).contains("返回结果中"));
+                controller.markSubAgentResult("知识专家", "智能体结果：找到两个候选景点");
+                controller.appendToolCall("搜索", "工具输入：亲子景点", "running");
+                controller.appendToolCall("搜索", "工具输入：亲子景点", "ok");
+                controller.appendToolCall("搜索", "工具输入：中秋交通", "running");
+                controller.appendToolCall("搜索", "工具输入：中秋交通", "ok");
+                controller.recordLoopStatus(new LoopStatus(
+                        2, Decision.CONTINUE, "PRIVATE_LOOP_REASON", 1, 3, 42, 5));
+                String visibleDetails = visibleRenderedText(sections);
+                assertTrue(visibleDetails.contains("路由"));
+                assertTrue(visibleDetails.contains("知识专家"));
+                for (String detail : java.util.List.of(
+                        "思考明细：筛选亲子地点", "规划明细：先确认交通再安排景点",
+                        "阶段明细：已选择普通对话", "智能体过程：核对开放时间",
+                        "智能体结果：找到两个候选景点", "工具输入：亲子景点",
+                        "工具输入：中秋交通")) {
+                    assertTrue(visibleDetails.contains(detail), () -> "右栏缺少可见明细: " + detail);
+                }
+                assertEquals(2, countNodesWithClass(sections, "tp-tool-row"),
+                        "同名工具的两次调用应分别保留明细");
+                assertTrue(visibleDetails.contains("第 2 轮 · 已满足 1/3 项 · 5 秒后继续"));
+                assertFalse(renderedText(sections).contains("PRIVATE_LOOP_REASON"),
+                        "循环自由文本理由不属于进度明细");
+                controller.recordPipelineProgress("planning", "选择上下文", "running",
+                        "正在确定本轮需要的资料和工具");
+                assertTrue(visibleRenderedText(sections).contains("正在确定本轮需要的资料和工具"));
+                controller.recordPipelineProgress("planning", "选择上下文", "done", null);
+                assertFalse(visibleRenderedText(sections).contains("正在确定本轮需要的资料和工具"));
+                controller.recordPipelineProgress("failed", "读取资料", "running", "正在读取资料");
+                controller.recordPipelineProgress("failed", "读取资料", "error", "资料读取失败");
+                assertTrue(visibleRenderedText(sections).contains("资料读取失败"));
+                assertFalse(visibleRenderedText(sections).contains("正在读取资料"));
+                controller.appendToolResult("认证检查",
+                        "{\"token\":\"synthetic-sensitive-value\"}");
+                assertTrue(visibleRenderedText(sections).contains("<敏感内容已隐藏>"));
+                assertFalse(renderedText(sections).contains("synthetic-sensitive-value"));
                 controller.updateMetrics(12, 4, "¥0.01");
                 controller.endStream();
                 return null;
@@ -140,6 +186,39 @@ class SidebarFxmlLoadTest {
         Field field = controller.getClass().getDeclaredField(name);
         assertTrue(field.trySetAccessible());
         return field.get(controller);
+    }
+
+    private static String renderedText(Node node) {
+        StringBuilder text = new StringBuilder();
+        if (node instanceof Label label) text.append(label.getText()).append('\n');
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                text.append(renderedText(child));
+            }
+        }
+        return text.toString();
+    }
+
+    private static String visibleRenderedText(Node node) {
+        if (!node.isVisible() || !node.isManaged()) return "";
+        StringBuilder text = new StringBuilder();
+        if (node instanceof Label label) text.append(label.getText()).append('\n');
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                text.append(visibleRenderedText(child));
+            }
+        }
+        return text.toString();
+    }
+
+    private static long countNodesWithClass(Node node, String styleClass) {
+        long count = node.getStyleClass().contains(styleClass) ? 1 : 0;
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                count += countNodesWithClass(child, styleClass);
+            }
+        }
+        return count;
     }
 
     private static <T> T callFx(Callable<T> action) throws Exception {

@@ -219,7 +219,9 @@ class OnboardingFxmlLoadTest {
             implements LocalInferenceQuickSetupApplicationService {
         @Override public QuickSnapshot quickSnapshot() {
             return new QuickSnapshot(List.of(), null, DEFAULT_ALIAS, "",
-                    false, false, false, List.of());
+                    false, false, false,
+                    com.javaclaw.application.inference.InferenceApiServerControlPort.State.DISABLED,
+                    List.of());
         }
         @Override public com.javaclaw.inference.api.InferenceModelAsset importLocalModel(
                 Path source, Consumer<InferenceAssetPreparationPort.Progress> progress,

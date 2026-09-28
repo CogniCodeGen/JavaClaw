@@ -95,9 +95,10 @@ class WorkspaceManagerDeletionTest {
                     INSERT INTO workflow_runs(
                         workspace_id, id, workflow_id, workflow_version, thread_id,
                         definition_json, state_json, status, current_node_id, next_node_id,
-                        step_count, output_text, error_text, interrupt_json, created_at, updated_at)
+                        step_count, output_text, error_text, interrupt_json,
+                        extension_locks_json, created_at, updated_at)
                     VALUES (?, 'run', 'wf', 1, 'thread', '{}', '{}', 'PAUSED',
-                            NULL, NULL, 0, NULL, NULL, NULL, 1, 1)
+                            NULL, NULL, 0, NULL, NULL, NULL, '[]', 1, 1)
                     """)) {
                 ps.setString(1, workspaceId);
                 ps.executeUpdate();

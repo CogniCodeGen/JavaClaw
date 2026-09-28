@@ -8,6 +8,7 @@ import com.javaclaw.framework.spi.ToolApprovalPolicy;
 import com.javaclaw.framework.spi.JsonSchemaValidator;
 import com.javaclaw.framework.spi.ToolPolicyDecision;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
+import com.javaclaw.framework.spi.ToolExecutionContext;
 import com.javaclaw.framework.api.ToolApprovalGrant;
 import com.javaclaw.framework.api.ToolApprovalScope;
 import com.javaclaw.framework.api.AgentStep;
@@ -21,6 +22,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Validation, permission/HITL, loop detection, timeout, normalization and events for every tool. */
 public final class DefaultToolInvocationGateway implements ToolInvocationGateway {
@@ -40,6 +46,19 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
 
     @Override
     public CompletionStage<ToolInvocationResult> invoke(ToolInvocationRequest request) {
+        return invokeInternal(request, false);
+    }
+
+    @Override
+    public ToolInvocationResult invokeInline(ToolInvocationRequest request) {
+        if (!request.tool().descriptor().name().startsWith("framework_context_")) {
+            throw new IllegalArgumentException("inline invocation is reserved for context reads");
+        }
+        return invokeInternal(request, true).toCompletableFuture().join();
+    }
+
+    private CompletionStage<ToolInvocationResult> invokeInternal(
+            ToolInvocationRequest request, boolean inline) {
         var descriptor = request.tool().descriptor();
         if (!ToolGroupAccess.allows(request.runRequest(), descriptor.group())) {
             return CompletableFuture.failedFuture(new ToolPermissionDeniedException(
@@ -112,26 +131,53 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
         if (cancellationRemaining.compareTo(remaining) < 0) remaining = cancellationRemaining;
         if (remaining.isNegative() || remaining.isZero()) remaining = Duration.ofNanos(1);
         ToolApprovalGrant scopedApproval = approval.orElse(null);
-        java.util.concurrent.atomic.AtomicBoolean terminalEvent =
-                new java.util.concurrent.atomic.AtomicBoolean();
+        // The gateway, rather than a caller-supplied context or tool name, identifies
+        // internal reads for model-view result processors.
+        ToolExecutionContext resultContext = new ToolExecutionContext(
+                request.context().runId(), request.context().invocationId(),
+                request.context().cancellation(), request.context().deadline(),
+                request.context().causationStepId(), inline);
+        AtomicBoolean terminalEvent = new AtomicBoolean();
         CompletableFuture<ExecutedTool> execution;
+        java.util.concurrent.Callable<ExecutedTool> action = () -> {
+            request.context().cancellation().throwIfCancelled();
+            JsonNode rawOutput = scopedApproval == null
+                    ? executeTool(request)
+                    : ToolApprovalScope.call(scopedApproval, () -> executeTool(request));
+            JsonNode modelOutput = rawOutput.deepCopy();
+            for (var processor : request.resultPostProcessors()) {
+                modelOutput = Objects.requireNonNull(processor.process(
+                        modelOutput, descriptor, resultContext, request.runRequest()),
+                        "tool result post-processor output").deepCopy();
+            }
+            Duration duration = Duration.between(startedAt, clock.instant());
+            return new ExecutedTool(modelOutput, duration, rawOutput);
+        };
         try {
-            execution = CancellableTaskStages.submit(
-                    executor, "tool-" + descriptor.name(), remaining,
-                    request.context().cancellation(), () -> {
-                request.context().cancellation().throwIfCancelled();
-                JsonNode rawOutput = scopedApproval == null
-                        ? executeTool(request)
-                        : ToolApprovalScope.call(scopedApproval, () -> executeTool(request));
-                JsonNode modelOutput = rawOutput.deepCopy();
-                for (var processor : request.resultPostProcessors()) {
-                    modelOutput = Objects.requireNonNull(processor.process(
-                            modelOutput, descriptor, request.context(), request.runRequest()),
-                            "tool result post-processor output").deepCopy();
+            if (inline) {
+                execution = new CompletableFuture<>();
+                // The primary model carrier may already hold the only IO permit. Run the
+                // read without acquiring another permit, but bound how long that carrier
+                // waits even if an external source ignores interruption.
+                FutureTask<ExecutedTool> read = new FutureTask<>(action);
+                Thread.ofVirtual().name("javaclaw-inline-context-read").start(read);
+                try {
+                    execution.complete(read.get(remaining.toNanos(), TimeUnit.NANOSECONDS));
+                } catch (TimeoutException timeout) {
+                    read.cancel(true);
+                    execution.completeExceptionally(inlineTimeout(descriptor.name(), timeout));
+                } catch (InterruptedException interrupted) {
+                    read.cancel(true);
+                    Thread.currentThread().interrupt();
+                    execution.completeExceptionally(new com.javaclaw.framework.spi.RunCancelledException());
+                } catch (ExecutionException failure) {
+                    execution.completeExceptionally(failure.getCause());
                 }
-                Duration duration = Duration.between(startedAt, clock.instant());
-                return new ExecutedTool(modelOutput, duration, rawOutput);
-            });
+            } else {
+                execution = CancellableTaskStages.submit(
+                        executor, "tool-" + descriptor.name(), remaining,
+                        request.context().cancellation(), action);
+            }
         } catch (Throwable submissionFailure) {
             try {
                 if (terminalEvent.compareAndSet(false, true)) {
@@ -201,6 +247,10 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
             }
         });
         return published;
+    }
+
+    private static IllegalStateException inlineTimeout(String toolName, Throwable cause) {
+        return new IllegalStateException("inline context tool timed out: " + toolName, cause);
     }
 
     private static JsonNode executeTool(ToolInvocationRequest request) throws Exception {

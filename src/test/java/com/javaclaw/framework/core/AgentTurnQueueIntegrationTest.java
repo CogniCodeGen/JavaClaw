@@ -194,6 +194,11 @@ class AgentTurnQueueIntegrationTest {
                 child.complete(JSON.objectNode());
                 ManagedTurn maintenance = engine.beginTurn(fixture.child(parentId, "maintenance", true));
                 maintenanceId = maintenance.id();
+                maintenance.emit("core.step.started", JSON.objectNode()
+                        .put("stepId", "maintenance-call").put("kind", "MODEL_TASK"));
+                maintenance.emit("core.step.completed", JSON.objectNode()
+                        .put("stepId", "maintenance-call")
+                        .set("usage", JSON.objectNode().put("inputTokens", 9).put("outputTokens", 1)));
                 maintenance.emit("core.model_task.usage", JSON.objectNode().put("inputTokens", 9).put("outputTokens", 1));
                 original.record(maintenanceId, 9, 1, java.math.BigDecimal.ZERO);
                 maintenance.complete(JSON.objectNode());

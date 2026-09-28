@@ -1,6 +1,5 @@
 package com.javaclaw.runtime;
 
-import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
@@ -157,7 +156,6 @@ public final class ApplicationKernel implements AutoCloseable {
         if (targetWorkspaceId.equals(previousId)) return current();
 
         WorkspaceRuntime old = current();
-        browserManager.saveCookies();
         quiesceRuntimeDependents();
 
         try {
@@ -226,10 +224,6 @@ public final class ApplicationKernel implements AutoCloseable {
 
     /** 把全局订阅方统一切到新运行时，避免任何管理器继续持有旧服务。 */
     private void activate(WorkspaceRuntime workspaceRuntime, boolean initial) {
-        // Directory-scope authorization is now enforced deterministically by the framework tool
-        // gateway. A model may never widen permissions, so the legacy LLM assessor is disabled.
-        ToolConfirmationManager.setScopeAssessor(null);
-
         workspaceRuntime.scheduleManager().init(workspaceRuntime.scheduledTaskRunner());
         var pluginServices = new com.javaclaw.plugin.PluginWorkspaceServices(
                 workspaceRuntime.context(), workspaceRuntime.schedules(),

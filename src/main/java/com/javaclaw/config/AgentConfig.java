@@ -120,11 +120,6 @@ public final class AgentConfig {
         persistence.loadInto(properties);
     }
 
-    /** Profile 档位已完整取代旧的全局轮数/专家数限制；加载时清除遗留持久化项。 */
-    static boolean removeObsoletePlanModeProperties(Properties target) {
-        return AgentConfigPersistence.removeObsoletePlanModeProperties(target);
-    }
-
     /**
      * 保存配置到 H2
      */

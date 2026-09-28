@@ -48,10 +48,12 @@ class NotificationToolsBehaviorTest {
     void resetChannels() {
         notificationConfig.setDingtalkEnabled(false);
         notificationConfig.setDingtalkWebhook("");
+        notificationConfig.setDingtalkSecret("");
         notificationConfig.setWechatEnabled(false);
         notificationConfig.setWechatWebhook("");
         notificationConfig.setFeishuEnabled(false);
         notificationConfig.setFeishuWebhook("");
+        notificationConfig.setFeishuSecret("");
         notificationConfig.setEmailNotifyEnabled(false);
         notificationConfig.setEmailNotifyTo("");
         notificationConfig.setCustomEnabled(false);
@@ -181,6 +183,41 @@ class NotificationToolsBehaviorTest {
                     () -> assertTrue(routed.contains("发送成功"), routed),
                     () -> assertTrue(lastBody.get().contains("message"), lastBody.get()));
             assertTrue(requests.get() == 9, "本地 Webhook 请求数不符: " + requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void unreadableSigningSecretsNeverReachWebhookTransport() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> respond(
+                exchange, requests, new AtomicReference<>()));
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            notificationConfig.setDingtalkEnabled(true);
+            notificationConfig.setDingtalkWebhook(baseUrl + "/dingtalk");
+            notificationConfig.setDingtalkSecret("ENC(YmFk)");
+            notificationConfig.setFeishuEnabled(true);
+            notificationConfig.setFeishuWebhook(baseUrl + "/feishu");
+            notificationConfig.setFeishuSecret("ENC(YmFk)");
+
+            String dingtalk = tools.sendDingtalk("title", "message", false);
+            String feishu = tools.sendFeishu("title", "message");
+            String dingtalkRouted = tools.sendByChannel("dingtalk", "title", "message");
+            String feishuRouted = tools.sendByChannel("feishu", "title", "message");
+            String all = tools.sendNotification("message", "title");
+
+            assertAll(
+                    () -> assertTrue(dingtalk.contains("钉钉签名密钥无法解密"), dingtalk),
+                    () -> assertTrue(feishu.contains("飞书签名密钥无法解密"), feishu),
+                    () -> assertTrue(dingtalkRouted.contains("钉钉签名密钥无法解密"), dingtalkRouted),
+                    () -> assertTrue(feishuRouted.contains("飞书签名密钥无法解密"), feishuRouted),
+                    () -> assertTrue(all.contains("失败: 2"), all),
+                    () -> assertTrue(requests.get() == 0,
+                            "未解密密钥不应触发 Webhook 请求: " + requests.get()));
         } finally {
             server.stop(0);
         }

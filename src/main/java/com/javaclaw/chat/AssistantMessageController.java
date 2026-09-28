@@ -13,6 +13,7 @@ import javafx.scene.control.Label;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.DataFormat;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
@@ -38,6 +39,7 @@ public final class AssistantMessageController implements AutoCloseable {
     @FXML private Label generationDotTwo;
     @FXML private Label generationDotThree;
     @FXML private StackPane replyHost;
+    @FXML private HBox actionRow;
     @FXML private Button adoptButton;
     @FXML private Button moreButton;
     @FXML private ContextMenu moreMenu;
@@ -69,8 +71,10 @@ public final class AssistantMessageController implements AutoCloseable {
         bindManagedVisibility(toolResultsBox, viewModel.toolsVisibleProperty());
         bindManagedVisibility(replyHost, viewModel.replyVisibleProperty());
         bindManagedVisibility(unifiedBubble, viewModel.replyCardVisibleProperty());
+        bindManagedVisibility(actionRow, viewModel.actionsVisibleProperty());
         adoptButton.disableProperty().bind(
                 Bindings.not(viewModel.adoptionEnabledProperty()));
+        unifiedBubble.setMaxWidth(Region.USE_PREF_SIZE);
         startPlaceholderAnimation();
     }
 
@@ -123,6 +127,7 @@ public final class AssistantMessageController implements AutoCloseable {
         stopPlaceholderAnimation();
         generationPlaceholder.setVisible(false);
         generationPlaceholder.setManaged(false);
+        unifiedBubble.setMaxWidth(Double.MAX_VALUE);
         viewModel.revealReply();
     }
 
@@ -137,6 +142,8 @@ public final class AssistantMessageController implements AutoCloseable {
 
     void setMetadata(String metadata) {
         viewModel.metadataProperty().set(metadata == null ? "—" : metadata);
+        // The turn coordinator sets metrics only after its terminal outcome is rendered.
+        viewModel.finishGeneration();
     }
 
     @FXML

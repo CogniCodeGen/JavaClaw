@@ -93,9 +93,6 @@ public class ScheduledTask {
      */
     private boolean unattendedToolsAuthorized;
 
-    /** 执行历史记录（旧：纯文本字符串，保留向后兼容） */
-    private List<String> executionHistory;
-
     /** 结构化执行历史（最新在前，最多保留 20 条） */
     private List<ExecRecord> execRecords;
 
@@ -144,7 +141,6 @@ public class ScheduledTask {
     }
 
     public ScheduledTask() {
-        this.executionHistory = new ArrayList<>();
         this.execRecords = new ArrayList<>();
     }
 
@@ -169,7 +165,6 @@ public class ScheduledTask {
         this.failCount = 0;
         this.notifyEnabled = false;
         this.notifyChannel = "none";
-        this.executionHistory = new ArrayList<>();
         this.execRecords = new ArrayList<>();
     }
 
@@ -215,8 +210,6 @@ public class ScheduledTask {
         out.notifyEnabled = notifyEnabled;
         out.notifyChannel = notifyChannel;
         out.unattendedToolsAuthorized = unattendedToolsAuthorized;
-        out.executionHistory = executionHistory == null
-                ? new ArrayList<>() : new ArrayList<>(executionHistory);
         out.execRecords = new ArrayList<>();
         if (execRecords != null) {
             for (ExecRecord record : execRecords) {
@@ -239,22 +232,6 @@ public class ScheduledTask {
         while (execRecords.size() > 20) execRecords.removeLast();
     }
 
-    /**
-     * 添加一条执行记录（旧接口，最新在前，最多保留 20 条）
-     *
-     * @param record 执行记录描述（含时间戳）
-     */
-    public void addExecutionRecord(String record) {
-        if (executionHistory == null) {
-            executionHistory = new ArrayList<>();
-        }
-        executionHistory.addFirst(record);
-        // 上限 20 条
-        while (executionHistory.size() > 20) {
-            executionHistory.removeLast();
-        }
-    }
-
     /** 把 intervalValue + intervalUnit 折算为规范分钟数写入 intervalMinutes。 */
     public void recomputeIntervalMinutes() {
         int v = Math.max(1, intervalValue);
@@ -266,20 +243,21 @@ public class ScheduledTask {
         this.intervalMinutes = v * factor;
     }
 
-    /** 以分钟为规范来源同步 UI 展示字段，修复旧任务的双字段不一致。 */
-    public void normalizeIntervalFields() {
+    /** 验证规范分钟数与 UI 间隔字段一致，拒绝损坏的任务状态。 */
+    public void validateIntervalFields() {
         if (!"interval".equals(triggerType)) return;
-        int minutes = Math.max(1, intervalMinutes);
-        int value = Math.max(1, intervalValue);
-        int factor = switch (intervalUnit == null ? "minute" : intervalUnit) {
+        if (intervalUnit == null) {
+            throw new IllegalArgumentException("定时任务间隔单位无效");
+        }
+        int factor = switch (intervalUnit) {
             case "hour" -> 60;
             case "day" -> 1440;
-            default -> 1;
+            case "minute" -> 1;
+            default -> throw new IllegalArgumentException("定时任务间隔单位无效");
         };
-        if (value * factor != minutes) {
-            intervalMinutes = minutes;
-            intervalValue = minutes;
-            intervalUnit = "minute";
+        if (intervalMinutes < 1 || intervalValue < 1
+                || (long) intervalValue * factor != intervalMinutes) {
+            throw new IllegalArgumentException("定时任务间隔字段不一致");
         }
     }
 
@@ -374,9 +352,6 @@ public class ScheduledTask {
 
     public String getNotifyChannel() { return notifyChannel; }
     public void setNotifyChannel(String notifyChannel) { this.notifyChannel = notifyChannel; }
-
-    public List<String> getExecutionHistory() { return executionHistory; }
-    public void setExecutionHistory(List<String> executionHistory) { this.executionHistory = executionHistory; }
 
     public List<ExecRecord> getExecRecords() { return execRecords; }
     public void setExecRecords(List<ExecRecord> execRecords) { this.execRecords = execRecords; }

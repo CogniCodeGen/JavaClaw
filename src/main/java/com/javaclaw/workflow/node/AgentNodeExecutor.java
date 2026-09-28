@@ -61,7 +61,6 @@ public final class AgentNodeExecutor implements NodeExecutor {
     public List<String> validate(com.javaclaw.workflow.model.NodeDefinition node) {
         List<String> errors = new ArrayList<>();
         if (node.config().path("prompt").asText().isBlank()
-                && node.config().path("expertRef").asText().isBlank()
                 && node.config().path("agentDefinitionRef").asText().isBlank()) {
             errors.add("AGENT 必须配置 prompt 或 agentDefinitionRef");
         }
@@ -89,11 +88,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
 
         String agentId = config.path("agentDefinitionRef").asText("").strip();
         if (agentId.isBlank()) {
-            // Old expertRef values are imported into Agent Studio separately. Until published,
-            // preserve execution with the built-in definition and include the role in the input.
-            String legacyRole = config.path("expertRef").asText("").strip();
             agentId = "system.default";
-            if (!legacyRole.isBlank()) input = "Requested role: " + legacyRole + "\n\n" + input;
         }
         String profile = config.path("runProfileRef").asText("chat").strip();
         int maxToolCalls = config.path("maxIters").asInt(8) * 4;

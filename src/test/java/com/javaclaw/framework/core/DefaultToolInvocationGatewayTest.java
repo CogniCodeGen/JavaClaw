@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -227,6 +230,96 @@ class DefaultToolInvocationGatewayTest {
                 payloads.getFirst().path("output").path("kind").asText());
     }
 
+    @Test
+    void inlineContextReadHonorsItsDeadlineAndRecordsFailure() throws Exception {
+        CountDownLatch interrupted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch readFinished = new CountDownLatch(1);
+        var terminalEvents = new CopyOnWriteArrayList<String>();
+        FrameworkTool contextRead = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("framework_context_search_test", "context read",
+                        schema(), "knowledge", PermissionSet.of("tool.read"), true);
+            }
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    ToolExecutionContext context) throws Exception {
+                try {
+                    while (release.getCount() != 0) {
+                        try {
+                            release.await();
+                        } catch (InterruptedException ignored) {
+                            // Simulate a remote read that ignores cancellation.
+                            interrupted.countDown();
+                        }
+                    }
+                    return JsonNodeFactory.instance.objectNode().put("late", true);
+                } finally {
+                    readFinished.countDown();
+                }
+            }
+        };
+        ToolInvocationRequest base = request(contextRead, List.of(), List.of(),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.failed") || type.equals("core.tool.completed")) {
+                        terminalEvents.add(type);
+                    }
+                });
+        ToolInvocationRequest shortDeadline = new ToolInvocationRequest(
+                base.tool(), base.arguments(),
+                new ToolExecutionContext(base.context().runId(), "context-read-timeout",
+                        base.control(), Instant.now().plusMillis(300)),
+                base.runRequest(), base.effectivePermissions(), base.toolPolicyConfiguration(),
+                base.toolPolicies(), base.resultPostProcessors(), base.control(), base.events());
+        DefaultToolInvocationGateway gateway = new DefaultToolInvocationGateway(
+                (tool, arguments, owner) -> ToolApprovalDecision.ALLOW,
+                DIRECT_EXECUTOR, Clock.systemUTC());
+
+        try {
+            CompletionException failure = assertTimeoutPreemptively(Duration.ofSeconds(3),
+                    () -> assertThrows(CompletionException.class,
+                            () -> gateway.invokeInline(shortDeadline)));
+
+            assertTrue(failure.getCause().getMessage().contains("timed out"));
+            assertTrue(interrupted.await(1, TimeUnit.SECONDS));
+            assertEquals(List.of("core.tool.failed"), terminalEvents);
+            assertEquals(9, base.control().remainingToolCalls());
+        } finally {
+            release.countDown();
+        }
+        assertTrue(assertTimeoutPreemptively(Duration.ofSeconds(3),
+                () -> readFinished.await(3, TimeUnit.SECONDS)));
+        assertEquals(List.of("core.tool.failed"), terminalEvents,
+                "late source output must not publish a completed tool event");
+    }
+
+    @Test
+    void onlyInlineGatewayReadsMarkResultsAsInternal() {
+        FrameworkTool contextRead = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("framework_context_search_test", "context read",
+                        schema(), "knowledge", PermissionSet.of("tool.read"), true);
+            }
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments, ToolExecutionContext context) {
+                return JsonNodeFactory.instance.objectNode().put("candidates", "complete");
+            }
+        };
+        ToolResultPostProcessor processor = (current, descriptor, context, owner) ->
+                context.internalContextRead() ? current
+                        : JsonNodeFactory.instance.objectNode().put("truncated", true);
+        DefaultToolInvocationGateway gateway = gateway();
+
+        ToolInvocationResult internal = gateway.invokeInline(request(contextRead, List.of(),
+                List.of(processor), (type, version, producer, payload) -> { }));
+        ToolInvocationResult ordinary = gateway.invoke(request(contextRead, List.of(),
+                List.of(processor), (type, version, producer, payload) -> { }))
+                .toCompletableFuture().join();
+
+        assertEquals("complete", internal.output().path("candidates").asText());
+        assertTrue(ordinary.output().path("truncated").asBoolean());
+    }
+
     private DefaultToolInvocationGateway gateway() {
         return new DefaultToolInvocationGateway(
                 (tool, arguments, request) -> ToolApprovalDecision.ALLOW,
@@ -270,7 +363,7 @@ class DefaultToolInvocationGatewayTest {
             public ToolDescriptor descriptor() {
                 return new ToolDescriptor("contract_tool", "",
                         JsonNodeFactory.instance.objectNode().put("type", "object"),
-                        PermissionSet.of("tool.read"), true);
+                        "extension", PermissionSet.of("tool.read"), true);
             }
 
             @Override

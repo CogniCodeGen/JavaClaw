@@ -3,27 +3,23 @@ package com.javaclaw.infrastructure.inference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.application.inference.InferenceCatalogPort;
 import com.javaclaw.inference.api.InferenceModelAsset;
-import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.util.AtomicFileWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** Owns the Deliverance plugin data layout, legacy migration, and manifest recovery. */
+/** Owns the Deliverance plugin data layout and manifest recovery. */
 final class ManagedInferenceStorage {
 
     private static final Logger log = LoggerFactory.getLogger(ManagedInferenceStorage.class);
 
-    private final Path legacyInferenceRoot;
     private final Supplier<Path> pluginDataDirectory;
     private final InferenceCatalogPort catalog;
     private final ObjectMapper json;
@@ -31,10 +27,8 @@ final class ManagedInferenceStorage {
     private volatile boolean prepared;
 
     ManagedInferenceStorage(
-            DataRoot dataRoot, Supplier<Path> pluginDataDirectory,
+            Supplier<Path> pluginDataDirectory,
             InferenceCatalogPort catalog, ObjectMapper json) {
-        legacyInferenceRoot = Objects.requireNonNull(dataRoot, "dataRoot").path()
-                .resolve("inference").toAbsolutePath().normalize();
         this.pluginDataDirectory = Objects.requireNonNull(
                 pluginDataDirectory, "pluginDataDirectory");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -80,8 +74,6 @@ final class ManagedInferenceStorage {
             preparePlainDirectory(current.downloadsRoot());
             preparePlainDirectory(current.stagingRoot());
             preparePlainDirectory(current.metadataRoot());
-            migrateLegacyAssets(current);
-            migrateLegacyDownloads(current);
             reconcileMetadata(current);
             prepared = true;
         }
@@ -111,8 +103,6 @@ final class ManagedInferenceStorage {
     Path managedAssetPath(String hash, Path recorded) throws IOException {
         Path current = assetPath(hash);
         if (recorded.equals(current)) return current;
-        Path legacy = legacyAssetPath(hash);
-        if (recorded.equals(legacy)) return legacy;
         throw new IOException("模型资产不在 Deliverance 管理目录中");
     }
 
@@ -131,191 +121,6 @@ final class ManagedInferenceStorage {
     private static void preparePlainDirectory(Path value) throws IOException {
         if (!Files.exists(value, LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(value);
         ManagedInferenceFiles.requirePlainDirectory(value);
-    }
-
-    private void migrateLegacyAssets(Layout current) {
-        Path legacyRoot = legacyInferenceRoot.resolve("assets").resolve("sha256")
-                .toAbsolutePath().normalize();
-        if (legacyRoot.equals(current.assetsRoot())
-                || !Files.isDirectory(legacyRoot, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(legacyRoot)) return;
-        for (InferenceModelAsset asset : catalog.assets()) {
-            Path recorded;
-            try {
-                recorded = Path.of(asset.location()).toAbsolutePath().normalize();
-            } catch (RuntimeException invalid) {
-                continue;
-            }
-            if (!recorded.startsWith(legacyRoot)) continue;
-            migrateLegacyAsset(current, asset, recorded);
-        }
-        ManagedInferenceFiles.deleteEmptyDirectories(legacyRoot);
-    }
-
-    private void migrateLegacyAsset(
-            Layout current, InferenceModelAsset asset, Path recorded) {
-        boolean moved = false;
-        boolean createdTarget = false;
-        Path target = null;
-        try {
-            Path expectedLegacy = legacyAssetPath(asset.contentSha256());
-            if (!recorded.equals(expectedLegacy)) {
-                throw new IOException("旧模型位置与内容摘要不匹配");
-            }
-            if (!Files.isDirectory(recorded, LinkOption.NOFOLLOW_LINKS)
-                    || Files.isSymbolicLink(recorded)) {
-                throw new IOException("旧模型目录不存在或不安全");
-            }
-            target = assetPath(asset.contentSha256());
-            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                ManagedInferenceFiles.verifyCachedContent(
-                        recorded, asset.files(), asset.contentSha256(), () -> false);
-                Files.createDirectories(target.getParent());
-                if (ManagedInferenceFiles.sameFileStore(recorded, target.getParent())) {
-                    try {
-                        Files.move(recorded, target, StandardCopyOption.ATOMIC_MOVE);
-                        moved = true;
-                        createdTarget = true;
-                    } catch (AtomicMoveNotSupportedException unsupported) {
-                        copyLegacyAsset(recorded, target, asset, current);
-                        createdTarget = true;
-                    }
-                } else {
-                    copyLegacyAsset(recorded, target, asset, current);
-                    createdTarget = true;
-                }
-            } else {
-                ManagedInferenceFiles.verifyCachedContent(
-                        target, asset.files(), asset.contentSha256(), () -> false);
-            }
-            InferenceModelAsset migrated = withLocation(asset, target);
-            writeMetadata(migrated);
-            catalog.saveAsset(migrated);
-            if (!moved) cleanupLegacyCopy(recorded);
-            log.info("已迁移 Deliverance 模型资产到插件 data: {}", asset.displayName());
-        } catch (Exception failure) {
-            rollbackLegacyAsset(asset, recorded, target, moved, createdTarget, failure);
-            log.warn("迁移 Deliverance 模型资产失败，保留旧副本 {}: {}",
-                    asset.displayName(), failure.getMessage());
-        }
-    }
-
-    private void cleanupLegacyCopy(Path recorded) {
-        try {
-            ManagedInferenceFiles.deleteTree(recorded);
-        } catch (IOException cleanupFailure) {
-            log.warn("模型已迁移但旧副本暂未清理 {}: {}",
-                    recorded, cleanupFailure.getMessage());
-        }
-    }
-
-    private void rollbackLegacyAsset(
-            InferenceModelAsset asset, Path recorded, Path target,
-            boolean moved, boolean createdTarget, Exception failure) {
-        try {
-            if (moved && target != null && Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.exists(recorded, LinkOption.NOFOLLOW_LINKS)) {
-                Files.createDirectories(recorded.getParent());
-                Files.move(target, recorded, StandardCopyOption.ATOMIC_MOVE);
-                deleteMetadata(asset.id());
-            } else if (createdTarget && target != null
-                    && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                ManagedInferenceFiles.deleteTree(target);
-                deleteMetadata(asset.id());
-            }
-        } catch (Exception rollbackFailure) {
-            failure.addSuppressed(rollbackFailure);
-        }
-    }
-
-    private void migrateLegacyDownloads(Layout current) {
-        Path legacy = legacyInferenceRoot.resolve("downloads").toAbsolutePath().normalize();
-        if (legacy.equals(current.downloadsRoot())
-                || !Files.isDirectory(legacy, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(legacy)) return;
-        try (var entries = Files.list(legacy)) {
-            for (Path source : entries.toList()) {
-                if (Files.isSymbolicLink(source)) {
-                    log.warn("忽略包含符号链接的旧模型下载: {}", source);
-                    continue;
-                }
-                Path target = current.downloadsRoot().resolve(source.getFileName())
-                        .toAbsolutePath().normalize();
-                ManagedInferenceFiles.requireUnder(current.downloadsRoot(), target);
-                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) continue;
-                try {
-                    moveOrCopyLegacyDownload(source, target, current);
-                } catch (Exception failure) {
-                    log.warn("迁移未完成的模型下载失败，保留原文件 {}: {}",
-                            source, failure.getMessage());
-                }
-            }
-        } catch (IOException failure) {
-            log.warn("扫描旧模型下载目录失败，保留原目录: {}", failure.getMessage());
-        }
-        ManagedInferenceFiles.deleteEmptyDirectories(legacy);
-    }
-
-    private void copyLegacyAsset(
-            Path source, Path target, InferenceModelAsset asset, Layout current) throws Exception {
-        Path stage = Files.createTempDirectory(current.stagingRoot(), "legacy-");
-        try {
-            ManagedInferenceFiles.copyDirectory(source, stage);
-            ManagedInferenceFiles.verifyCachedContent(
-                    stage, asset.files(), asset.contentSha256(), () -> false);
-            ManagedInferenceFiles.atomicMove(stage, target);
-        } finally {
-            if (Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
-                ManagedInferenceFiles.deleteTree(stage);
-            }
-        }
-    }
-
-    private void moveOrCopyLegacyDownload(Path source, Path target, Layout current)
-            throws Exception {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-            return;
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            try {
-                Files.move(source, target);
-                return;
-            } catch (IOException crossFileSystem) {
-                log.debug("旧下载无法直接移动，将复制并校验: {}", crossFileSystem.getMessage());
-            }
-        }
-        Path stage = current.stagingRoot().resolve("download-" + UUID.randomUUID())
-                .toAbsolutePath().normalize();
-        ManagedInferenceFiles.requireUnder(current.stagingRoot(), stage);
-        try {
-            copyAndVerifyLegacyDownload(source, stage);
-            ManagedInferenceFiles.atomicMove(stage, target);
-            ManagedInferenceFiles.deleteTree(source);
-        } finally {
-            if (Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
-                ManagedInferenceFiles.deleteTree(stage);
-            }
-        }
-    }
-
-    private static void copyAndVerifyLegacyDownload(Path source, Path stage) throws Exception {
-        if (Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
-            var expected = ManagedInferenceFiles.inspect(source, () -> false);
-            ManagedInferenceFiles.copyDirectory(source, stage);
-            var actual = ManagedInferenceFiles.inspect(stage, () -> false);
-            if (!ManagedInferenceFiles.sameSourceContent(expected, actual)) {
-                throw new IOException("跨盘迁移下载目录校验失败");
-            }
-        } else if (Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
-            Files.copy(source, stage, StandardCopyOption.COPY_ATTRIBUTES);
-            if (Files.size(source) != Files.size(stage)
-                    || !ManagedInferenceFiles.sha256(source, () -> false)
-                    .equals(ManagedInferenceFiles.sha256(stage, () -> false))) {
-                throw new IOException("跨盘迁移下载文件校验失败");
-            }
-        } else {
-            throw new IOException("旧模型下载不是普通文件或目录");
-        }
     }
 
     private void reconcileMetadata(Layout current) throws IOException {
@@ -404,15 +209,6 @@ final class ManagedInferenceStorage {
         Path value = root.resolve(assetId + ".json").toAbsolutePath().normalize();
         ManagedInferenceFiles.requireUnder(root, value);
         return value;
-    }
-
-    private Path legacyAssetPath(String hash) {
-        Path root = legacyInferenceRoot.resolve("assets").resolve("sha256")
-                .toAbsolutePath().normalize();
-        Path path = root.resolve(hash.substring(0, 2)).resolve(hash)
-                .toAbsolutePath().normalize();
-        ManagedInferenceFiles.requireUnder(root, path);
-        return path;
     }
 
     private static InferenceModelAsset withLocation(

@@ -19,18 +19,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InferenceQuickSetupContractsTest {
 
     @Test
-    void lightweightCatalogProjectionsNormalizeLegacyNullsAndRejectInvalidRows() {
+    void lightweightCatalogProjectionsNormalizeNullsAndRejectInvalidRows() {
         UUID id = UUID.randomUUID();
         var asset = new InferenceCatalogPort.ModelAssetSummary(
-                id, "  ", 0, InferenceModelAsset.State.READY, null);
+                id, "  ", "qwen2", 0, InferenceModelAsset.State.READY, null);
         assertEquals("本地模型", asset.displayName());
         assertEquals("", asset.failure());
         assertThrows(IllegalArgumentException.class, () -> new InferenceCatalogPort.ModelAssetSummary(
-                null, "model", 0, InferenceModelAsset.State.READY, ""));
+                null, "model", "qwen2", 0, InferenceModelAsset.State.READY, ""));
         assertThrows(IllegalArgumentException.class, () -> new InferenceCatalogPort.ModelAssetSummary(
-                id, "model", -1, InferenceModelAsset.State.READY, ""));
+                id, "model", "qwen2", -1, InferenceModelAsset.State.READY, ""));
         assertThrows(IllegalArgumentException.class, () -> new InferenceCatalogPort.ModelAssetSummary(
-                id, "model", 0, null, ""));
+                id, "model", "qwen2", 0, null, ""));
 
         var profile = new InferenceCatalogPort.ModelProfileSummary(id, UUID.randomUUID(),
                 InferenceModelProfile.Kind.GENERATION, InferenceModelProfile.State.READY,
@@ -53,7 +53,7 @@ class InferenceQuickSetupContractsTest {
     @Test
     void quickViewRecordsHaveSafeDefaultsAndValidateUserControlledValues() {
         var snapshot = new LocalInferenceQuickSetupApplicationService.QuickSnapshot(
-                null, null, " ", null, false, false, false);
+                null, null, " ", null, false, false, false, null, null);
         assertTrue(snapshot.models().isEmpty());
         assertEquals(LocalInferenceQuickSetupApplicationService.DEFAULT_ALIAS, snapshot.alias());
         assertEquals("", snapshot.endpoint());
@@ -66,24 +66,24 @@ class InferenceQuickSetupContractsTest {
                 () -> new LocalInferenceQuickSetupApplicationService.SupportedModelType("Qwen 2", "Qwen"));
 
         UUID assetId = UUID.randomUUID();
-        var model = new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, null, 0,
+        var model = new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, null, "qwen2", 0,
                 InferenceModelAsset.State.READY, null,
                 LocalInferenceQuickSetupApplicationService.Status.IMPORTED, null);
         assertEquals("本地模型", model.displayName());
         assertEquals("", model.failure());
         assertThrows(IllegalArgumentException.class,
-                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(null, "m", 0,
+                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(null, "m", "qwen2", 0,
                         InferenceModelAsset.State.READY, null,
                         LocalInferenceQuickSetupApplicationService.Status.IMPORTED, ""));
         assertThrows(IllegalArgumentException.class,
-                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", -1,
+                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", "qwen2", -1,
                         InferenceModelAsset.State.READY, null,
                         LocalInferenceQuickSetupApplicationService.Status.IMPORTED, ""));
         assertThrows(IllegalArgumentException.class,
-                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", 0,
+                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", "qwen2", 0,
                         null, null, LocalInferenceQuickSetupApplicationService.Status.IMPORTED, ""));
         assertThrows(IllegalArgumentException.class,
-                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", 0,
+                () -> new LocalInferenceQuickSetupApplicationService.LocalModel(assetId, "m", "qwen2", 0,
                         InferenceModelAsset.State.READY, null, null, ""));
 
         assertEquals(1, new LocalInferenceQuickSetupApplicationService.Progress(" done ", 2).fraction());
@@ -126,16 +126,16 @@ class InferenceQuickSetupContractsTest {
     void apiKeysAndGatewayEnforceLanAndRateLimitBoundaries() {
         Instant now = Instant.now();
         var gateway = new InferenceCatalogPort.GatewayConfiguration(false, null, 18080,
-                false, null, null, 1024, 1, null);
+                false, false, null, null, 1024, 1, false, null);
         assertEquals("127.0.0.1", gateway.bindAddress());
         assertTrue(gateway.loopbackOnly());
         assertTrue(new InferenceCatalogPort.GatewayConfiguration(false, "LOCALHOST", 1,
-                false, false, "", "", 1024, 1, now).loopbackOnly());
+                false, false, "", "", 1024, 1, false, now).loopbackOnly());
         assertFalse(new InferenceCatalogPort.GatewayConfiguration(false, "192.168.1.2", 65535,
-                false, true, "", "", 64L * 1024 * 1024, 3600, now).loopbackOnly());
+                false, true, "", "", 64L * 1024 * 1024, 3600, false, now).loopbackOnly());
         for (String wildcard : List.of("0.0.0.0", "::")) {
             assertThrows(IllegalArgumentException.class, () -> new InferenceCatalogPort.GatewayConfiguration(
-                    false, wildcard, 1, false, false, "", "", 1024, 1, now));
+                    false, wildcard, 1, false, false, "", "", 1024, 1, false, now));
         }
         assertThrows(IllegalArgumentException.class, () -> gateway(0, 1024, 1));
         assertThrows(IllegalArgumentException.class, () -> gateway(65536, 1024, 1));
@@ -173,7 +173,7 @@ class InferenceQuickSetupContractsTest {
     private static InferenceCatalogPort.GatewayConfiguration gateway(
             int port, long bytes, int timeout) {
         return new InferenceCatalogPort.GatewayConfiguration(false, "127.0.0.1", port,
-                false, false, "", "", bytes, timeout, Instant.now());
+                false, false, "", "", bytes, timeout, false, Instant.now());
     }
 
     private static InferenceCatalogPort.ApiKeyRecord apiKey(

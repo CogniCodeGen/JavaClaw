@@ -4,7 +4,6 @@ import com.javaclaw.application.inference.InferenceCatalogPort;
 import com.javaclaw.application.inference.InferenceManagementApplicationService;
 import com.javaclaw.application.inference.InferenceRuntimePort;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.ServicePluginInfo;
-import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.State;
 import com.javaclaw.application.workspace.WorkspaceApplicationService;
 import com.javaclaw.inference.api.InferenceModelAsset;
 import com.javaclaw.inference.api.InferenceModelProfile;
@@ -15,23 +14,15 @@ import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
 import javafx.beans.property.ReadOnlyBooleanProperty;
-import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.control.ToggleButton;
-import javafx.scene.control.ToggleGroup;
-import javafx.scene.input.KeyCode;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 import java.io.IOException;
-import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -61,38 +52,11 @@ public final class InferencePluginConfigurationFactory {
         this.fx = Objects.requireNonNull(fx, "fx");
     }
 
-    public Component createModels(ServicePluginInfo plugin) {
-        return createModels(plugin, () -> { });
-    }
-
-    public Component createModels(ServicePluginInfo plugin, Runnable runtimeConfigurationChanged) {
-        return createModels(plugin, runtimeConfigurationChanged, (ignored, failure) -> { });
-    }
-
-    public Component createModels(
-            ServicePluginInfo plugin,
-            Runnable runtimeConfigurationChanged,
-            BiConsumer<String, Throwable> failureReporter) {
-        return new ComponentImpl(plugin, EnumSet.of(Page.PROFILES, Page.ASSETS),
-                ComponentMode.LEGACY_MODELS, runtimeConfigurationChanged, failureReporter,
-                null, () -> { });
-    }
-
-    public Component createApi(ServicePluginInfo plugin) {
-        return createApi(plugin, (ignored, failure) -> { });
-    }
-
-    public Component createApi(
-            ServicePluginInfo plugin, BiConsumer<String, Throwable> failureReporter) {
-        return new ComponentImpl(plugin, EnumSet.of(Page.API), ComponentMode.LEGACY_API,
-                () -> { }, failureReporter, null, () -> { });
-    }
-
     public Component createCatalog(
             ServicePluginInfo plugin,
             Runnable runtimeConfigurationChanged,
             BiConsumer<String, Throwable> failureReporter) {
-        return new ComponentImpl(plugin, EnumSet.of(Page.ASSETS), ComponentMode.CATALOG,
+        return new ComponentImpl(plugin, ComponentMode.CATALOG,
                 runtimeConfigurationChanged, failureReporter, null, () -> { });
     }
 
@@ -104,7 +68,7 @@ public final class InferencePluginConfigurationFactory {
             InferenceModelProfile.Kind requestedKind,
             Runnable openCatalog,
             RuntimeControls runtimeControls) {
-        return new ComponentImpl(plugin, EnumSet.allOf(Page.class), ComponentMode.SERVICE,
+        return new ComponentImpl(plugin, ComponentMode.SERVICE,
                 runtimeConfigurationChanged, failureReporter,
                 requestedAsset == null ? null : new AssetRequest(requestedAsset, requestedKind),
                 openCatalog, runtimeControls);
@@ -138,7 +102,6 @@ public final class InferencePluginConfigurationFactory {
 
     private final class ComponentImpl implements Component {
         private final ServicePluginInfo plugin;
-        private final List<Page> pages;
         private final ComponentMode mode;
         private final Runnable runtimeConfigurationChanged;
         private final BiConsumer<String, Throwable> failureReporter;
@@ -147,12 +110,6 @@ public final class InferencePluginConfigurationFactory {
         private final VBox root = new VBox(10);
         private final StackPane content = new StackPane();
         private final Label status = new Label();
-        private final Label serviceState = new Label();
-        private final Label modelCount = new Label();
-        private final Button loadModel = new Button("＋ 加载模型");
-        private final Button backToModels = new Button("← 已配置模型");
-        private final Map<InferenceModelProfile.Kind, ToggleButton> kindButtons =
-                new EnumMap<>(InferenceModelProfile.Kind.class);
         private final UiAsyncAction<ViewSnapshot> refresh;
         private ViewHandle<Node> activeHandle;
         private Page selected;
@@ -161,24 +118,21 @@ public final class InferencePluginConfigurationFactory {
         private UUID pendingProfileEdit;
         private UUID preferredServiceProfile;
         private String statusAfterRefresh = "";
-        private boolean serviceObservedRunning;
         private boolean closed;
 
         private ComponentImpl(
                 ServicePluginInfo plugin,
-                Set<Page> pages,
                 ComponentMode mode,
                 Runnable runtimeConfigurationChanged,
                 BiConsumer<String, Throwable> failureReporter,
                 AssetRequest requestedAsset,
                 Runnable openCatalog) {
-            this(plugin, pages, mode, runtimeConfigurationChanged, failureReporter,
+            this(plugin, mode, runtimeConfigurationChanged, failureReporter,
                     requestedAsset, openCatalog, RuntimeControls.none());
         }
 
         private ComponentImpl(
                 ServicePluginInfo plugin,
-                Set<Page> pages,
                 ComponentMode mode,
                 Runnable runtimeConfigurationChanged,
                 BiConsumer<String, Throwable> failureReporter,
@@ -186,7 +140,6 @@ public final class InferencePluginConfigurationFactory {
                 Runnable openCatalog,
                 RuntimeControls runtimeControls) {
             this.plugin = Objects.requireNonNull(plugin, "plugin");
-            this.pages = List.copyOf(pages);
             this.mode = Objects.requireNonNull(mode, "mode");
             this.runtimeConfigurationChanged = Objects.requireNonNull(
                     runtimeConfigurationChanged, "runtimeConfigurationChanged");
@@ -202,15 +155,6 @@ public final class InferencePluginConfigurationFactory {
             content.getStyleClass().add("service-plugin-component-content");
             status.getStyleClass().add("settings-hint");
             status.setWrapText(true);
-            if (mode == ComponentMode.LEGACY_MODELS) {
-                root.getChildren().add(modelToolbar());
-                root.setOnKeyPressed(event -> {
-                    if (event.isShortcutDown() && event.getCode() == KeyCode.L) {
-                        show(Page.ASSETS);
-                        event.consume();
-                    }
-                });
-            }
             root.getChildren().addAll(content, status);
         }
 
@@ -244,64 +188,6 @@ public final class InferencePluginConfigurationFactory {
             if (activeHandle != null) InferencePluginConfigurationFactory.cancel(activeHandle);
         }
 
-        private HBox modelToolbar() {
-            HBox tabs = new HBox(6);
-            tabs.setAlignment(Pos.CENTER_LEFT);
-            tabs.setId("inferenceModelToolbar");
-            tabs.getStyleClass().addAll("jc-card", "service-plugin-model-toolbar");
-            serviceState.setId("inferenceServiceState");
-            serviceObservedRunning = plugin.state() == State.HEALTHY;
-            updateServiceState(false);
-            tabs.getChildren().add(serviceState);
-            ToggleGroup group = new ToggleGroup();
-            addKindTab(tabs, group, InferenceModelProfile.Kind.GENERATION,
-                    "inferenceGenerationKindTab");
-            addKindTab(tabs, group, InferenceModelProfile.Kind.EMBEDDING,
-                    "inferenceEmbeddingKindTab");
-            kindButtons.get(selectedKind).setSelected(true);
-            modelCount.setId("inferenceModelCount");
-            modelCount.getStyleClass().add("settings-hint");
-            Region spacer = new Region();
-            HBox.setHgrow(spacer, Priority.ALWAYS);
-            backToModels.setId("inferenceBackToModelsButton");
-            backToModels.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
-            backToModels.setOnAction(ignored -> show(Page.PROFILES));
-            loadModel.setId("inferenceLoadModelButton");
-            loadModel.getStyleClass().addAll("jc-btn", "jc-btn-primary", "jc-btn-sm");
-            loadModel.setOnAction(ignored -> show(Page.ASSETS));
-            tabs.getChildren().addAll(modelCount, spacer, backToModels, loadModel);
-            updateModelToolbar();
-            return tabs;
-        }
-
-        private void addKindTab(
-                HBox tabs, ToggleGroup group, InferenceModelProfile.Kind kind, String id) {
-            ToggleButton button = new ToggleButton(InferenceModelPurposeClassifier.kindLabel(kind));
-            button.setId(id);
-            button.setToggleGroup(group);
-            button.getStyleClass().addAll("settings-tab", "service-plugin-kind-tab");
-            button.setOnAction(ignored -> showKind(kind));
-            kindButtons.put(kind, button);
-            tabs.getChildren().add(button);
-        }
-
-        private boolean modelPages() {
-            return mode == ComponentMode.LEGACY_MODELS;
-        }
-
-        private void showKind(InferenceModelProfile.Kind kind) {
-            if (closed || kind == null) return;
-            if (kind == selectedKind) {
-                ToggleButton current = kindButtons.get(kind);
-                if (current != null) current.setSelected(true);
-                return;
-            }
-            selectedKind = kind;
-            ToggleButton button = kindButtons.get(kind);
-            if (button != null) button.setSelected(true);
-            show(selected == null ? pages.getFirst() : selected, true);
-        }
-
         private void show(Page page) {
             show(page, false);
         }
@@ -309,7 +195,6 @@ public final class InferencePluginConfigurationFactory {
         private void show(Page page, boolean force) {
             if (closed || !force && selected == page && activeHandle != null) return;
             selected = page;
-            updateModelToolbar();
             try {
                 closeActive();
             } catch (RuntimeException failure) {
@@ -382,13 +267,9 @@ public final class InferencePluginConfigurationFactory {
             switch (page) {
                 case PROFILES -> {
                     var controller = handle.controller(InferenceProfileSettingsController.class);
-                    if (mode == ComponentMode.SERVICE) {
-                        controller.configure(this::refresh, runtimeConfigurationChanged,
-                                selectedKind, InferenceProfileLoadFlow.of(
-                                        () -> show(Page.API, true), this::profileLoadCompleted));
-                    } else {
-                        controller.configure(this::refresh, runtimeConfigurationChanged, selectedKind);
-                    }
+                    controller.configure(this::refresh, runtimeConfigurationChanged,
+                            selectedKind, InferenceProfileLoadFlow.of(
+                                    () -> show(Page.API, true), this::profileLoadCompleted));
                 }
                 case ASSETS -> {
                     var controller = handle.controller(InferenceAssetSettingsController.class);
@@ -398,8 +279,6 @@ public final class InferencePluginConfigurationFactory {
                     } else if (mode == ComponentMode.SERVICE) {
                         controller.configure(this::refresh, selectedKind, this::modelSelected,
                                 InferenceAssetSettingsController.Mode.LOCAL_ONLY_PICKER, openCatalog);
-                    } else {
-                        controller.configure(this::refresh, selectedKind, this::modelSelected);
                     }
                 }
                 case API -> {
@@ -407,16 +286,12 @@ public final class InferencePluginConfigurationFactory {
                     var presentation = new InferenceApiSettingsController.PluginPresentation(
                             plugin.state(), plugin.endpointCapabilities(), plugin.pid(),
                             plugin.recentLogs(), plugin.lastError());
-                    if (mode == ComponentMode.SERVICE) {
-                        controller.configure(this::refresh, () -> show(Page.ASSETS), profileId -> {
-                            pendingProfileEdit = profileId;
-                            show(Page.PROFILES, true);
-                        }, presentation, runtimeControls);
-                        controller.preferServiceProfile(preferredServiceProfile);
-                        preferredServiceProfile = null;
-                    } else {
-                        controller.configure(this::refresh, () -> show(Page.ASSETS), presentation);
-                    }
+                    controller.configure(this::refresh, () -> show(Page.ASSETS), profileId -> {
+                        pendingProfileEdit = profileId;
+                        show(Page.PROFILES, true);
+                    }, presentation, runtimeControls);
+                    controller.preferServiceProfile(preferredServiceProfile);
+                    preferredServiceProfile = null;
                 }
             }
         }
@@ -424,15 +299,6 @@ public final class InferencePluginConfigurationFactory {
         private void apply(Page page, ViewSnapshot view) {
             if (closed || page != selected || activeHandle == null) return;
             InferenceManagementApplicationService.Snapshot value = view.snapshot();
-            long configured = value.profiles().stream()
-                    .filter(profile -> profile.kind() == selectedKind).count();
-            long running = value.profiles().stream()
-                    .filter(profile -> profile.kind() == selectedKind)
-                    .filter(profile -> view.statuses().containsKey(profile.id())).count();
-            updateServiceState(running > 0);
-            modelCount.setText(running > 0
-                    ? running + " 个已加载 · " + configured + " 个已配置"
-                    : configured + " 个已配置");
             switch (page) {
                 case PROFILES -> activeHandle.controller(InferenceProfileSettingsController.class)
                         .apply(value, view.statuses());
@@ -474,8 +340,6 @@ public final class InferencePluginConfigurationFactory {
                 statusAfterRefresh = "已选择"
                         + InferenceModelPurposeClassifier.kindLabel(detected) + "，确认后即可加载";
                 selectedKind = detected;
-                ToggleButton button = kindButtons.get(detected);
-                if (button != null) button.setSelected(true);
             } else {
                 statusAfterRefresh = "模型可用于推理和向量化，确认后即可加载";
             }
@@ -492,27 +356,6 @@ public final class InferencePluginConfigurationFactory {
                     requested == Page.API ? management.modelServiceSnapshot()
                             : com.javaclaw.application.inference.InferenceApiServerControlPort.NOOP
                             .serviceSnapshot());
-        }
-
-        private void updateModelToolbar() {
-            if (mode != ComponentMode.LEGACY_MODELS) return;
-            boolean assets = selected == Page.ASSETS;
-            backToModels.setVisible(assets);
-            backToModels.setManaged(assets);
-            loadModel.setVisible(!assets);
-            loadModel.setManaged(!assets);
-        }
-
-        private void updateServiceState(boolean modelRunning) {
-            serviceObservedRunning |= modelRunning;
-            String text = serviceObservedRunning ? "服务运行中" : switch (plugin.state()) {
-                case STARTING -> "服务启动中";
-                case DEGRADED -> "服务需关注";
-                default -> "服务已停止";
-            };
-            serviceState.setText(text);
-            serviceState.getStyleClass().setAll("jc-badge",
-                    serviceObservedRunning ? "jc-badge-ok" : "jc-badge-stopped");
         }
 
         private InferenceManagementApplicationService.Snapshot filtered(
@@ -615,8 +458,6 @@ public final class InferencePluginConfigurationFactory {
     }
 
     private enum ComponentMode {
-        LEGACY_MODELS(Page.PROFILES),
-        LEGACY_API(Page.API),
         CATALOG(Page.ASSETS),
         SERVICE(Page.API);
 

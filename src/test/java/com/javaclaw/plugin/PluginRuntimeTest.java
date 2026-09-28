@@ -40,10 +40,11 @@ class PluginRuntimeTest {
         }
         PluginDescriptor descriptor = new PluginDescriptor(
                 "failing-test", "Failing", "1.0.0", "3.0",
-                FailingPlugin.class.getName(), "test", Set.of(), List.of());
+                FailingPlugin.class.getName(), "test", Set.of(), List.of(),
+                PluginDescriptor.PluginType.IN_PROCESS, null, "", null, null);
         try (ManagedTaskExecutor executor = new ManagedTaskExecutor()) {
             PluginRuntime runtime = new PluginRuntime(
-                    descriptor, jar, getClass().getClassLoader(),
+                    descriptor, jar, null, null, Runnable::run, getClass().getClassLoader(),
                     "test-workspace", executor, null,
                     (pluginId, workspaceId) -> {
                         throw new AssertionError("未授权 STORAGE 时不应创建存储能力");

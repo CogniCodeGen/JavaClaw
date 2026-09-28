@@ -12,7 +12,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.*;
 import java.util.function.Supplier;
 import java.util.function.Predicate;
@@ -89,7 +88,6 @@ public final class McpConfigManager {
     public synchronized void load() {
         String workspaceId = workspaceIdSupplier.get();
         Map<String, McpServerConfig> loaded = new LinkedHashMap<>();
-        boolean migrationNeeded = false;
         String sql = """
                 SELECT name, command, args_json, env_json, url, headers_json, enabled
                 FROM mcp_servers
@@ -108,8 +106,6 @@ public final class McpConfigManager {
                     String envStored = rs.getString("env_json");
                     String urlStored = rs.getString("url");
                     String headersStored = rs.getString("headers_json");
-                    migrationNeeded |= needsEncryption(argsStored) || needsEncryption(envStored)
-                            || needsEncryption(urlStored) || needsEncryption(headersStored);
                     config.setArgs(readStringList(decryptRequired(argsStored)));
                     config.setEnv(readStringMap(decryptRequired(envStored)));
                     config.setUrl(decryptRequired(urlStored));
@@ -118,55 +114,15 @@ public final class McpConfigManager {
                     loaded.put(config.getName(), config);
                 }
             }
-            if (migrationNeeded) {
-                rewriteEncryptedSnapshot(c, workspaceId, loaded.values());
-                log.info("已把工作区 {} 的旧 MCP 明文配置迁移为加密存储", workspaceId);
-            }
             servers.clear();
             servers.putAll(loaded);
             loadedWorkspaceId = workspaceId;
             log.info("MCP 配置已从 H2 加载，共 {} 个服务器", servers.size());
         } catch (SQLException | RuntimeException e) {
             log.error("从 H2 加载 MCP 配置失败", e);
-            throw new IllegalStateException("MCP 配置加载或加密迁移失败", e);
+            throw new IllegalStateException("MCP 配置加载失败", e);
         }
 
-    }
-
-    /**
-     * 保存配置到 H2
-     */
-    public synchronized void save() {
-        String workspaceId = requireLoadedWorkspace();
-        String insert = """
-                INSERT INTO mcp_servers(
-                    workspace_id, name, command, args_json, env_json, url, headers_json, enabled, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = databaseAccess.open();
-             PreparedStatement del = c.prepareStatement("DELETE FROM mcp_servers WHERE workspace_id = ?");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (McpServerConfig config : servers.values()) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, config.getName());
-                ps.setString(3, config.getCommand());
-                ps.setString(4, encryptor.apply(objectMapper.writeValueAsString(config.getArgs())));
-                ps.setString(5, encryptor.apply(objectMapper.writeValueAsString(config.getEnv())));
-                ps.setString(6, encryptor.apply(config.getUrl()));
-                ps.setString(7, encryptor.apply(objectMapper.writeValueAsString(config.getHeaders())));
-                ps.setBoolean(8, config.isEnabled());
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-            log.info("MCP 配置已保存到 H2: {}", databaseAccess.description());
-        } catch (SQLException | IOException | RuntimeException e) {
-            log.error("保存 MCP 配置到 H2 失败", e);
-            throw new IllegalStateException("MCP 配置未能确认写入数据库", e);
-        }
     }
 
     /**
@@ -202,27 +158,7 @@ public final class McpConfigManager {
     }
 
     /**
-     * 添加或更新服务器配置
-     */
-    public synchronized void putServer(McpServerConfig config) {
-        Objects.requireNonNull(config, "config");
-        McpServerConfig stored = copyOf(config);
-        McpServerConfig previous = servers.put(stored.getName(), stored);
-        try {
-            save();
-        } catch (RuntimeException e) {
-            if (previous == null) servers.remove(stored.getName());
-            else servers.put(stored.getName(), previous);
-            throw e;
-        }
-        log.info("MCP 服务器配置已更新: {}", stored.getName());
-    }
-
-    /**
      * 单条事务式写入；只有 H2 提交成功后才更新内存快照。
-     *
-     * <p>对话管理工具使用本入口，避免兼容方法 {@link #putServer(McpServerConfig)}
-     * 吞掉保存异常后仍向模型返回“已创建”。</p>
      *
      * @throws IllegalStateException 序列化或数据库写入失败
      */
@@ -271,22 +207,6 @@ public final class McpConfigManager {
             return values;
         } catch (SQLException | IOException | RuntimeException e) {
             throw new IllegalStateException("MCP 配置写入 H2 失败: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 删除服务器配置
-     */
-    public synchronized void removeServer(String name) {
-        McpServerConfig removed = servers.remove(name);
-        if (removed != null) {
-            try {
-                save();
-            } catch (RuntimeException e) {
-                servers.put(name, removed);
-                throw e;
-            }
-            log.info("MCP 服务器配置已删除: {}", name);
         }
     }
 
@@ -359,14 +279,13 @@ public final class McpConfigManager {
         }
     }
 
-    private boolean needsEncryption(String stored) {
-        return stored != null && !stored.isBlank() && !encryptedValue.test(stored);
-    }
-
     private String decryptRequired(String stored) {
         if (stored == null || stored.isBlank()) return stored;
+        if (!encryptedValue.test(stored)) {
+            throw new IllegalStateException("MCP 配置不是加密格式，已拒绝加载");
+        }
         String plain = decryptor.apply(stored);
-        if (encryptedValue.test(stored) && encryptedValue.test(plain)) {
+        if (encryptedValue.test(plain)) {
             throw new IllegalStateException("MCP 加密配置无法解密，已拒绝加载");
         }
         return plain;
@@ -374,39 +293,6 @@ public final class McpConfigManager {
 
     private static boolean hasEncryptedEnvelope(String value) {
         return value != null && value.startsWith("ENC(") && value.endsWith(")");
-    }
-
-    private void rewriteEncryptedSnapshot(Connection c, String workspaceId,
-                                          Collection<McpServerConfig> configs) throws SQLException {
-        String sql = """
-                UPDATE mcp_servers
-                SET args_json = ?, env_json = ?, url = ?, headers_json = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE workspace_id = ? AND name = ?
-                """;
-        try {
-            c.setAutoCommit(false);
-            try (PreparedStatement ps = c.prepareStatement(sql)) {
-                for (McpServerConfig config : configs) {
-                    ps.setString(1, encryptor.apply(objectMapper.writeValueAsString(config.getArgs())));
-                    ps.setString(2, encryptor.apply(objectMapper.writeValueAsString(config.getEnv())));
-                    ps.setString(3, encryptor.apply(config.getUrl()));
-                    ps.setString(4, encryptor.apply(objectMapper.writeValueAsString(config.getHeaders())));
-                    ps.setString(5, workspaceId);
-                    ps.setString(6, config.getName());
-                    ps.addBatch();
-                }
-                ps.executeBatch();
-            }
-            c.commit();
-        } catch (SQLException | IOException | RuntimeException e) {
-            try {
-                c.rollback();
-            } catch (SQLException rollbackFailure) {
-                e.addSuppressed(rollbackFailure);
-            }
-            if (e instanceof SQLException sqlException) throw sqlException;
-            throw new SQLException("MCP 明文配置加密迁移失败", e);
-        }
     }
 
     private String requireLoadedWorkspace() {

@@ -152,6 +152,9 @@ public final class ExtensionRegistrySnapshot {
         List<OwnedContribution<com.javaclaw.framework.spi.PromptContributor>> prompts = new ArrayList<>();
         List<OwnedContribution<com.javaclaw.framework.spi.ContextProvider>> contexts = new ArrayList<>();
         List<OwnedContribution<com.javaclaw.framework.spi.RetrieverContribution>> retrievers = new ArrayList<>();
+        List<OwnedContribution<com.javaclaw.framework.spi.DeferredContextSource>> deferredContextSources = new ArrayList<>();
+        List<OwnedContribution<com.javaclaw.framework.spi.FixedContextSource>> fixedContextSources = new ArrayList<>();
+        List<OwnedContribution<com.javaclaw.framework.spi.TurnPreparation>> turnPreparations = new ArrayList<>();
         List<OwnedContribution<com.javaclaw.framework.spi.AdvisorSpecFactory>> advisors = new ArrayList<>();
         List<OwnedContribution<com.javaclaw.framework.spi.OutputGuard>> guards = new ArrayList<>();
         List<OwnedContribution<com.javaclaw.framework.spi.ToolFactory>> tools = new ArrayList<>();
@@ -181,6 +184,9 @@ public final class ExtensionRegistrySnapshot {
         Set<String> workflowNodeTypes = new LinkedHashSet<>();
         Set<String> workflowTemplateIds = new LinkedHashSet<>();
         Set<String> infrastructureIds = new LinkedHashSet<>();
+        Set<String> deferredContextSourceIds = new LinkedHashSet<>();
+        Set<String> fixedContextSourceIds = new LinkedHashSet<>();
+        Set<String> turnPreparationIds = new LinkedHashSet<>();
         for (ExtensionContributions value : contributions) {
             putUnique(capabilities, value.capabilities(), "capability");
             putUnique(eventTypes, value.eventTypes(), "event schema");
@@ -188,6 +194,12 @@ public final class ExtensionRegistrySnapshot {
             prompts.addAll(value.promptContributors());
             contexts.addAll(value.contextProviders());
             retrievers.addAll(value.retrievers());
+            addUnique(deferredContextSources, value.deferredContextSources(),
+                    deferredContextSourceIds, owned -> owned.value().id(), "deferred context source");
+            addUnique(fixedContextSources, value.fixedContextSources(),
+                    fixedContextSourceIds, owned -> owned.value().id(), "fixed context source");
+            addUnique(turnPreparations, value.turnPreparations(),
+                    turnPreparationIds, owned -> owned.value().id(), "turn preparation");
             advisors.addAll(value.advisors());
             guards.addAll(value.outputGuards());
             tools.addAll(value.tools());
@@ -214,7 +226,8 @@ public final class ExtensionRegistrySnapshot {
                     "infrastructure provider");
         }
         return new ExtensionContributions(capabilities, eventTypes, definitionValidators,
-                prompts, contexts, retrievers,
+                prompts, contexts, retrievers, deferredContextSources, fixedContextSources,
+                turnPreparations,
                 advisors, guards, tools, toolProviders, toolPolicies, toolResultPostProcessors,
                 modelPolicies, permissionPolicies, budgetPolicies, retryPolicies,
                 evaluations, runProfiles, workflowNodes, workflowTemplates, subAgentPolicies,

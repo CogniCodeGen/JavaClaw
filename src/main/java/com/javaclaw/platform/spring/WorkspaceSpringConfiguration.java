@@ -50,7 +50,7 @@ import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
 import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
 import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
-import com.javaclaw.infrastructure.settings.LegacyCommunicationSettingsAdapter;
+import com.javaclaw.infrastructure.settings.CommunicationSettingsAdapter;
 import com.javaclaw.infrastructure.schedule.ScheduleManagerAdapter;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
@@ -263,20 +263,8 @@ public class WorkspaceSpringConfiguration {
     AgentDefinitionPort agentDefinitionPort(
             WorkspaceContext workspace,
             com.javaclaw.framework.api.AgentStudioClient studio,
-            com.fasterxml.jackson.databind.ObjectMapper json,
-            com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator migration) {
+            com.fasterxml.jackson.databind.ObjectMapper json) {
         return new StudioAgentDefinitionAdapter(studio, workspace.workspaceId(), json);
-    }
-
-    @Bean
-    com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator legacyCustomAgentDraftMigrator(
-            WorkspaceContext workspace,
-            JdbcTemplate jdbc,
-            com.javaclaw.framework.api.AgentStudioClient studio,
-            com.fasterxml.jackson.databind.ObjectMapper json,
-            com.javaclaw.framework.builtin.BuiltinDefinitionRegistry.Registration bootstrap) {
-        return new com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator(
-                workspace.workspaceId(), jdbc, studio, json);
     }
 
     @Bean
@@ -470,7 +458,7 @@ public class WorkspaceSpringConfiguration {
     CommunicationSettingsPort communicationSettingsPort(
             com.javaclaw.config.EmailConfig email,
             com.javaclaw.config.NotificationConfig notifications) {
-        return new LegacyCommunicationSettingsAdapter(email, notifications);
+        return new CommunicationSettingsAdapter(email, notifications);
     }
 
     @Bean

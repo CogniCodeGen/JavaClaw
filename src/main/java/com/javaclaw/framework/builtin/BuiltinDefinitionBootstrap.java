@@ -3,8 +3,12 @@ package com.javaclaw.framework.builtin;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.javaclaw.framework.api.*;
+import com.javaclaw.framework.api.AgentDefinitionDraft;
+import com.javaclaw.framework.api.CapabilityId;
 import com.javaclaw.framework.api.ModelPolicyRefs;
+import com.javaclaw.framework.api.PermissionSet;
+import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunProfileDraft;
 import com.javaclaw.framework.store.JdbcAgentDefinitionStore;
 import com.javaclaw.framework.extension.ExtensionManager;
 import com.javaclaw.framework.extension.ExtensionRegistrySnapshot;
@@ -104,7 +108,8 @@ public final class BuiltinDefinitionBootstrap {
         capabilities.put(new CapabilityId("gepa.goal"), enabled());
         capabilities.put(new CapabilityId("knowledge.rag"), enabled());
         capabilities.put(new CapabilityId("skill.runtime"), enabled());
-        capabilities.put(new CapabilityId("context.compaction"), enabled());
+        capabilities.put(new CapabilityId("context.compaction"), contextCompaction());
+        capabilities.put(new CapabilityId("context.on_demand"), contextOnDemand());
         capabilities.put(new CapabilityId("tool.result-eviction"), enabled());
         capabilities.put(new CapabilityId("mcp.tools"), enabled());
         capabilities.put(new CapabilityId("host.tools"), enabled());
@@ -124,6 +129,27 @@ public final class BuiltinDefinitionBootstrap {
 
     private static ObjectNode object() {
         return JsonNodeFactory.instance.objectNode();
+    }
+
+    private static ObjectNode contextCompaction() {
+        ObjectNode value = enabled();
+        value.put("maxMessageCharacters", 48_000);
+        value.put("maxToolSchemaCharacters", 48_000);
+        value.put("retainedToolExchanges", 4);
+        value.put("maxToolResultCharacters", 16_000);
+        value.put("maxTools", 64);
+        return value;
+    }
+
+    private static ObjectNode contextOnDemand() {
+        ObjectNode value = enabled();
+        value.put("searches", 2);
+        value.put("fetches", 3);
+        value.put("candidates", 32);
+        value.put("plannerInputChars", 8_000);
+        value.put("selectedBodyChars", 12_000);
+        value.put("selectedTools", 8);
+        return value;
     }
 
     private static ObjectNode enabled() {

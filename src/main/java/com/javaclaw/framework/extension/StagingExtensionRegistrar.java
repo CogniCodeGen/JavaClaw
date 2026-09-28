@@ -21,6 +21,9 @@ final class StagingExtensionRegistrar implements ExtensionRegistrar {
     private final List<OwnedContribution<PromptContributor>> prompts;
     private final List<OwnedContribution<ContextProvider>> contexts;
     private final List<OwnedContribution<RetrieverContribution>> retrievers;
+    private final List<OwnedContribution<DeferredContextSource>> deferredContextSources;
+    private final List<OwnedContribution<FixedContextSource>> fixedContextSources;
+    private final List<OwnedContribution<TurnPreparation>> turnPreparations;
     private final List<OwnedContribution<AdvisorSpecFactory>> advisors;
     private final List<OwnedContribution<OutputGuard>> guards;
     private final List<OwnedContribution<ToolFactory>> tools;
@@ -49,6 +52,9 @@ final class StagingExtensionRegistrar implements ExtensionRegistrar {
         prompts = builder.prompts;
         contexts = builder.contexts;
         retrievers = builder.retrievers;
+        deferredContextSources = builder.deferredContextSources;
+        fixedContextSources = builder.fixedContextSources;
+        turnPreparations = builder.turnPreparations;
         advisors = builder.advisors;
         guards = builder.guards;
         tools = builder.tools;
@@ -107,6 +113,15 @@ final class StagingExtensionRegistrar implements ExtensionRegistrar {
     @Override public void promptContributor(PromptContributor value) { prompts.add(owned(value)); }
     @Override public void contextProvider(ContextProvider value) { contexts.add(owned(value)); }
     @Override public void retriever(RetrieverContribution value) { retrievers.add(owned(value)); }
+    @Override public void deferredContextSource(DeferredContextSource value) {
+        deferredContextSources.add(owned(value));
+    }
+    @Override public void fixedContextSource(FixedContextSource value) {
+        fixedContextSources.add(owned(value));
+    }
+    @Override public void turnPreparation(TurnPreparation value) {
+        turnPreparations.add(owned(value));
+    }
     @Override public void advisor(AdvisorSpecFactory value) { advisors.add(owned(value)); }
     @Override public void outputGuard(OutputGuard value) { guards.add(owned(value)); }
     @Override public void tool(ToolFactory value) { tools.add(owned(value)); }
@@ -153,6 +168,11 @@ final class StagingExtensionRegistrar implements ExtensionRegistrar {
         private final List<OwnedContribution<PromptContributor>> prompts = new ArrayList<>();
         private final List<OwnedContribution<ContextProvider>> contexts = new ArrayList<>();
         private final List<OwnedContribution<RetrieverContribution>> retrievers = new ArrayList<>();
+        private final List<OwnedContribution<DeferredContextSource>> deferredContextSources =
+                new ArrayList<>();
+        private final List<OwnedContribution<FixedContextSource>> fixedContextSources =
+                new ArrayList<>();
+        private final List<OwnedContribution<TurnPreparation>> turnPreparations = new ArrayList<>();
         private final List<OwnedContribution<AdvisorSpecFactory>> advisors = new ArrayList<>();
         private final List<OwnedContribution<OutputGuard>> guards = new ArrayList<>();
         private final List<OwnedContribution<ToolFactory>> tools = new ArrayList<>();
@@ -179,7 +199,8 @@ final class StagingExtensionRegistrar implements ExtensionRegistrar {
         ExtensionContributions build() {
             return new ExtensionContributions(capabilities, eventTypes, definitionValidators,
                     prompts, contexts,
-                    retrievers, advisors, guards, tools, toolProviders, toolPolicies,
+                    retrievers, deferredContextSources, fixedContextSources, turnPreparations,
+                    advisors, guards, tools, toolProviders, toolPolicies,
                     toolResultPostProcessors, modelPolicies, permissionPolicies,
                     budgetPolicies, retryPolicies, evaluations, runProfiles, workflowNodes,
                     workflowTemplates, subAgentPolicies, codecs, migrators, jobs,

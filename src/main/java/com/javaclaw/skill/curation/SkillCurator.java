@@ -96,7 +96,7 @@ public class SkillCurator {
      *
      * @param userInput   用户输入
      * @param replyText   助手回复
-     * @param traces      本轮执行轨迹（ExecutionMonitor.getTraces() 快照）
+     * @param traces      本轮执行轨迹
      * @param successRate 滑窗成功率
      */
     public Mono<Void> distillFromChatTurn(String userInput, String replyText,

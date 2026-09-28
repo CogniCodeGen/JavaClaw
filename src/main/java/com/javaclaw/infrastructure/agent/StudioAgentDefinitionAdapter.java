@@ -16,7 +16,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Legacy settings-screen adapter backed exclusively by Agent Studio drafts and publications. */
+/** Agent management settings adapter backed by Agent Studio drafts and publications. */
 public final class StudioAgentDefinitionAdapter implements AgentDefinitionPort {
     private final AgentStudioClient studio;
     private final String workspaceId;

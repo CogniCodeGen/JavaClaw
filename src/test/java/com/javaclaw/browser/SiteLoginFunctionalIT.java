@@ -31,8 +31,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,14 +106,12 @@ class SiteLoginFunctionalIT {
                 root.getBean(DatabaseAccess.class), currentWorkspaceId(),
                 root.getBean(com.javaclaw.config.CredentialCipher.class));
         removeTestSites();
-        clearWorkspaceBrowserState();
     }
 
     @AfterEach
     void restoreSharedState() throws Exception {
         try {
             removeTestSites();
-            clearWorkspaceBrowserState();
         } finally {
             ToolConfirmationManager.setPort(previousPort);
             ToolConfirmationManager.setEnabled(previousConfirmationEnabled);
@@ -130,7 +126,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort firstLogin = new AutomatedLoginPort(firstBrowser, true, true);
             ToolConfirmationManager.setPort(firstLogin);
 
-            String firstResult = browserTools(
+            String firstResult = siteTools(
                     firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
@@ -157,7 +153,7 @@ class SiteLoginFunctionalIT {
                     secondBrowser, false, false);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String secondResult = browserTools(
+            String secondResult = siteTools(
                     secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
@@ -179,7 +175,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort declineSave = new AutomatedLoginPort(firstBrowser, true, false);
             ToolConfirmationManager.setPort(declineSave);
 
-            String firstResult = browserTools(
+            String firstResult = siteTools(
                     firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
@@ -191,15 +187,12 @@ class SiteLoginFunctionalIT {
             firstBrowser.shutdown();
         }
 
-        assertNull(readWorkspaceBrowserState(),
-                "完整隔离模式不再持久化任何工作区级浏览器认证态");
-
         PlaywrightBrowserManager secondBrowser = newBrowser("decline-second");
         try {
             AutomatedLoginPort loginAgain = new AutomatedLoginPort(secondBrowser, true, false);
             ToolConfirmationManager.setPort(loginAgain);
 
-            String secondResult = browserTools(
+            String secondResult = siteTools(
                     secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
@@ -218,7 +211,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort failedLogin = new AutomatedLoginPort(browser, false, true);
             ToolConfirmationManager.setPort(failedLogin);
 
-            String result = browserTools(
+            String result = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertFalse(ToolResponse.isSuccess(result), result);
@@ -253,7 +246,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = browserTools(
+            String result = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE)
                     .navigate(baseUrl + "/password-settings");
 
@@ -272,24 +265,24 @@ class SiteLoginFunctionalIT {
         PlaywrightBrowserManager browser = newBrowser("interactive-resume");
         browser.activateScope(PlaywrightBrowserManager.conversationScopeId("resume-session"));
         try {
-            PlaywrightBrowserTools firstTurn = browserTools(
+            PlaywrightBrowserTools firstTurn = browserBundle(
                     browser, ToolCallOrigin.INTERACTIVE);
-            String navigation = firstTurn.navigate(baseUrl + "/readable");
+            String navigation = siteTools(firstTurn).navigate(baseUrl + "/readable");
             assertTrue(ToolResponse.isSuccess(navigation), navigation);
             firstTurn.close();
 
             assertTrue(browser.isRunning(),
                     "结束一次推理工具束时不得关闭交互会话浏览器");
-            PlaywrightBrowserTools resumedTurn = browserTools(
+            PlaywrightBrowserTools resumedTurn = browserBundle(
                     browser, ToolCallOrigin.INTERACTIVE);
-            String body = resumedTurn.getText("body");
-            String pre = resumedTurn.getText("pre");
+            String body = readTools(resumedTurn).getText("body");
+            String pre = readTools(resumedTurn).getText("pre");
 
             assertTrue(ToolResponse.isSuccess(body), body);
             assertTrue(body.contains("WEATHER_OK"), body);
             assertTrue(ToolResponse.isSuccess(pre), pre);
             assertTrue(pre.contains("WEATHER_OK"), pre);
-            assertTrue(resumedTurn.getUrl().contains("/readable"),
+            assertTrue(readTools(resumedTurn).getUrl().contains("/readable"),
                     "审批恢复后的工具束应继续使用原页面");
             resumedTurn.close();
         } finally {
@@ -306,7 +299,7 @@ class SiteLoginFunctionalIT {
         credential.setLoginUrl(baseUrl + "/login");
         credential.setUsername("demo");
         credential.setPassword("secret");
-        SiteCredential savedCredential = siteCredentials.put(credential);
+        SiteCredential savedCredential = siteCredentials.putChecked(credential);
 
         PlaywrightBrowserManager browser = newBrowser("stored-credentials");
         try {
@@ -316,7 +309,7 @@ class SiteLoginFunctionalIT {
                     baseUrl + "/login",
                     new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
-            String result = browserTools(
+            String result = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).siteLoginNow("", "", "");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -342,7 +335,7 @@ class SiteLoginFunctionalIT {
         credential.setUsername("");
         credential.setPassword("");
         SiteCredentialManager manager = siteCredentials;
-        credential = manager.put(credential);
+        credential = manager.putChecked(credential);
         assertTrue(manager.tryWriteSession(
                 credential.getId(), "{\"cookies\":[],\"origins\":[]}"));
 
@@ -351,7 +344,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort refreshSession = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(refreshSession);
 
-            String result = browserTools(
+            String result = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -372,7 +365,7 @@ class SiteLoginFunctionalIT {
             LoginThenCancelPort cancel = new LoginThenCancelPort(browser);
             ToolConfirmationManager.setPort(cancel);
 
-            String result = browserTools(
+            String result = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertFalse(ToolResponse.isSuccess(result), result);
@@ -384,8 +377,6 @@ class SiteLoginFunctionalIT {
             browser.shutdown();
         }
 
-        assertNull(readWorkspaceBrowserState(),
-                "取消登录后不应产生工作区级浏览器认证态");
     }
 
     @Test
@@ -453,7 +444,7 @@ class SiteLoginFunctionalIT {
         try {
             browser.activateScope(scopeA);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountA.getId()));
-            String resultA = browserTools(
+            String resultA = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
             assertTrue(ToolResponse.isSuccess(resultA), resultA);
             assertEquals("ACCOUNT_A",
@@ -463,7 +454,7 @@ class SiteLoginFunctionalIT {
 
             browser.activateScope(scopeB);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountB.getId()));
-            String resultB = browserTools(
+            String resultB = siteTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
             assertTrue(ToolResponse.isSuccess(resultB), resultB);
             assertEquals("ACCOUNT_B",
@@ -490,7 +481,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = browserTools(browser, origin)
+            String result = siteTools(browser, origin)
                     .navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -509,13 +500,33 @@ class SiteLoginFunctionalIT {
                 tempDir.resolve(name).resolve("screenshots"));
     }
 
-    private PlaywrightBrowserTools browserTools(
+    private BrowserSiteTools siteTools(
+            PlaywrightBrowserManager browser,
+            ToolCallOrigin origin) {
+        return siteTools(browserBundle(browser, origin));
+    }
+
+    private PlaywrightBrowserTools browserBundle(
             PlaywrightBrowserManager browser,
             ToolCallOrigin origin) {
         return new PlaywrightBrowserTools(
                 browser, siteCredentials, origin,
                 new com.javaclaw.platform.json.JsonCodec(
-                        new com.fasterxml.jackson.databind.ObjectMapper()));
+                        new com.fasterxml.jackson.databind.ObjectMapper()), false, null);
+    }
+
+    private static BrowserSiteTools siteTools(PlaywrightBrowserTools bundle) {
+        return bundle.toolObjects().stream()
+                .filter(BrowserSiteTools.class::isInstance)
+                .map(BrowserSiteTools.class::cast)
+                .findFirst().orElseThrow();
+    }
+
+    private static BrowserReadTools readTools(PlaywrightBrowserTools bundle) {
+        return bundle.toolObjects().stream()
+                .filter(BrowserReadTools.class::isInstance)
+                .map(BrowserReadTools.class::cast)
+                .findFirst().orElseThrow();
     }
 
     private SiteCredential savedIdentity(String name, String username, String accountValue) {
@@ -526,7 +537,7 @@ class SiteLoginFunctionalIT {
         credential.setUsername(username);
         credential.setPassword("");
         SiteCredentialManager manager = siteCredentials;
-        credential = manager.put(credential);
+        credential = manager.putChecked(credential);
         assertTrue(manager.tryWriteSession(credential.getId(), """
                 {
                   "cookies": [{
@@ -553,27 +564,7 @@ class SiteLoginFunctionalIT {
                 .map(SiteCredential::getId)
                 .toList();
         for (String id : new ArrayList<>(ids)) {
-            manager.remove(id);
-        }
-    }
-
-    private static void clearWorkspaceBrowserState() throws Exception {
-        try (Connection connection = root.getBean(DatabaseAccess.class).open();
-             PreparedStatement statement = connection.prepareStatement(
-                     "DELETE FROM browser_state WHERE workspace_id = ?")) {
-            statement.setString(1, currentWorkspaceId());
-            statement.executeUpdate();
-        }
-    }
-
-    private static String readWorkspaceBrowserState() throws Exception {
-        try (Connection connection = root.getBean(DatabaseAccess.class).open();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT state_json FROM browser_state WHERE workspace_id = ?")) {
-            statement.setString(1, currentWorkspaceId());
-            try (var resultSet = statement.executeQuery()) {
-                return resultSet.next() ? resultSet.getString("state_json") : null;
-            }
+            manager.removeChecked(id);
         }
     }
 

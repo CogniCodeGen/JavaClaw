@@ -2,6 +2,7 @@ package com.javaclaw.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.spi.DeferredContextUse;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.Test;
@@ -10,8 +11,10 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +35,225 @@ class SkillManagerBehaviorTest {
     private final AtomicInteger fixtureSequence = new AtomicInteger();
 
     @Test
+    void deferredSkillSourceFetchesOnlySelectedVersionAndHonorsDisable() {
+        try (Fixture fixture = fixture("deferred")) {
+            SkillManager manager = fixture.manager();
+            Skill first = manager.buildDynamicSkill("owner", "检索核验", "核验公开来源", "先检索并核对来源。");
+            first.setDirectory(temporaryDirectory.resolve("plugin-supplied-path"));
+            Skill unrelated = manager.buildDynamicSkill("owner", "图表制作", "绘制图表", "绘制图表正文。");
+            manager.registerDynamicSkills("owner", List.of(first, unrelated));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+
+            var candidates = source.search(null, "检索", 8);
+            assertEquals(1, candidates.size());
+            var selected = candidates.getFirst();
+            assertEquals("@skill/v2/d/" + encoded("owner") + "/"
+                    + encoded(first.getId()) + "/0", selected.id());
+            assertEquals(DeferredContextUse.REFERENCE, selected.use());
+            assertTrue(source.fetch(null, selected.id(), selected.version()).contains("先检索并核对来源"));
+            assertFalse(source.fetch(null, selected.id(), selected.version()).contains("绘制图表正文"));
+
+            first.setContent("改为核对两个来源。");
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, selected.id(), selected.version()));
+            first.setEnabled(false);
+            assertTrue(source.search(null, "检索", 8).isEmpty());
+        }
+    }
+
+    @Test
+    void deferredSkillSearchUsesIndexedVersionUntilSelectedBodyIsFetched() throws Exception {
+        try (Fixture fixture = fixture("deferred-index")) {
+            SkillManager manager = fixture.manager();
+            Skill skill = manager.createSkill("索引技能", "按需核验", "技能正文", true);
+            assertNull(manager.writeSupportFile(skill.getName(), "references/check.md", "初版参考"));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+            var original = source.search(null, "索引", 8).getFirst();
+            assertEquals(DeferredContextUse.USER_WORKFLOW, original.use());
+
+            Path reference = skill.getDirectory().resolve("references/check.md");
+            Files.writeString(reference, "外部更新的参考内容");
+            var stillIndexed = source.search(null, "索引", 8).getFirst();
+            assertEquals(original.version(), stillIndexed.version(),
+                    "搜索仅使用已索引元数据，不应提前重读未选中的参考文件");
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, original.id(), original.version()));
+
+            assertNull(manager.writeSupportFile(skill.getName(), "references/check.md", "受管更新的参考内容"));
+            var refreshed = source.search(null, "索引", 8).getFirst();
+            assertFalse(refreshed.version().equals(original.version()));
+            assertTrue(source.fetch(null, refreshed.id(), refreshed.version()).contains("受管更新的参考内容"));
+        }
+    }
+
+    @Test
+    void selectedWorkspaceWorkflowCannotBeReplacedByDynamicSkillWithTheSameId() {
+        try (Fixture fixture = fixture("deferred-origin")) {
+            SkillManager manager = fixture.manager();
+            Skill workspace = manager.createSkill("核验流程", "先核验", "核验正文", true);
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+            var selected = source.search(null, "核验", 8).getFirst();
+            assertEquals(DeferredContextUse.USER_WORKFLOW, selected.use());
+            assertTrue(selected.version().startsWith("workspace:"));
+
+            workspace.setEnabled(false);
+            Skill replacement = manager.buildDynamicSkill("plugin", "核验流程", "先核验", "核验正文");
+            replacement.setId(workspace.getId());
+            manager.registerDynamicSkills("plugin", List.of(replacement));
+
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, selected.id(), selected.version()));
+        }
+    }
+
+    @Test
+    void deferredSkillIdsDistinguishWorkspaceAndDynamicRegistration() {
+        try (Fixture fixture = fixture("deferred-collision")) {
+            SkillManager manager = fixture.manager();
+            Skill workspace = manager.createSkill("dyn-foo-bar", "workspace skill", "workspace body", true);
+            Skill dynamic = manager.buildDynamicSkill("foo", "bar", "plugin skill", "plugin body");
+            manager.registerDynamicSkills("foo", List.of(dynamic));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+
+            var candidates = source.search(null, "", 8);
+            assertEquals(2, candidates.size());
+            var workspaceCandidate = candidates.stream()
+                    .filter(value -> value.use() == DeferredContextUse.USER_WORKFLOW)
+                    .findFirst().orElseThrow();
+            var dynamicCandidate = candidates.stream()
+                    .filter(value -> value.use() == DeferredContextUse.REFERENCE)
+                    .findFirst().orElseThrow();
+            assertEquals(workspace.getId(), dynamic.getId());
+            assertEquals("@skill/v2/w/" + encoded(workspace.getId()), workspaceCandidate.id());
+            assertEquals("@skill/v2/d/" + encoded("foo") + "/"
+                    + encoded(dynamic.getId()) + "/0", dynamicCandidate.id());
+            assertTrue(source.fetch(null, workspaceCandidate.id(), workspaceCandidate.version())
+                    .contains("workspace body"));
+            assertTrue(source.fetch(null, dynamicCandidate.id(), dynamicCandidate.version())
+                    .contains("plugin body"));
+        }
+    }
+
+    @Test
+    void deferredSkillIdsDistinguishOwnersAndSameOwnerOrdinals() {
+        try (Fixture fixture = fixture("deferred-owners")) {
+            SkillManager manager = fixture.manager();
+            Skill first = new Skill("shared", "first", "", true);
+            first.setContent("first body");
+            Skill second = new Skill("shared", "second", "", true);
+            second.setContent("second body");
+            Skill third = new Skill("shared", "third", "", true);
+            third.setContent("third body");
+            manager.registerDynamicSkills("owner-a", List.of(first, second));
+            manager.registerDynamicSkills("owner-b", List.of(third));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+
+            var candidates = source.search(null, "", 8);
+            assertEquals(3, candidates.size());
+            assertEquals(3L, candidates.stream().map(value -> value.id()).distinct().count());
+            String ownerA = "@skill/v2/d/" + encoded("owner-a") + "/" + encoded("shared") + "/";
+            String ownerB = "@skill/v2/d/" + encoded("owner-b") + "/" + encoded("shared") + "/";
+            assertTrue(candidates.stream().anyMatch(value -> value.id().equals(ownerA + "0")));
+            assertTrue(candidates.stream().anyMatch(value -> value.id().equals(ownerA + "1")));
+            assertTrue(candidates.stream().anyMatch(value -> value.id().equals(ownerB + "0")));
+            for (var candidate : candidates) {
+                String body = source.fetch(null, candidate.id(), candidate.version());
+                if (candidate.id().equals(ownerA + "0")) assertTrue(body.contains("first body"));
+                if (candidate.id().equals(ownerA + "1")) assertTrue(body.contains("second body"));
+                if (candidate.id().equals(ownerB + "0")) assertTrue(body.contains("third body"));
+            }
+
+            first.setEnabled(false);
+            assertEquals(ownerA + "1", source.search(null, "second", 8).getFirst().id());
+        }
+    }
+
+    @Test
+    void deferredSkillRetainsEachRegistrationOfTheSameObject() {
+        try (Fixture fixture = fixture("deferred-shared-object")) {
+            SkillManager manager = fixture.manager();
+            Skill skill = manager.createSkill("shared object", "shared", "shared body", true);
+            manager.registerDynamicSkills("owner-a", List.of(skill));
+            manager.registerDynamicSkills("owner-b", List.of(skill));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+
+            var candidates = source.search(null, "shared", 8);
+            assertEquals(3, candidates.size());
+            assertEquals(3L, candidates.stream().map(value -> value.id()).distinct().count());
+            assertEquals(1L, candidates.stream()
+                    .filter(value -> value.use() == DeferredContextUse.USER_WORKFLOW).count());
+            assertEquals(2L, candidates.stream()
+                    .filter(value -> value.use() == DeferredContextUse.REFERENCE).count());
+
+            manager.unregisterDynamicSkills("owner-a");
+            var remaining = source.search(null, "shared", 8);
+            assertEquals(2, remaining.size());
+            remaining.forEach(value -> assertTrue(source.fetch(null, value.id(), value.version())
+                    .contains("shared body")));
+        }
+    }
+
+    @Test
+    void deferredSkillFetchRejectsHistoricalBareIdsAndVersions() {
+        try (Fixture fixture = fixture("deferred-qualified-only")) {
+            SkillManager manager = fixture.manager();
+            Skill first = new Skill("shared", "first", "", true);
+            first.setContent("first body");
+            manager.registerDynamicSkills("owner-a", List.of(first));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+            var firstCandidate = source.search(null, "first", 8).getFirst();
+
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, "shared", firstCandidate.version()));
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, firstCandidate.id(),
+                            firstCandidate.version().substring("dynamic:".length())));
+        }
+    }
+
+    @Test
+    void deferredSkillBundlesAreDiscoverableAndFetchAllMembersWithInstructions() throws Exception {
+        try (Fixture fixture = fixture("deferred-bundles")) {
+            SkillManager manager = fixture.manager();
+            fixture.settings().setSkillBundlesEnabled(true);
+            Skill first = manager.createSkill("检索核验", "先核验来源", "检索正文", true);
+            manager.createSkill("资料整理", "整理核验结果", "整理正文", true);
+            manager.saveBundles(List.of(new SkillBundle("研究流程", "先查证再整理",
+                    List.of("检索核验", "资料整理"), "最后检查引用", true)));
+            SkillDeferredContextSource source = new SkillDeferredContextSource(manager);
+
+            var selected = source.search(null, "研究流程", 8).stream()
+                    .filter(candidate -> candidate.id().startsWith("@skill/v2/b/"))
+                    .findFirst().orElseThrow();
+            assertEquals(DeferredContextUse.USER_WORKFLOW, selected.use());
+            assertTrue(selected.summary().contains("检索核验"));
+            String body = source.fetch(null, selected.id(), selected.version());
+            assertTrue(body.contains("检索正文"));
+            assertTrue(body.contains("整理正文"));
+            assertTrue(body.contains("最后检查引用"));
+
+            assertNull(manager.writeSupportFile(first.getName(), "references/check.md", "初版"));
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, selected.id(), selected.version()));
+            var refreshed = source.search(null, "研究流程", 8).stream()
+                    .filter(candidate -> candidate.id().equals(selected.id()))
+                    .findFirst().orElseThrow();
+            assertTrue(source.fetch(null, refreshed.id(), refreshed.version()).contains("初版"));
+
+            fixture.settings().setSkillBundlesEnabled(false);
+            assertTrue(source.search(null, "研究流程", 8).stream()
+                    .noneMatch(candidate -> candidate.id().startsWith("@skill/v2/b/")));
+            assertThrows(IllegalStateException.class,
+                    () -> source.fetch(null, refreshed.id(), refreshed.version()));
+        }
+    }
+
+    private static String encoded(String value) {
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
     void dynamicSkillsAreSanitizedScopedAndConditionallyActivated() throws Exception {
         try (Fixture fixture = fixture("dynamic")) {
             SkillManager manager = fixture.manager();
@@ -42,7 +264,7 @@ class SkillManagerBehaviorTest {
             assertTrue(manager.getEnabledSkills().isEmpty());
             assertNull(manager.getSkillByName(null));
             assertNull(manager.getSkillByName("  "));
-            assertEquals("", manager.buildSkillCatalogPrompt());
+            assertEquals("", manager.buildSkillCatalogPrompt(null));
             assertEquals("", manager.buildEnabledSkillsPrompt());
 
             Skill safe = manager.buildDynamicSkill(
@@ -140,9 +362,9 @@ class SkillManagerBehaviorTest {
 
             settings.setSkillNudgeEnabled(true);
             settings.setSkillEvolutionMode("off");
-            assertFalse(manager.buildSkillCatalogPrompt().contains("经验沉淀"));
+            assertFalse(manager.buildSkillCatalogPrompt(null).contains("经验沉淀"));
             settings.setSkillEvolutionMode("suggest");
-            assertTrue(manager.buildSkillCatalogPrompt().contains("经验沉淀"));
+            assertTrue(manager.buildSkillCatalogPrompt(null).contains("经验沉淀"));
             settings.setSkillNudgeEnabled(false);
 
             String allEnabled = manager.buildEnabledSkillsPrompt();
@@ -276,14 +498,14 @@ class SkillManagerBehaviorTest {
             assertFalse(redactedInstructions.contains("RealSecret-2026"));
 
             settings.setSkillBundlesEnabled(false);
-            assertFalse(manager.buildSkillCatalogPrompt().contains("可用技能包"));
+            assertFalse(manager.buildSkillCatalogPrompt(null).contains("可用技能包"));
             settings.setSkillBundlesEnabled(true);
             SkillBundle secretDescription = new SkillBundle(
                     "安全包名", "password: RealSecret-2026", List.of(first.getName()), null, true);
             secretDescription.skills = Arrays.asList(
                     first.getName(), null, "token: RealSecret-2026");
             manager.saveBundles(List.of(secretDescription));
-            String catalog = manager.buildSkillCatalogPrompt();
+            String catalog = manager.buildSkillCatalogPrompt(null);
             assertTrue(catalog.contains("【安全包名】[描述包含疑似凭据，已隐藏]"));
             assertTrue(catalog.contains("[已隐藏]"));
             assertFalse(catalog.contains("RealSecret-2026"));

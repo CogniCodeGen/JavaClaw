@@ -55,8 +55,10 @@ class LocalInferenceQuickSetupUseCaseTest {
         runtime = new RecordingRuntime();
         server = new RecordingApiServer(catalog);
         detectedModelType = "qwen2";
-        management = new InferenceManagementUseCase(catalog, new NoopAssets(), runtime,
-                InferenceSecretPort.PASSTHROUGH, server);
+        NoopAssets assets = new NoopAssets();
+        management = new InferenceManagementUseCase(catalog, assets, assets, runtime,
+                InferenceSecretPort.PASSTHROUGH, server,
+                HuggingFaceModelCatalogPort.UNAVAILABLE, InferenceSystemProfilePort.CONSERVATIVE);
     }
 
     @Test
@@ -73,7 +75,6 @@ class LocalInferenceQuickSetupUseCaseTest {
 
         var draft = useCase.defaultDraft(selected.id());
         assertEquals("Qwen2.5-0.5B", draft.name());
-        assertFalse(draft.loadParameters().containsKey("jvmHeapMiB"));
         assertEquals(4, draft.loadParameters().get("workerThreads"));
         assertEquals("auto", draft.loadParameters().get("tensorBackend"));
         assertEquals(10_000, draft.loadParameters().get("kvCacheMaxEntries"));
@@ -174,7 +175,7 @@ class LocalInferenceQuickSetupUseCaseTest {
         catalog.saveAsset(local);
         catalog.saveGatewayConfiguration(new InferenceCatalogPort.GatewayConfiguration(false,
                 "192.168.1.4", 18443, true, false, "/tmp/server.p12", "encrypted",
-                4096, 30, Instant.now()));
+                4096, 30, false, Instant.now()));
         InferenceCatalogPort lightweightOnly = (InferenceCatalogPort) Proxy.newProxyInstance(
                 InferenceCatalogPort.class.getClassLoader(),
                 new Class<?>[]{InferenceCatalogPort.class}, (proxy, method, arguments) -> {
@@ -224,18 +225,14 @@ class LocalInferenceQuickSetupUseCaseTest {
     }
 
     @Test
-    void lightweightSnapshotBackfillsLegacyAssetsBeforeFiltering() {
-        InferenceModelAsset legacy = new InferenceModelAsset(UUID.randomUUID(),
-                InferenceModelAsset.Source.LOCAL_DIRECTORY, "legacy", "e".repeat(64),
-                "/tmp/legacy-model", "", "", List.of(), 0,
-                InferenceModelAsset.State.READY, "", Instant.now());
-        catalog.saveAsset(legacy);
+    void lightweightSnapshotFiltersUnknownModelTypesWithoutChangingAssets() {
+        InferenceModelAsset unknown = asset("unknown", "e", "unknown");
+        catalog.saveAsset(unknown);
 
         var snapshot = quick(new FakeNetwork("192.168.1.6", Set.of())).quickSnapshot();
 
-        assertEquals(List.of("legacy"), snapshot.models().stream()
-                .map(LocalInferenceQuickSetupApplicationService.LocalModel::displayName).toList());
-        assertEquals("qwen2", catalog.asset(legacy.id()).orElseThrow().modelType());
+        assertTrue(snapshot.models().isEmpty());
+        assertEquals("unknown", catalog.asset(unknown.id()).orElseThrow().modelType());
     }
 
     @Test
@@ -244,7 +241,8 @@ class LocalInferenceQuickSetupUseCaseTest {
         InferenceModelAsset failedAsset = new InferenceModelAsset(UUID.randomUUID(),
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, "failed-asset", "qwen2", "3".repeat(64),
                 "/tmp/failed-asset", "", "", List.of(), 0,
-                InferenceModelAsset.State.FAILED, " asset failure ", Instant.now());
+                InferenceModelAsset.State.FAILED, " asset failure ", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(0));
         InferenceModelAsset failedProfileAsset = asset("failed-profile", "4");
         InferenceModelAsset readyAsset = asset("ready", "5");
         InferenceModelAsset publishedAsset = asset("published", "6");
@@ -317,7 +315,8 @@ class LocalInferenceQuickSetupUseCaseTest {
         InferenceModelAsset draftAsset = new InferenceModelAsset(UUID.randomUUID(),
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, "draft", "qwen2", "8".repeat(64),
                 "/tmp/draft", "", "", List.of(), 0,
-                InferenceModelAsset.State.STAGING, "", Instant.now());
+                InferenceModelAsset.State.STAGING, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(0));
         catalog.saveAsset(draftAsset);
         LocalInferenceQuickSetupUseCase useCase = quick(new FakeNetwork("192.168.1.7", Set.of()));
         assertThrows(IllegalArgumentException.class, () -> useCase.defaultDraft(draftAsset.id()));
@@ -347,7 +346,7 @@ class LocalInferenceQuickSetupUseCaseTest {
         InferenceModelAsset ready = asset("fallback", "a");
         catalog.saveAsset(ready);
         catalog.saveGatewayConfiguration(new InferenceCatalogPort.GatewayConfiguration(true,
-                "127.0.0.1", 18080, false, false, "", "", 4096, 30, Instant.now()));
+                "127.0.0.1", 18080, false, false, "", "", 4096, 30, false, Instant.now()));
         server.endpoint = "http://127.0.0.1:18080";
         runtime.exposeStatus = false;
         LocalInferenceQuickSetupUseCase useCase = quick(new FakeNetwork("192.168.1.8", Set.of()));
@@ -406,13 +405,12 @@ class LocalInferenceQuickSetupUseCaseTest {
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, name, modelType, digest,
                 "/tmp/model-" + marker, "", "",
                 List.of(new InferenceModelAsset.AssetFile("config.json", 1, digest)),
-                1, InferenceModelAsset.State.READY, "", Instant.now());
+                1, InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(1));
     }
 
     private static InferenceRuntimeManifest manifest() {
         Map<String, Object> load = Map.of("type", "object", "properties", Map.of(
-                "jvmHeapMiB", Map.of("type", "integer", "default", 4096,
-                        "x-javaclaw-hidden", true),
                 "workerThreads", field("integer", 4),
                 "tensorBackend", field("string", "auto"),
                 "kvCacheMaxEntries", field("integer", 10_000)));

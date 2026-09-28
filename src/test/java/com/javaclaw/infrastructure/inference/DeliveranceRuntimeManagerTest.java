@@ -17,7 +17,6 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.List;
@@ -48,7 +47,7 @@ class DeliveranceRuntimeManagerTest {
                 new DataSourceTransactionManager(dataSource), json);
         tasks = new ManagedTaskExecutor();
         manager = new DeliveranceRuntimeManager(new DataRoot(temporary.resolve("data")), catalog,
-                tasks, json, KeyPairGenerator.getInstance("Ed25519").generateKeyPair().getPublic());
+                tasks, json);
     }
 
     @AfterEach
@@ -74,23 +73,6 @@ class DeliveranceRuntimeManagerTest {
         assertEquals(first.manifest().runtimeId(), upgraded.manifest().runtimeId());
         assertFalse(first.manifest().files().getFirst().sha256().equals(
                 upgraded.manifest().files().getFirst().sha256()));
-    }
-
-    @Test
-    void migratesLegacyPluginFilenameAtomically() throws Exception {
-        Path directory = temporary.resolve("plugins/builtin-deliverance");
-        Files.createDirectories(directory);
-        Path legacy = directory.resolve(DeliverancePluginLayout.LEGACY_JAR_NAME);
-        Files.writeString(legacy, "legacy");
-        Path obsoleteRuntime = directory.resolve("versions/old/deliverance-sidecar.jar");
-        Files.createDirectories(obsoleteRuntime.getParent());
-        Files.writeString(obsoleteRuntime, "legacy");
-
-        manager.init();
-
-        assertFalse(Files.exists(legacy));
-        assertFalse(Files.exists(directory.resolve("versions")));
-        assertEquals("legacy", Files.readString(directory.resolve(DeliverancePluginLayout.JAR_NAME)));
     }
 
     @Test
@@ -146,7 +128,7 @@ class DeliveranceRuntimeManagerTest {
         return new PluginDescriptor("builtin-deliverance", "Deliverance 本地推理", version,
                 "1.0", service.mainClass(), "本地推理", Set.of(), List.of(),
                 PluginDescriptor.PluginType.SERVICE_PLUGIN, service,
-                "{\"type\":\"object\",\"properties\":{}}", inference);
+                "{\"type\":\"object\",\"properties\":{}}", inference, null);
     }
 
     private static String parameterSchema() {

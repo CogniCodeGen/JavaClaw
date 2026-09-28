@@ -340,7 +340,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
             ps.setLong(1, System.currentTimeMillis()); ps.setString(2, workspaceId);
             return ps.executeUpdate();
         } catch (Exception e) {
-            throw new IllegalStateException("恢复遗留工作流状态失败", e);
+            throw new IllegalStateException("恢复未完成工作流状态失败", e);
         }
     }
 
@@ -412,11 +412,13 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         NodeResult.Interrupt interrupt = interruptJson == null ? null
                 : json.readValue(interruptJson, NodeResult.Interrupt.class);
         String locksJson = rs.getString("extension_locks_json");
+        if (locksJson == null || locksJson.isBlank()) {
+            throw new IllegalStateException("工作流运行缺少扩展锁快照");
+        }
         java.util.List<com.javaclaw.framework.spi.ExtensionLock> extensionLocks =
-                locksJson == null || locksJson.isBlank() ? java.util.List.of()
-                        : json.readValue(locksJson, json.getTypeFactory().constructCollectionType(
-                                java.util.List.class,
-                                com.javaclaw.framework.spi.ExtensionLock.class));
+                json.readValue(locksJson, json.getTypeFactory().constructCollectionType(
+                        java.util.List.class,
+                        com.javaclaw.framework.spi.ExtensionLock.class));
         return new GraphRun(rs.getString("id"), rs.getString("workflow_id"),
                 rs.getInt("workflow_version"), rs.getString("thread_id"),
                 json.readValue(rs.getString("definition_json"), GraphDefinition.class),

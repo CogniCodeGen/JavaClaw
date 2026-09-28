@@ -7,7 +7,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Objects;
 
-/** 让现有持久化端口复用 Spring 管理的 DataSource，迁移期间不再创建静态数据库入口。 */
+/** 让持久化端口复用 Spring 管理的 DataSource。 */
 public final class DataSourceDatabaseAccess implements DatabaseAccess {
 
     private final DataSource dataSource;

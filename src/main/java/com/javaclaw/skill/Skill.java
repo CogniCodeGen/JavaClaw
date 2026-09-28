@@ -21,7 +21,7 @@ import java.util.Set;
  * └── .history/             # [自动] 版本历史快照（v{version}.md，由 SkillManager 维护）
  * </pre>
  *
- * <p>{@code SKILL.md} 使用 YAML Front Matter 格式（缺失字段均有向后兼容默认值）：
+ * <p>{@code SKILL.md} 使用 YAML Front Matter 格式（可选字段使用默认值）：
  * <pre>
  * ---
  * name: 技能名称

@@ -35,7 +35,7 @@ class GraphDriverDeletionTest {
                 finally { exited.set(true); }
             }
         });
-        var graph = SystemGraphFactory.pipeline("delete-driver", "delete", "", "wait");
+        var graph = SystemGraphFactory.chat();
         try (var tasks = new ManagedTaskExecutor(); var manager = new GraphExecutionManager(registry, store, tasks)) {
             var run = manager.start(graph, "coordinator", new GraphState(), GraphListener.NOOP,
                     WorkflowExecutionServices.EMPTY);
@@ -72,7 +72,7 @@ class GraphDriverDeletionTest {
                 return NodeResult.next();
             }
         });
-        var graph = SystemGraphFactory.pipeline("publication-race", "delete", "", "wait");
+        var graph = SystemGraphFactory.chat();
         try (var tasks = new ManagedTaskExecutor()) {
             com.javaclaw.platform.execution.TaskSubmitter delayed = new com.javaclaw.platform.execution.TaskSubmitter() {
                 @Override public <T> com.javaclaw.platform.execution.TaskHandle<T> submit(

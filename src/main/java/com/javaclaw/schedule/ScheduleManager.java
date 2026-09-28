@@ -497,11 +497,6 @@ public class ScheduleManager {
         return enqueueTask(id, !allowDisabled, true);
     }
 
-    /** 向后兼容的显式手动执行；暂停任务仍需调用方先确认。 */
-    public RunNowResult runNow(String id) {
-        return runNow(id, true);
-    }
-
     public boolean cancelRun(String id) {
         return cancelActiveRun(id, CancellationReason.SCHEDULE_DISABLED);
     }
@@ -549,7 +544,7 @@ public class ScheduleManager {
         if (task.getPrompt() == null || task.getPrompt().isBlank()) {
             throw new IllegalArgumentException("任务提示词不能为空");
         }
-        task.normalizeIntervalFields();
+        task.validateIntervalFields();
         if (task.isEnabled() && triggerFactory.create(task) == null) {
             throw new IllegalArgumentException("任务触发配置无效");
         }

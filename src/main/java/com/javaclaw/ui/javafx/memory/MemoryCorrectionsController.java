@@ -67,8 +67,7 @@ public final class MemoryCorrectionsController
         empty.setManaged(matches.isEmpty());
         for (CorrectionItem item : matches) {
             MemoryChildView<javafx.scene.layout.HBox> child = components.correction(
-                    item, this::revoke, this::delete, useCases.scope() != null
-                            && useCases.scope().kind() == com.javaclaw.memory.MemoryGraphScope.Kind.LEGACY);
+                    item, this::revoke, this::delete, false);
             children.add(child);
             rows.getChildren().add(child.root());
         }

@@ -61,6 +61,7 @@ class ServicePluginHostRuntimeTest {
                 "fixture.Plugin", "Test", true, "a".repeat(64),
                 temporary.resolve("plugin.jar"), temporary.resolve("data"),
                 StartupPolicy.MANUAL, new ResourceConfiguration(128, 0, 1, 2, 32),
-                List.of(), true, Set.of(), Map.of(), false);
+                List.of(), true, Set.of(), Map.of(), false,
+                "", "", null, null, Map.of(), false);
     }
 }

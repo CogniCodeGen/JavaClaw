@@ -38,18 +38,19 @@
                       styleClass="message-bubble, message-assistant">
                     <padding><Insets top="10.0" right="14.0" bottom="10.0" left="14.0"/></padding>
                     <children>
-                        <HBox fx:id="generationPlaceholder" alignment="CENTER_LEFT" spacing="5.0">
+                        <HBox fx:id="generationPlaceholder" alignment="CENTER_LEFT" spacing="6.0"
+                              accessibleText="正在生成回复">
                             <children>
                                 <Label fx:id="generationDotOne" text="●" styleClass="gen-placeholder-dot"/>
                                 <Label fx:id="generationDotTwo" text="●" styleClass="gen-placeholder-dot"/>
                                 <Label fx:id="generationDotThree" text="●" styleClass="gen-placeholder-dot"/>
-                                <Label text="正在生成回复…" styleClass="gen-placeholder-text"/>
                             </children>
                         </HBox>
                         <StackPane fx:id="replyHost" visible="false" managed="false"/>
                     </children>
                 </VBox>
-                <HBox alignment="CENTER_LEFT" spacing="2.0" styleClass="msg-action-row">
+                <HBox fx:id="actionRow" alignment="CENTER_LEFT" spacing="2.0"
+                      visible="false" managed="false" styleClass="msg-action-row">
                     <children>
                         <Button fx:id="adoptButton" text="✓ 采纳" disable="true"
                                 onAction="#adoptRequested" styleClass="msg-action-btn">

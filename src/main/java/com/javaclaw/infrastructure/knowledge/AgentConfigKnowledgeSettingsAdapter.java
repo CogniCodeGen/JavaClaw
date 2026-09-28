@@ -6,7 +6,7 @@ import com.javaclaw.config.AgentConfig;
 
 import java.util.Objects;
 
-/** Maps mutable legacy configuration to immutable knowledge settings snapshots. */
+/** Maps mutable workspace configuration to immutable knowledge settings snapshots. */
 public final class AgentConfigKnowledgeSettingsAdapter implements KnowledgeSettingsPort {
 
     private final AgentConfig config;

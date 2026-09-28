@@ -19,8 +19,6 @@ import java.util.concurrent.Executor;
 /** Read-only plan-profile adapter over the single AgentEngine. */
 public final class PlanModeService {
     private static final Logger log = LoggerFactory.getLogger(PlanModeService.class);
-    private static final String PLAN_COMPLETE_MARKER = "[PLAN_COMPLETE]";
-
     private final AgentConversationRunner runs;
     private final RunRequestFactory requests;
 
@@ -57,44 +55,5 @@ public final class PlanModeService {
 
     public void shutdown() {
         runs.close();
-    }
-
-    /** Compatibility event helper; Critic is now an EvaluationPolicy/extension, not a runtime. */
-    static void publishFinalDraftAndReview(
-            String finalDraft,
-            ConversationCallbacks callbacks,
-            boolean shouldRunCritic,
-            java.util.function.BooleanSupplier cancellation,
-            Runnable criticAction) {
-        if (finalDraft == null || finalDraft.isBlank() || cancellation.getAsBoolean()) return;
-        String guarded = com.javaclaw.util.ChineseOutputGuard.enforceUserVisibleReply(
-                finalDraft.replace(PLAN_COMPLETE_MARKER, "").strip());
-        callbacks.onEvent(new com.javaclaw.api.conversation.ConversationEvent.Custom(
-                "plan_final", guarded));
-        if (!shouldRunCritic || cancellation.getAsBoolean()) return;
-        try {
-            criticAction.run();
-        } catch (RuntimeException failure) {
-            if (!cancellation.getAsBoolean()) {
-                log.warn("Plan evaluation failed; preserving final draft", failure);
-                callbacks.onEvent(new com.javaclaw.api.conversation.ConversationEvent.Hint(
-                        "[规划·评审] 评审未完成，已保留协调者最终方案"));
-            }
-        }
-    }
-
-    static java.util.Optional<com.javaclaw.api.conversation.PlanProfile> parsePlanProfile(
-            String output) {
-        if (output == null || output.isBlank()) return java.util.Optional.empty();
-        java.util.EnumSet<com.javaclaw.api.conversation.PlanProfile> matches =
-                java.util.EnumSet.noneOf(com.javaclaw.api.conversation.PlanProfile.class);
-        var matcher = java.util.regex.Pattern.compile("\\b(QUICK|STANDARD|DEEP)\\b",
-                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(output);
-        while (matcher.find()) {
-            matches.add(com.javaclaw.api.conversation.PlanProfile.valueOf(
-                    matcher.group(1).toUpperCase(java.util.Locale.ROOT)));
-        }
-        return matches.size() == 1
-                ? java.util.Optional.of(matches.iterator().next()) : java.util.Optional.empty();
     }
 }

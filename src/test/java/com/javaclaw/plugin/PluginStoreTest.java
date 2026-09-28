@@ -16,6 +16,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PluginStoreTest {
 
@@ -50,6 +51,43 @@ class PluginStoreTest {
             reader.bind("workspace-a");
             assertTrue(reader.isEnabled("demo"));
             assertFalse(reader.isEnabled("other"));
+        }
+    }
+
+    @Test
+    void unknownPersistedCapabilityIsRejected() {
+        try (var context = ApplicationContexts.createRoot(
+                new DataRoot(tempDirectory.resolve("unknown-capability")))) {
+            JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
+            jdbc.update("""
+                    INSERT INTO plugin_state(workspace_id, plugin_id, enabled, granted_json, config_json)
+                    VALUES ('workspace-a', 'demo', TRUE, '["RETIRED_CAPABILITY"]', '{}')
+                    """);
+            PluginStore store = new PluginStore(jdbc,
+                    context.getBean(PlatformTransactionManager.class),
+                    context.getBean(ObjectMapper.class));
+            assertThrows(IllegalStateException.class, () -> store.bind("workspace-a"));
+        }
+    }
+
+    @Test
+    void malformedPersistedConfigurationCannotReplaceBoundWorkspace() {
+        try (var context = ApplicationContexts.createRoot(
+                new DataRoot(tempDirectory.resolve("malformed-configuration")))) {
+            JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
+            PluginStore store = new PluginStore(jdbc,
+                    context.getBean(PlatformTransactionManager.class),
+                    context.getBean(ObjectMapper.class));
+            store.bind("workspace-a");
+            store.update("demo", true, Set.of(Capability.CHAT));
+            jdbc.update("""
+                    INSERT INTO plugin_state(workspace_id, plugin_id, enabled, granted_json, config_json)
+                    VALUES ('workspace-b', 'broken', TRUE, '[]', '{"endpoint":123}')
+                    """);
+
+            assertThrows(IllegalStateException.class, () -> store.bind("workspace-b"));
+            assertTrue(store.isEnabled("demo"));
+            assertEquals(Set.of(Capability.CHAT), store.granted("demo"));
         }
     }
 }

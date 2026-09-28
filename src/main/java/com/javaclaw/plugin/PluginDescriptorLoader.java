@@ -109,7 +109,7 @@ final class PluginDescriptorLoader {
 
     private static PluginDescriptor.PluginType parsePluginType(JsonNode root, Path jarPath)
             throws IOException {
-        String raw = optText(root, "pluginType", "IN_PROCESS");
+        String raw = requireText(root, "pluginType", jarPath);
         try {
             return PluginDescriptor.PluginType.valueOf(raw.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException failure) {
@@ -447,15 +447,12 @@ final class PluginDescriptorLoader {
             PluginDescriptor.Service service,
             PluginDescriptor.Inference inference,
             String sectionId) throws IOException {
-        if ((type == PluginDescriptor.ConfigurationSectionType.INFERENCE_MODELS
-                || type == PluginDescriptor.ConfigurationSectionType.INFERENCE_API
-                || type == PluginDescriptor.ConfigurationSectionType.INFERENCE_CATALOG
+        if ((type == PluginDescriptor.ConfigurationSectionType.INFERENCE_CATALOG
                 || type == PluginDescriptor.ConfigurationSectionType.INFERENCE_SERVICE)
                 && inference == null) {
             throw new IOException(type + " 区块要求插件声明 inference: " + sectionId);
         }
         if ((type == PluginDescriptor.ConfigurationSectionType.EXTERNAL_ENDPOINTS
-                || type == PluginDescriptor.ConfigurationSectionType.INFERENCE_API
                 || type == PluginDescriptor.ConfigurationSectionType.INFERENCE_SERVICE)
                 && (service == null || service.externalEndpoints().isEmpty())) {
             throw new IOException(type + " 区块要求插件声明外部端点: " + sectionId);

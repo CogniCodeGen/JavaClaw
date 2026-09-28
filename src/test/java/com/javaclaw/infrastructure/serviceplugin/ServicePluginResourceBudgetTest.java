@@ -87,6 +87,6 @@ class ServicePluginResourceBudgetTest {
     private static EndpointConfiguration endpoint(String id, int connections) {
         return new EndpointConfiguration(id, Protocol.HTTP, "127.0.0.1", 0,
                 false, false, null, "", "abcdefghijklmnopqrstuvwxyz123456",
-                60, 100_000, 1, connections, 1024);
+                60, 100_000, 1, connections, 1024, 120);
     }
 }

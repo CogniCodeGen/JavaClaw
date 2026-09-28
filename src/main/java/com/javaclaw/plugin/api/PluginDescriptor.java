@@ -1,6 +1,7 @@
 package com.javaclaw.plugin.api;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -17,9 +18,9 @@ import java.util.Set;
  * @param description  插件用途简述
  * @param capabilities 声明所需能力集合（空集表示不申请任何宿主能力）
  * @param config       插件自有配置项声明（宿主据此渲染配置表单、加密 secret 项）
- * @param configurationSchema Draft 2020-12 配置 Schema 的规范 JSON；空串表示仅使用旧 config 列表
+ * @param configurationSchema Draft 2020-12 配置 Schema 的规范 JSON
  * @param inference    可选的本地推理引擎声明
- * @param configurationUi 可选的宿主声明式配置界面；{@code null} 时由宿主生成通用页面
+ * @param configurationUi 可选的宿主声明式配置界面
  * @author JavaClaw
  */
 public record PluginDescriptor(
@@ -44,7 +45,7 @@ public record PluginDescriptor(
     public PluginDescriptor {
         capabilities = capabilities == null ? Set.of() : Set.copyOf(capabilities);
         config = config == null ? List.of() : List.copyOf(config);
-        pluginType = pluginType == null ? PluginType.IN_PROCESS : pluginType;
+        pluginType = Objects.requireNonNull(pluginType, "pluginType");
         configurationSchema = configurationSchema == null ? "" : configurationSchema.strip();
         if (pluginType == PluginType.SERVICE_PLUGIN && service == null) {
             throw new IllegalArgumentException("服务插件缺少 service 配置");
@@ -52,33 +53,6 @@ public record PluginDescriptor(
         if (pluginType == PluginType.IN_PROCESS && (mainClass == null || mainClass.isBlank())) {
             throw new IllegalArgumentException("进程内插件缺少入口类");
         }
-    }
-
-    /** 保留 3.0 既有构造器，源码插件和测试无需因新增进程类型而重新编译。 */
-    public PluginDescriptor(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String description, Set<Capability> capabilities, List<ConfigField> config) {
-        this(id, name, version, apiVersion, mainClass, description, capabilities, config,
-                PluginType.IN_PROCESS, null, "", null, null);
-    }
-
-    /** 保留服务插件初版构造器，避免目录重构破坏现有宿主测试与适配器。 */
-    public PluginDescriptor(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String description, Set<Capability> capabilities, List<ConfigField> config,
-            PluginType pluginType, Service service) {
-        this(id, name, version, apiVersion, mainClass, description, capabilities, config,
-                pluginType, service, "", null, null);
-    }
-
-    /** 保留推理服务插件初版构造器。 */
-    public PluginDescriptor(
-            String id, String name, String version, String apiVersion, String mainClass,
-            String description, Set<Capability> capabilities, List<ConfigField> config,
-            PluginType pluginType, Service service, String configurationSchema,
-            Inference inference) {
-        this(id, name, version, apiVersion, mainClass, description, capabilities, config,
-                pluginType, service, configurationSchema, inference, null);
     }
 
     public enum PluginType {
@@ -125,11 +99,6 @@ public record PluginDescriptor(
             }
         }
 
-        public Service(
-                String mainClass, String apiVersion, StartupPolicy startupPolicy,
-                ResourceHints resourceHints, List<ExternalEndpoint> externalEndpoints) {
-            this(mainClass, apiVersion, startupPolicy, resourceHints, externalEndpoints, Set.of());
-        }
     }
 
     /** 仅用于准入预留；不是容器级硬隔离。 */
@@ -243,8 +212,6 @@ public record PluginDescriptor(
         INFO,
         SCHEMA_FORM,
         EXTERNAL_ENDPOINTS,
-        INFERENCE_MODELS,
-        INFERENCE_API,
         INFERENCE_CATALOG,
         INFERENCE_SERVICE,
         SERVICE_RUNTIME

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,7 +27,10 @@ class SkillFileRepositoryBehaviorTest {
         assertTrue(repository.loadAll().isEmpty());
 
         Path defaults = Files.createDirectories(root.resolve("defaults"));
-        Files.writeString(defaults.resolve(Skill.SKILL_FILE), "仅有正文");
+        Files.writeString(defaults.resolve(Skill.SKILL_FILE),
+                "---\nname: defaults\n---\n仅有正文");
+        Path bare = Files.createDirectories(root.resolve("bare-markdown"));
+        Files.writeString(bare.resolve(Skill.SKILL_FILE), "旧式无 front matter 技能");
         Path metadata = Files.createDirectories(root.resolve("metadata"));
         Files.writeString(metadata.resolve(Skill.SKILL_FILE), """
                 ---
@@ -44,6 +48,14 @@ class SkillFileRepositoryBehaviorTest {
                 ---
                 元数据正文
                 """);
+        Path unknownSource = Files.createDirectories(root.resolve("unknown-source"));
+        Files.writeString(unknownSource.resolve(Skill.SKILL_FILE), """
+                ---
+                name: 无效来源
+                source: old-provider
+                ---
+                无效来源不应被载入
+                """);
         Files.createDirectories(root.resolve("without-document"));
         Path hidden = Files.createDirectories(root.resolve(".hidden"));
         Files.writeString(hidden.resolve(Skill.SKILL_FILE), "隐藏正文");
@@ -58,6 +70,8 @@ class SkillFileRepositoryBehaviorTest {
 
         List<Skill> loaded = repository.loadAll();
         assertEquals(2, loaded.size());
+        assertEquals(Set.of("defaults", "metadata"), loaded.stream()
+                .map(Skill::getId).collect(java.util.stream.Collectors.toSet()));
         Skill defaultSkill = loaded.stream()
                 .filter(skill -> skill.getId().equals("defaults"))
                 .findFirst().orElseThrow();

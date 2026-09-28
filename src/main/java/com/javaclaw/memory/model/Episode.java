@@ -37,6 +37,13 @@ public class Episode {
     /** 工具调用轨迹摘要（JSON 文本），便于回溯"当时做了什么" */
     public String toolTraceJson;
 
+    /** Hash of the immutable deferred context body. */
+    public String deferredContextDigest;
+
+    /** Bounded metadata used by deferred search without scanning conversation bodies. */
+    public String deferredSearchText;
+    public String deferredSummary;
+
     /** 预计算向量（基于 userInput + 摘要） */
     public float[] embedding;
 

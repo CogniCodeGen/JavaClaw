@@ -8,6 +8,11 @@ import com.javaclaw.framework.builtin.memory.MemoryRecallGateway;
 import com.javaclaw.framework.spi.ExtensionStateView;
 import com.javaclaw.framework.spi.PromptContributor;
 import com.javaclaw.framework.spi.RetrieverContribution;
+import com.javaclaw.framework.spi.DeferredContextSource;
+import com.javaclaw.framework.spi.DeferredContextCandidate;
+import com.javaclaw.framework.spi.FixedContextSnapshot;
+import com.javaclaw.framework.spi.FixedContextSource;
+import com.javaclaw.framework.api.PermissionSet;
 
 import java.util.List;
 import java.util.Map;
@@ -32,14 +37,95 @@ public final class WorkspaceCapabilityRegistry implements
             MemoryRecallGateway memoryRecall,
             MemoryMutationGateway memoryMutations,
             RetrieverContribution knowledgeRetriever,
-            PromptContributor skillContributor) {
+            PromptContributor skillContributor,
+            DeferredContextSource memorySource,
+            DeferredContextSource knowledgeSource,
+            DeferredContextSource skillSource,
+            FixedContextSource personaSource) {
         String id = required(workspaceId);
-        Entry entry = new Entry(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor);
+        Map<String, DeferredContextSource> sources = Map.of(
+                "memory", checkedSource(memorySource, "memory"),
+                "knowledge", checkedSource(knowledgeSource, "knowledge"),
+                "skills", checkedSource(skillSource, "skills"));
+        Entry entry = new Entry(memoryRecall, memoryMutations, knowledgeRetriever,
+                skillContributor, sources, checkedSource(personaSource, "memory.persona"));
         Entry existing = workspaces.putIfAbsent(id, entry);
         if (existing != null) {
             throw new IllegalStateException("workspace capabilities already registered: " + id);
         }
         return new Registration(id, entry);
+    }
+
+    /** A stable root-context proxy; workspace-scoped implementations remain owned by child contexts. */
+    public DeferredContextSource contextSource(String sourceId) {
+        String id = required(sourceId);
+        String group = switch (id) {
+            case "memory" -> "memory";
+            case "knowledge" -> "knowledge";
+            case "skills" -> "skill";
+            default -> throw new IllegalArgumentException("unknown built-in context source: " + id);
+        };
+        return new DeferredContextSource() {
+            @Override public String id() { return id; }
+            @Override public String description() { return "Workspace " + id + " context"; }
+            @Override public String group() { return group; }
+            @Override public PermissionSet requiredPermissions() {
+                return PermissionSet.of("tool.read");
+            }
+            @Override public List<DeferredContextCandidate> search(
+                    RunRequest request, String query, int limit) {
+                return source(request, id).search(request, query, limit);
+            }
+            @Override public String fetch(RunRequest request, String candidateId, String version) {
+                return source(request, id).fetch(request, candidateId, version);
+            }
+        };
+    }
+
+    /** 固定来源代理仅按请求作用域路由到当前工作区实例。 */
+    public FixedContextSource fixedContextSource(String sourceId) {
+        if (!"memory.persona".equals(required(sourceId))) {
+            throw new IllegalArgumentException("unknown fixed context source: " + sourceId);
+        }
+        return new FixedContextSource() {
+            @Override public String id() { return "memory.persona"; }
+            @Override public String group() { return "memory"; }
+            @Override public PermissionSet requiredPermissions() {
+                return PermissionSet.of("tool.read");
+            }
+            @Override public FixedContextSnapshot read(RunRequest request) {
+                Entry entry = entry(request);
+                return entry.personaSource.read(request);
+            }
+        };
+    }
+
+    private DeferredContextSource source(RunRequest request, String sourceId) {
+        Entry entry = entry(request);
+        DeferredContextSource source = entry.contextSources.get(sourceId);
+        if (source == null) throw new IllegalStateException("context source is unavailable: " + sourceId);
+        return source;
+    }
+
+    private static DeferredContextSource checkedSource(DeferredContextSource source, String id) {
+        if (!id.equals(Objects.requireNonNull(source, "source").id())) {
+            throw new IllegalArgumentException("context source ID mismatch: " + id);
+        }
+        return source;
+    }
+
+    private Entry entry(RunRequest request) {
+        Entry selected = workspaces.get(request.scope().workspaceId());
+        if (selected == null) throw new IllegalStateException(
+                "workspace context source is unavailable: " + request.scope().workspaceId());
+        return selected;
+    }
+
+    private static FixedContextSource checkedSource(FixedContextSource source, String id) {
+        if (!id.equals(Objects.requireNonNull(source, "source").id())) {
+            throw new IllegalArgumentException("fixed context source ID mismatch: " + id);
+        }
+        return source;
     }
 
     @Override
@@ -94,12 +180,16 @@ public final class WorkspaceCapabilityRegistry implements
             MemoryRecallGateway memoryRecall,
             MemoryMutationGateway memoryMutations,
             RetrieverContribution knowledgeRetriever,
-            PromptContributor skillContributor) {
+            PromptContributor skillContributor,
+            Map<String, DeferredContextSource> contextSources,
+            FixedContextSource personaSource) {
         private Entry {
             Objects.requireNonNull(memoryRecall, "memoryRecall");
             Objects.requireNonNull(memoryMutations, "memoryMutations");
             Objects.requireNonNull(knowledgeRetriever, "knowledgeRetriever");
             Objects.requireNonNull(skillContributor, "skillContributor");
+            contextSources = Map.copyOf(Objects.requireNonNull(contextSources, "contextSources"));
+            Objects.requireNonNull(personaSource, "personaSource");
         }
     }
 

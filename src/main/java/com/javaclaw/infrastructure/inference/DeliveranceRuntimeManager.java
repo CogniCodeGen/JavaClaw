@@ -21,7 +21,6 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.security.PublicKey;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
@@ -47,10 +46,6 @@ public final class DeliveranceRuntimeManager
             new InferenceRuntimeManifest.ProtocolVersion(1, 2);
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
     private static final JsonSchemaValidator SCHEMAS = new JsonSchemaValidator();
-    private static final Set<String> GENERATION_MODEL_TYPES = Set.of(
-            "llama", "qwen2", "qwen3", "qwen3_moe", "gemma2", "gemma3_text",
-            "gemma4", "mistral", "mixtral", "gpt2", "granitemoehybrid");
-    private static final Set<String> EMBEDDING_MODEL_TYPES = Set.of("bert");
 
     private final DeliverancePluginLayout pluginLayout;
     private final InferenceCatalogPort catalog;
@@ -64,10 +59,10 @@ public final class DeliveranceRuntimeManager
                 new ServicePluginController(gateway), tasks, json);
     }
 
-    /** Test seam retained while the catalog fixtures migrate away from runtime ZIPs. */
+    /** Test seam for a runtime controller without a child process. */
     DeliveranceRuntimeManager(
             DataRoot dataRoot, InferenceCatalogPort catalog,
-            ManagedTaskExecutor tasks, ObjectMapper json, PublicKey ignoredLegacySigningKey) {
+            ManagedTaskExecutor tasks, ObjectMapper json) {
         this(dataRoot, new DeliverancePluginLayout(dataRoot.path().resolveSibling("plugins")),
                 catalog, new TestRuntimeController(), tasks, json);
     }
@@ -83,7 +78,7 @@ public final class DeliveranceRuntimeManager
         this.json = java.util.Objects.requireNonNull(json, "json");
     }
 
-    /** Only prepares/migrates the canonical plugin directory; discovery owns registration. */
+    /** Prepares the canonical plugin directory; discovery owns registration. */
     public void init() {
         try {
             pluginLayout.prepare();
@@ -183,19 +178,6 @@ public final class DeliveranceRuntimeManager
     public void validateProfile(InferenceModelProfile profile) {
         validateDraft(profile.kind(), profile.runtimeId(), profile.loadParameters(),
                 profile.defaultParameters(), false);
-    }
-
-    @Override
-    public Set<String> supportedModelTypes(
-            InferenceRuntimeManifest manifest, InferenceModelProfile.Kind kind) {
-        Set<String> declared = InferenceRuntimePort.super.supportedModelTypes(manifest, kind);
-        if (!declared.isEmpty()) return declared;
-        if (manifest != null && "deliverance".equalsIgnoreCase(manifest.engine())
-                && "0.0.12".equals(manifest.engineVersion())) {
-            return kind == InferenceModelProfile.Kind.EMBEDDING
-                    ? EMBEDDING_MODEL_TYPES : GENERATION_MODEL_TYPES;
-        }
-        return Set.of();
     }
 
     private InferenceCatalogPort.RuntimeInstallation validateDraft(

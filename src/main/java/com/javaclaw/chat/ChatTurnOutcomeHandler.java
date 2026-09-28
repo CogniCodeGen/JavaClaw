@@ -2,8 +2,11 @@ package com.javaclaw.chat;
 
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.framework.api.BudgetExceededException;
+import com.javaclaw.framework.api.TurnPausedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.text.NumberFormat;
 import java.util.Locale;
@@ -33,18 +36,19 @@ final class ChatTurnOutcomeHandler {
             TurnMetrics metrics,
             Runnable finishUi) {
         AssistantMessageView rendered = renderer.message();
-        MarkdownBubble reply = renderer.activeReply();
         if (plan) renderer.finishPlanAgent();
-        renderer.revealReply();
         try {
-            if (plan && reply != null && reply.getLength() == 0) {
-                renderer.hideReplyCard();
-            } else if (!plan && reply != null && reply.getLength() == 0) {
-                reply.finishWith("[模型未返回有效回复]");
-            }
-            renderer.renderInlineReplyImages();
             String text = renderer.currentText(plan);
-            if (text != null && target != null) {
+            if (text == null && !plan) {
+                text = "[模型未返回有效回复]";
+            }
+            if (text == null || text.isBlank()) {
+                renderer.removePendingMessage();
+            } else {
+                renderer.showFinalReply(text);
+                renderer.renderInlineReplyImages();
+            }
+            if (text != null && !text.isBlank() && target != null) {
                 ChatMessage message = message(text, DeliveryState.COMPLETE, metrics);
                 renderer.displayedImagePaths().forEach(message::addImagePath);
                 if (rendered != null) {
@@ -62,11 +66,16 @@ final class ChatTurnOutcomeHandler {
     void awaitInput(boolean plan, ChatSession target, TurnMetrics metrics, Runnable finishUi) {
         if (plan) renderer.finishPlanAgent();
         String partial = renderer.currentText(plan);
-        if (partial != null && !partial.isBlank() && target != null) {
-            finishRenderedText(partial, plan);
-            host.storeAssistantMessage(target, message(partial, DeliveryState.COMPLETE, metrics));
+        if (partial != null && !partial.isBlank()) {
+            renderer.showFinalReply(partial);
+            renderer.renderInlineReplyImages();
+            if (target != null) {
+                ChatMessage message = message(partial, DeliveryState.COMPLETE, metrics);
+                renderer.displayedImagePaths().forEach(message::addImagePath);
+                host.storeAssistantMessage(target, message);
+            }
         } else {
-            renderer.hideReplyCard();
+            renderer.removePendingMessage();
         }
         finishUi.run();
     }
@@ -80,6 +89,8 @@ final class ChatTurnOutcomeHandler {
         FailurePresentation presentation = failurePresentation(error);
         if (presentation.budgetStop()) {
             log.warn("模型调用因运行预算停止", error);
+        } else if (presentation.paused()) {
+            log.warn("运行已暂停，需核对后恢复", error);
         } else {
             log.error("流式输出发生错误", error);
         }
@@ -88,18 +99,23 @@ final class ChatTurnOutcomeHandler {
         try {
             String detail = presentation.detail();
             String errorMessage = (presentation.budgetStop()
-                    ? "调用已停止: " : "调用失败: ") + detail;
+                    ? "调用已停止: " : presentation.paused()
+                    ? "调用已暂停: " : "调用失败: ") + detail;
             String partial = renderer.currentText(plan);
             if (partial != null && !partial.isBlank() && target != null) {
                 String failedText = partial + "\n\n> ⚠ "
-                        + (presentation.budgetStop() ? "已停止：" : "失败：") + detail;
-                finishRenderedText(failedText, plan);
-                host.storeAssistantMessage(
-                        target, message(failedText, DeliveryState.FAILED, metrics));
+                        + (presentation.budgetStop() ? "已停止："
+                        : presentation.paused() ? "已暂停：" : "失败：") + detail;
+                renderer.showFinalReply(failedText);
+                renderer.renderInlineReplyImages();
+                ChatMessage message = message(failedText, DeliveryState.FAILED, metrics);
+                renderer.displayedImagePaths().forEach(message::addImagePath);
+                host.storeAssistantMessage(target, message);
             } else if (target != null && target != host.currentSession()) {
+                renderer.removePendingMessage();
                 host.storeSystemMessage(target, errorMessage);
             } else {
-                renderer.hideReplyCard();
+                renderer.removePendingMessage();
                 host.addStaticMessage(ChatMessage.Role.SYSTEM, errorMessage);
             }
         } catch (RuntimeException displayFailure) {
@@ -118,18 +134,18 @@ final class ChatTurnOutcomeHandler {
         log.info("流式输出已取消 — reason={}, userInitiated={}",
                 cancelled.reason(), cancelled.userInitiated());
         if (plan) renderer.finishPlanAgent();
-        renderer.revealReply();
         try {
             String partial = renderer.currentText(plan);
             if (partial != null && !partial.isBlank() && target != null) {
                 String stoppedText = partial + "\n\n> ⏹ 已停止";
-                finishRenderedText(stoppedText, plan);
-                host.storeAssistantMessage(
-                        target, message(stoppedText, DeliveryState.CANCELLED, metrics));
+                renderer.showFinalReply(stoppedText);
+                renderer.renderInlineReplyImages();
+                ChatMessage message = message(stoppedText, DeliveryState.CANCELLED, metrics);
+                renderer.displayedImagePaths().forEach(message::addImagePath);
+                host.storeAssistantMessage(target, message);
             } else {
-                renderer.hideReplyCard();
+                renderer.removePendingMessage();
             }
-            renderer.markLoopCancelled();
         } finally {
             finishUi.run();
         }
@@ -137,23 +153,7 @@ final class ChatTurnOutcomeHandler {
 
     void loopDetected(String warning) {
         log.warn("循环检测触发: {}", warning);
-        MarkdownBubble reply = renderer.activeReply();
-        if (reply == null) {
-            host.addStaticMessage(ChatMessage.Role.SYSTEM, warning);
-        } else if (reply.getLength() == 0) {
-            reply.finishWith("[循环中断] " + warning);
-        } else {
-            reply.appendText("\n\n[循环中断] " + warning);
-        }
-    }
-
-    private void finishRenderedText(String text, boolean plan) {
-        MarkdownBubble reply = renderer.activeReply();
-        if (!plan && reply != null) {
-            reply.finishWith(text);
-        } else if (plan && renderer.planAgentBlock() != null) {
-            renderer.planAgentBlock().bubble().finishWith(text);
-        }
+        renderer.appendLoopWarning(warning);
     }
 
     private static ChatMessage message(String text, DeliveryState state, TurnMetrics metrics) {
@@ -172,9 +172,17 @@ final class ChatTurnOutcomeHandler {
     }
 
     private static FailurePresentation failurePresentation(Throwable error) {
+        TurnPausedException paused = findPausedFailure(error);
+        if (paused != null) {
+            return new FailurePresentation(false, true, pausedMessage(paused));
+        }
         BudgetExceededException budget = findBudgetFailure(error);
         if (budget != null) {
             return new FailurePresentation(true, budgetMessage(budget));
+        }
+        if (isHttpUnauthorized(error)) {
+            return new FailurePresentation(false,
+                    "服务返回 HTTP 401，请检查对应服务的凭据或访问权限");
         }
         Throwable cause = error;
         while (cause.getCause() != null) cause = cause.getCause();
@@ -193,9 +201,6 @@ final class ChatTurnOutcomeHandler {
             return new FailurePresentation(false, "SSL 连接失败，请检查 API 地址");
         }
         String lower = message.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("401") || lower.contains("unauthorized")) {
-            return new FailurePresentation(false, "API 密钥无效或已过期");
-        }
         if (lower.contains("429") || lower.contains("rate limit")) {
             return new FailurePresentation(false, "请求频率超限，请稍后再试");
         }
@@ -211,29 +216,42 @@ final class ChatTurnOutcomeHandler {
         return new FailurePresentation(false, message);
     }
 
-    private static BudgetExceededException findBudgetFailure(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
-            if (current instanceof BudgetExceededException budget) return budget;
-            String message = current.getMessage();
-            if (message != null && isLegacyBudgetMessage(message)) {
-                return new BudgetExceededException(message);
-            }
-            current = current.getCause();
+    private static TurnPausedException findPausedFailure(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof TurnPausedException paused) return paused;
         }
         return null;
     }
 
-    private static boolean isLegacyBudgetMessage(String message) {
-        String lower = message.toLowerCase(Locale.ROOT);
-        return lower.contains(BudgetExceededException.class.getName().toLowerCase(Locale.ROOT))
-                || lower.contains("com.javaclaw.framework.core.budgetexceededexception")
-                || lower.contains("model usage budget exceeded")
-                || lower.contains("model input token budget exceeded")
-                || lower.contains("model output token budget exceeded")
-                || lower.contains("model cost budget exceeded")
-                || lower.contains("tool call budget exceeded")
-                || lower.contains("repeated tool-call loop detected");
+    private static String pausedMessage(TurnPausedException paused) {
+        String detail = paused.getMessage();
+        if (detail == null || detail.isBlank()) return "需核对运行状态后恢复";
+        String contextPrefix = "planner selected an unauthorized context source: ";
+        if (detail.startsWith(contextPrefix)) {
+            String sourceId = detail.substring(contextPrefix.length()).trim();
+            return "上下文规划选择了不可用的来源 " + sourceId
+                    + "，请重新发起请求；若持续出现，请检查来源权限";
+        }
+        return detail;
+    }
+
+    private static boolean isHttpUnauthorized(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof RestClientResponseException http
+                    && http.getStatusCode().value() == 401) return true;
+            if (current instanceof WebClientResponseException http
+                    && http.getStatusCode().value() == 401) return true;
+        }
+        return false;
+    }
+
+    private static BudgetExceededException findBudgetFailure(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof BudgetExceededException budget) return budget;
+            current = current.getCause();
+        }
+        return null;
     }
 
     private static String budgetMessage(BudgetExceededException budget) {
@@ -294,5 +312,9 @@ final class ChatTurnOutcomeHandler {
         }
     }
 
-    private record FailurePresentation(boolean budgetStop, String detail) { }
+    private record FailurePresentation(boolean budgetStop, boolean paused, String detail) {
+        private FailurePresentation(boolean budgetStop, String detail) {
+            this(budgetStop, false, detail);
+        }
+    }
 }

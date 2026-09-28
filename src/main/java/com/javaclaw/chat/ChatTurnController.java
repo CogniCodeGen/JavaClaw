@@ -16,7 +16,6 @@ import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.conversation.PlanProfile;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.fx.FxDispatcher;
-import javafx.scene.Node;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,8 +52,6 @@ final class ChatTurnController {
         void adoptAssistantMessage(ChatMessage message);
 
         void appendClarification(String reason, String question);
-
-        void suspendStreamNode(Node node);
 
         void disposeSuspendedStreamNodes();
 
@@ -111,13 +108,11 @@ final class ChatTurnController {
         this.events = new ChatTurnEventRouter(
                 renderer,
                 thinking,
-                host,
                 outcomes::loopDetected,
                 this::updateMetrics,
                 clarification -> {
                     host.appendClarification(clarification.reason(), clarification.question());
-                },
-                () -> streamingSession != null && streamingSession != host.currentSession());
+                });
     }
 
     void sendFromComposer() {
@@ -211,10 +206,11 @@ final class ChatTurnController {
         composer.clearAttachments();
         setInputEnabled(false);
         streamingSession = session;
-        composer.setThinkingVisible(true);
+        composer.setThinkingVisible(false);
         int turnGeneration = ++generation;
         ChatActiveTurn turn = new ChatActiveTurn(turnGeneration, targetModeId);
         activeTurn = turn;
+        events.startNewStream();
         thinking.startNewStream();
 
         String sessionId = session == null ? null : session.getId();

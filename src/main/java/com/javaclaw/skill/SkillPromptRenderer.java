@@ -12,6 +12,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -46,6 +47,10 @@ final class SkillPromptRenderer {
     SkillPromptRenderer(Source source, AgentConfig settings) {
         this.source = java.util.Objects.requireNonNull(source, "source");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
+    }
+
+    boolean bundlesEnabled() {
+        return settings.isSkillBundlesEnabled();
     }
 
     String buildCatalog(Set<String> availableGroups) {
@@ -178,6 +183,10 @@ final class SkillPromptRenderer {
                 .filter(candidate -> candidate.getName().equals(target))
                 .findFirst()
                 .orElse(null);
+        return buildSkillDetail(skill);
+    }
+
+    String buildSkillDetail(Skill skill) {
         if (skill == null || hasSensitiveName(skill)) {
             return null;
         }
@@ -278,7 +287,10 @@ final class SkillPromptRenderer {
         Path references = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
         StringBuilder content = new StringBuilder();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(references)) {
-            for (Path file : files) {
+            List<Path> ordered = new ArrayList<>();
+            for (Path file : files) ordered.add(file);
+            ordered.sort(Comparator.comparing(path -> path.getFileName().toString()));
+            for (Path file : ordered) {
                 if (!Files.isRegularFile(file) || !SkillFileRepository.isTextFile(file)
                         || !PathGuard.isInside(references, file)) {
                     continue;

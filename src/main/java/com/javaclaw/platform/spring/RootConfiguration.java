@@ -389,7 +389,11 @@ public class RootConfiguration {
         var artifacts = new java.util.ArrayList<com.javaclaw.framework.extension.ExtensionArtifact>(
                 com.javaclaw.framework.builtin.BuiltinExtensionCatalog.create(
                         capabilities, capabilities, capabilities, capabilities, hostTools,
-                        new com.javaclaw.framework.builtin.SubAgentTools(agents::getObject, runs, childApprovals)));
+                        new com.javaclaw.framework.builtin.SubAgentTools(agents::getObject, runs, childApprovals),
+                        capabilities.contextSource("memory"),
+                        capabilities.contextSource("knowledge"),
+                        capabilities.contextSource("skills"),
+                        capabilities.fixedContextSource("memory.persona")));
         var restored = installer.loadAuthorized();
         artifacts.addAll(restored.artifacts());
         restored.failures().forEach(failure ->
@@ -565,8 +569,7 @@ public class RootConfiguration {
             java.util.concurrent.Executor executor,
             ObjectMapper json,
             Clock frameworkClock,
-            com.javaclaw.framework.core.RunUsageLedger usage,
-            com.javaclaw.infrastructure.agent.LegacyThreadImporter migration) {
+            com.javaclaw.framework.core.RunUsageLedger usage) {
         return new com.javaclaw.framework.core.AgentEngine(
                 compiler, runs, plans, reasoning, executor, json, frameworkClock, usage);
     }

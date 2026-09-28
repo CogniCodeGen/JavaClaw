@@ -17,25 +17,14 @@ public interface InferenceManagementApplicationService {
 
     Snapshot snapshot(String workspaceId);
 
-    /** 高级管理页按职责读取数据；兼容实现可回退到完整快照。 */
-    default Snapshot snapshot(String workspaceId, Projection projection) {
-        Objects.requireNonNull(projection, "projection");
-        return snapshot(workspaceId);
-    }
+    /** 高级管理页按职责读取数据。 */
+    Snapshot snapshot(String workspaceId, Projection projection);
 
     /** 模型配置页使用的轻量投影；不读取运行时、资产、绑定、密钥或网关配置。 */
-    default List<InferenceModelProfile> readyProfiles(InferenceModelProfile.Kind kind) {
-        return snapshot("inference-profile-list").profiles().stream()
-                .filter(profile -> profile.kind() == kind)
-                .filter(profile -> profile.state() == InferenceModelProfile.State.READY)
-                .toList();
-    }
+    List<InferenceModelProfile> readyProfiles(InferenceModelProfile.Kind kind);
 
     /** Returns non-sensitive residency state for the requested profiles. */
-    default Map<UUID, InferenceRuntimePort.RuntimeProfileStatus> runtimeStatuses(
-            Set<UUID> profileIds) {
-        return Map.of();
-    }
+    Map<UUID, InferenceRuntimePort.RuntimeProfileStatus> runtimeStatuses(Set<UUID> profileIds);
 
     InferenceModelAsset importLocal(Path source, Consumer<InferenceAssetPreparationPort.Progress> progress,
                                     BooleanSupplier cancelled) throws Exception;
@@ -46,46 +35,22 @@ public interface InferenceManagementApplicationService {
                                             Consumer<InferenceAssetPreparationPort.Progress> progress,
                                             BooleanSupplier cancelled) throws Exception;
 
-    default HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
-            HuggingFaceModelCatalogPort.SearchRequest request,
-            BooleanSupplier cancelled) throws Exception {
-        return new HuggingFaceModelCatalogPort.SearchPage(List.of(), "");
-    }
-
-    default HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
+    HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
             HuggingFaceModelCatalogPort.SearchRequest request,
             Consumer<HuggingFaceModelCatalogPort.SearchProgress> progress,
-            BooleanSupplier cancelled) throws Exception {
-        HuggingFaceModelCatalogPort.SearchPage page = searchOnlineModels(request, cancelled);
-        if (progress != null) {
-            progress.accept(new HuggingFaceModelCatalogPort.SearchProgress(
-                    HuggingFaceModelCatalogPort.SearchState.READY, page.models(),
-                    page.models().size(), page.models().size(), java.time.Instant.now(),
-                    "", true, Map.of()));
-        }
-        return page;
-    }
+            BooleanSupplier cancelled) throws Exception;
 
-    default HuggingFaceModelCatalogPort.ModelDetail onlineModelDetail(
-            String repository, BooleanSupplier cancelled) throws Exception {
-        throw new IllegalStateException("Hugging Face 在线目录未配置");
-    }
+    HuggingFaceModelCatalogPort.ModelDetail onlineModelDetail(
+            String repository, BooleanSupplier cancelled) throws Exception;
 
-    default InferenceModelAsset downloadOnlineModel(
+    InferenceModelAsset downloadOnlineModel(
             HuggingFaceModelCatalogPort.ModelDetail model,
             Consumer<InferenceAssetPreparationPort.Progress> progress,
-            BooleanSupplier cancelled) throws Exception {
-        if (model == null) throw new IllegalArgumentException("在线模型不能为空");
-        if (!model.downloadable()) throw new IllegalStateException("门控模型不能匿名下载");
-        return downloadHuggingFace(new InferenceAssetPreparationPort.HuggingFaceRequest(
-                model.summary().repository(), model.summary().commit(), ""), progress, cancelled);
-    }
+            BooleanSupplier cancelled) throws Exception;
 
-    default RecommendedProfile recommendedProfile(
+    RecommendedProfile recommendedProfile(
             UUID assetId, InferenceModelProfile.Kind kind,
-            BooleanSupplier cancelled) throws Exception {
-        throw new IllegalStateException("系统推荐配置不可用");
-    }
+            BooleanSupplier cancelled) throws Exception;
     InferenceModelProfile saveAndVerifyProfile(ProfileDraft draft, BooleanSupplier cancelled) throws Exception;
     void startProfile(UUID profileId) throws Exception;
     void stopProfile(UUID profileId);
@@ -121,13 +86,9 @@ public interface InferenceManagementApplicationService {
     void saveGateway(InferenceCatalogPort.GatewayConfiguration configuration);
     void saveGateway(InferenceCatalogPort.GatewayConfiguration configuration,
                      char[] keyStorePassword) throws Exception;
-    default void setInvocationLogging(boolean enabled) throws Exception {
-        throw new IllegalStateException("当前 Deliverance 插件不支持调用日志热配置");
-    }
-    default boolean invocationLoggingSupported() { return false; }
-    default InferenceApiServerControlPort.ServiceSnapshot modelServiceSnapshot() {
-        return InferenceApiServerControlPort.NOOP.serviceSnapshot();
-    }
+    void setInvocationLogging(boolean enabled) throws Exception;
+    boolean invocationLoggingSupported();
+    InferenceApiServerControlPort.ServiceSnapshot modelServiceSnapshot();
     String gatewayEndpoint();
     CreatedApiKey createApiKey(String name, Set<InferenceCatalogPort.ApiScope> scopes,
                                Set<String> aliases, int rpm, long tpm, int concurrency);

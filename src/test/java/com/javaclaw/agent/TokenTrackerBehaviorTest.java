@@ -106,9 +106,6 @@ class TokenTrackerBehaviorTest {
         tracker.recordCachedObservation(50, 100);
         assertEquals(1.0 / 3.0, tracker.getTodayCacheHitRate(), 0.0001);
         tracker.recordTaskUsage(1, 0);
-        assertEquals(30, tracker.getRecentDailyUsage().size());
-        assertEquals(38L, tracker.getRecentDailyUsage().get(LocalDate.now().toString()));
-
         TokenTracker reloaded = new TokenTracker("token-test", jdbc, settings);
         assertEquals(38, reloaded.getTodayTokens());
         assertEquals(1.0 / 3.0, reloaded.getTodayCacheHitRate(), 0.0001);

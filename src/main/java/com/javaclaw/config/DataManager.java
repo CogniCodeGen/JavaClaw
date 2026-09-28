@@ -29,34 +29,18 @@ public class DataManager {
     /** 截图子目录 */
     private static final String SCREENSHOTS_DIR = "screenshots";
 
-    /** 聊天记录子目录 */
-    private static final String CHAT_DIR = "chat";
-
-    /** 会话存储子目录 */
-    private static final String SESSIONS_DIR = "sessions";
-
     /** 知识库数据子目录 */
     private static final String KNOWLEDGE_DIR = "knowledge";
 
     /** 任务事件子目录（JSONL 按任务 ID 分文件） */
     private static final String TASK_EVENTS_DIR = "task-events";
 
-    /** 会话索引文件名 */
-    private static final String SESSIONS_INDEX_FILE = "sessions_index.json";
-
-    /** 聊天记录文件名（旧版兼容） */
-    private static final String CHAT_HISTORY_FILE = "chat_history.json";
-
     private final WorkspaceManager workspaces;
 
     private Path dataRoot;
     private Path screenshotsDir;
-    private Path chatDir;
     private Path knowledgeDir;
     private Path globalKnowledgeDir;
-    private Path sessionsDir;
-    private Path sessionsIndexFile;
-    private Path chatHistoryFile;
     private Path taskEventsDir;
 
     public DataManager(WorkspaceManager workspaces) {
@@ -82,13 +66,9 @@ public class DataManager {
         Path globalData = workspaces.getGlobalDataPath();
         dataRoot = globalData.resolve("workspace-data").resolve(workspaceId);
         screenshotsDir = globalData.resolve(SCREENSHOTS_DIR).resolve(workspaceId);
-        chatDir = dataRoot.resolve(CHAT_DIR);
         knowledgeDir = workspaces.getGlobalDataPath()
                 .resolve(KNOWLEDGE_DIR).resolve("workspaces").resolve(workspaceId);
         globalKnowledgeDir = workspaces.getGlobalDataPath().resolve(KNOWLEDGE_DIR).resolve("global");
-        sessionsDir = chatDir.resolve(SESSIONS_DIR);
-        sessionsIndexFile = chatDir.resolve(SESSIONS_INDEX_FILE);
-        chatHistoryFile = chatDir.resolve(CHAT_HISTORY_FILE);
         taskEventsDir = dataRoot.resolve(TASK_EVENTS_DIR);
     }
 
@@ -125,46 +105,6 @@ public class DataManager {
      */
     public Path getGlobalKnowledgeDir() {
         return globalKnowledgeDir;
-    }
-
-    /**
-     * 获取聊天记录目录
-     */
-    public Path getChatDir() {
-        return chatDir;
-    }
-
-    /**
-     * 获取聊天记录文件路径
-     */
-    public Path getChatHistoryFile() {
-        return chatHistoryFile;
-    }
-
-    /**
-     * 获取会话存储目录
-     */
-    public Path getSessionsDir() {
-        return sessionsDir;
-    }
-
-    /**
-     * 获取会话索引文件路径
-     */
-    public Path getSessionsIndexFile() {
-        return sessionsIndexFile;
-    }
-
-    /**
-     * 获取指定会话的消息文件路径
-     *
-     * @param sessionId 会话 ID（仅允许字母、数字、下划线、连字符）
-     * @return 消息文件路径（如 data/chat/sessions/abc12345.json）
-     * @throws IllegalArgumentException 如果 sessionId 含非法字符（防止路径穿越）
-     */
-    public Path getSessionFile(String sessionId) {
-        validatePathSegment(sessionId, "sessionId");
-        return sessionsDir.resolve(sessionId + ".json");
     }
 
     /**

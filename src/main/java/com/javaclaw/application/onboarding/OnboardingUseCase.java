@@ -133,9 +133,7 @@ public final class OnboardingUseCase implements OnboardingApplicationService {
         boolean managed = provider.localManaged();
         boolean local = managed || "ollama".equals(provider.id());
         boolean recommended = managed || "dashscope".equals(provider.id());
-        // 首启向导的 Provider.id 是历史公开契约；目录和持久化层仍统一使用稳定小写 ID。
-        String compatibilityId = provider.localManaged() ? provider.id() : provider.displayName();
-        return new Provider(compatibilityId, provider.displayName(), provider.description(),
+        return new Provider(provider.id(), provider.displayName(), provider.description(),
                 provider.defaultBaseUrl(), provider.defaultChatModel(), local, managed, recommended);
     }
 

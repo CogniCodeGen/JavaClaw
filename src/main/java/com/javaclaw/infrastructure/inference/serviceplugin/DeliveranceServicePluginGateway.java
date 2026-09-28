@@ -23,13 +23,11 @@ import com.javaclaw.inference.api.LocalInferenceGateway;
 import com.javaclaw.infrastructure.serviceplugin.ServicePluginDefinition;
 import com.javaclaw.infrastructure.serviceplugin.ServicePluginProcessManager;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -747,69 +745,11 @@ public final class DeliveranceServicePluginGateway implements
 
     InferenceChatResponse map(InferencePluginProtocol.ChatResponse value) {
         List<InferenceToolCall> toolCalls = tools(value.toolCalls());
-        String content = value.content();
         InferenceChatResponse.FinishReason finishReason =
                 InferenceChatResponse.FinishReason.valueOf(value.finishReason());
-        if (toolCalls.isEmpty()) {
-            LegacyToolCalls legacy = legacyToolCalls(value.requestId(), content);
-            if (!legacy.calls().isEmpty()) {
-                toolCalls = legacy.calls();
-                content = legacy.content();
-                finishReason = InferenceChatResponse.FinishReason.TOOL_CALLS;
-            }
-        }
-        return new InferenceChatResponse(value.requestId(), value.model(), content,
+        return new InferenceChatResponse(value.requestId(), value.model(), value.content(),
                 value.reasoningContent(), toolCalls, finishReason, usage(value.usage()),
                 Duration.ofMillis(value.queueTimeMs()), Duration.ofMillis(value.inferenceTimeMs()));
-    }
-
-    private LegacyToolCalls legacyToolCalls(String requestId, String content) {
-        if (content == null || !content.contains("<tool_call>")) {
-            return new LegacyToolCalls(content == null ? "" : content, List.of());
-        }
-        final String opening = "<tool_call>";
-        final String closing = "</tool_call>";
-        StringBuilder visible = new StringBuilder(content.length());
-        List<InferenceToolCall> calls = new ArrayList<>();
-        int cursor = 0;
-        while (calls.size() < 64) {
-            int start = content.indexOf(opening, cursor);
-            if (start < 0) break;
-            int end = content.indexOf(closing, start + opening.length());
-            if (end < 0) break;
-            Optional<InferenceToolCall> parsed = legacyToolCall(requestId, calls.size(),
-                    content.substring(start + opening.length(), end));
-            if (parsed.isPresent()) {
-                visible.append(content, cursor, start);
-                calls.add(parsed.orElseThrow());
-            } else {
-                visible.append(content, cursor, end + closing.length());
-            }
-            cursor = end + closing.length();
-        }
-        visible.append(content, cursor, content.length());
-        return calls.isEmpty()
-                ? new LegacyToolCalls(content, List.of())
-                : new LegacyToolCalls(visible.toString().strip(), List.copyOf(calls));
-    }
-
-    private Optional<InferenceToolCall> legacyToolCall(
-            String requestId, int index, String payload) {
-        try {
-            var root = json.readTree(payload);
-            String name = root.path("name").asText("").strip();
-            var arguments = root.get("arguments");
-            if (name.isBlank() || arguments == null) return Optional.empty();
-            String argumentsJson = arguments.isTextual()
-                    ? arguments.textValue() : json.writeValueAsString(arguments);
-            if (!json.readTree(argumentsJson).isObject()) return Optional.empty();
-            String seed = requestId + ":" + index + ":" + name + ":" + argumentsJson;
-            String id = "call_" + UUID.nameUUIDFromBytes(
-                    seed.getBytes(StandardCharsets.UTF_8)).toString().replace("-", "");
-            return Optional.of(new InferenceToolCall(id, name, argumentsJson));
-        } catch (Exception malformed) {
-            return Optional.empty();
-        }
     }
 
     private InferenceStreamEvent map(InferencePluginProtocol.StreamEvent value) {
@@ -850,5 +790,4 @@ public final class DeliveranceServicePluginGateway implements
                                    String selectedBackend, Set<String> capabilities) { }
     private record WireLoadResponse(WireModelStatus model) { }
     private record WireErrorUsage(InferencePluginProtocol.Usage usage) { }
-    private record LegacyToolCalls(String content, List<InferenceToolCall> calls) { }
 }

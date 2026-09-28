@@ -12,12 +12,11 @@ package com.javaclaw.agent;
  * <p>各来源的确认待遇（SMART 审核模式下）：</p>
  * <ul>
  *   <li>{@link Kind#INTERACTIVE} 交互路径（聊天/规划）——用户在场：逐次确认，
- *       无任务白名单、无目录范围自动放行、默认超时；</li>
+ *       无任务白名单、默认超时；</li>
  *   <li>{@link Kind#MANAGED_TASK} 托管任务（SDD/循环）——半无人值守：可命中本任务的
- *       「同意全部」白名单、可经目录范围评估自动放行（以 {@link #workDir} 为基准）、
- *       确认超时放宽；</li>
- *   <li>{@link Kind#SCHEDULED} 定时任务——无人值守：默认无白名单、无自动放行（确定性只读命令
- *       白名单除外，其放行与来源无关）；但用户可在定时任务设置里对<b>单个任务显式授权</b>
+ *       「同意全部」白名单、确定性只读命令可自动放行、确认超时放宽；</li>
+ *   <li>{@link Kind#SCHEDULED} 定时任务——无人值守：默认无白名单、无自动放行；
+ *       但用户可在定时任务设置里对<b>单个任务显式授权</b>
  *       「允许无人值守执行高风险工具」，授权后该任务定时执行期内本次 run 令牌的确认自动放行。
  *       令牌逐 run 全新构造，确认层按<b>令牌实例身份（==）</b>匹配当前授权窗——即便上一次
  *       执行超时后残存僵尸线程存活到下个授权窗（包括同一任务的下个 tick，taskId 完全相同），
@@ -29,7 +28,7 @@ package com.javaclaw.agent;
  *
  * @param kind    来源类别
  * @param taskId  托管任务 ID（「同意全部」白名单的归属键）；非托管来源为 null
- * @param workDir 托管任务工作目录（目录范围评估基准）；未声明为 null（不做目录放行）
+ * @param workDir 托管任务工作目录元数据；未声明为 null
  */
 public record ToolCallOrigin(Kind kind, String taskId, String workDir) {
 
@@ -75,14 +74,14 @@ public record ToolCallOrigin(Kind kind, String taskId, String workDir) {
      * 托管任务来源。
      *
      * @param taskId  任务 ID（不可为空——白名单归属键）
-     * @param workDir 工作目录；空白视为未声明（该任务不做目录范围自动放行）
+     * @param workDir 工作目录；空白视为未声明
      */
     public static ToolCallOrigin managedTask(String taskId, String workDir) {
         return new ToolCallOrigin(Kind.MANAGED_TASK, taskId,
                 (workDir == null || workDir.isBlank()) ? null : workDir);
     }
 
-    /** 是否托管任务来源（白名单/目录放行/放宽超时仅对它开放）。 */
+    /** 是否托管任务来源（任务白名单、确定性只读命令和放宽超时仅对它开放）。 */
     public boolean isManagedTask() {
         return kind == Kind.MANAGED_TASK && taskId != null;
     }

@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter;
  *   <li>{@link FailureKind#TOOL_ERROR} — 工具内部抛错（[失败] / error 关键字）</li>
  *   <li>{@link FailureKind#TIMEOUT} — 工具执行超时</li>
  *   <li>{@link FailureKind#EMPTY_RESULT} — 工具成功但产出为空</li>
- *   <li>{@link FailureKind#SAME_INPUT_LOOP} — 同入参重复调用（由 ExecutionMonitor 标注）</li>
+ *   <li>{@link FailureKind#SAME_INPUT_LOOP} — 同入参重复调用</li>
  * </ul>
  */
 public class ExecutionTrace {

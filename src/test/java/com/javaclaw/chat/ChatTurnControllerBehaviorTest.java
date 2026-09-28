@@ -29,8 +29,14 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.system.CommandWhitelistManager;
+import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.application.Platform;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.control.Label;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +47,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -181,6 +188,126 @@ class ChatTurnControllerBehaviorTest {
             chat.complete();
         });
         assertEquals(messageCount, sessions.currentSession().getMessages().size());
+    }
+
+    @Test
+    void 生成期间中央只保留动画且终态才显示完整回复() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        startChat(chat, "生成一份计划");
+        ChatStreamRenderer renderer = field(turns, "renderer", ChatStreamRenderer.class);
+        AssistantMessageView pending = callFx(renderer::message);
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        ChatComposerViewModel composerState = field(
+                composer, "viewModel", ChatComposerViewModel.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+
+        runFx(() -> chat.event(new ConversationEvent.Hint("正在执行工具：网页搜索")));
+        drainFxQueue();
+        assertEquals("执行工具中...", panel.viewModel().statusTextProperty().get());
+        assertTrue(callFx(() -> renderedText(sections).contains("网页搜索")));
+        assertTrue(callFx(() -> renderedText(sections).contains("进行中")));
+
+        runFx(() -> {
+            var planning = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                    .objectNode().put("stepId", "planning-step").put("kind", "ORCHESTRATION");
+            planning.putObject("input").put("phase", "select_v2");
+            chat.event(new ConversationEvent.Custom("core.step.started", planning));
+            chat.event(new ConversationEvent.Custom("core.step.completed",
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                            .objectNode().put("stepId", "planning-step")));
+            chat.event(new ConversationEvent.Thinking("模型内部过程"));
+            chat.event(new ConversationEvent.Reply("最终回复的前半段"));
+            chat.event(new ConversationEvent.ToolResult("网页搜索", "{\"raw\":\"json\"}"));
+            chat.event(new ConversationEvent.SubAgentThinking("知识专家", "检索过程"));
+            chat.event(new ConversationEvent.SubAgentReply("知识专家", "检索结果"));
+            chat.event(new ConversationEvent.Progress("route", "路由", null, "处理中"));
+            chat.event(new ConversationEvent.LoopDetected("检测到重复调用"));
+        });
+        drainFxQueue();
+
+        assertTrue(turns.isStreaming());
+        assertFalse(callFx(() -> composerState.thinkingProperty().get()));
+        assertEquals(0, callFx(() -> pending.reply().getLength()));
+        assertTrue(callFx(() -> pending.toolsHost().getChildren().isEmpty()));
+        Node animation = callFx(() -> pending.root().lookup("#generationPlaceholder"));
+        Node actions = callFx(() -> pending.root().lookup("#actionRow"));
+        assertNotNull(animation);
+        assertNotNull(actions);
+        assertTrue(callFx(animation::isManaged));
+        assertFalse(callFx(actions::isManaged));
+        assertFalse(callFx(() -> sections.getChildren().isEmpty()));
+        assertTrue(callFx(() -> renderedText(sections).contains("完成")));
+        assertTrue(callFx(() -> renderedText(sections).contains("选择上下文")));
+        assertFalse(callFx(() -> renderedText(sections).contains("正在确定本轮需要的资料和工具")));
+        assertTrue(callFx(() -> renderedText(sections).contains("模型内部过程")));
+        assertTrue(callFx(() -> renderedText(sections).contains("{\"raw\":\"json\"}")));
+        assertTrue(callFx(() -> renderedText(sections).contains("检索结果")));
+        assertTrue(callFx(() -> renderedText(sections).contains("处理中")));
+
+        runFx(chat::complete);
+        assertEquals("最终回复的前半段\n\n[循环中断] 检测到重复调用",
+                lastMessage(ChatMessage.Role.ASSISTANT).getContent());
+        assertFalse(callFx(animation::isManaged));
+        assertTrue(callFx(actions::isManaged));
+        assertEquals(lastMessage(ChatMessage.Role.ASSISTANT).getContent(),
+                callFx(() -> pending.reply().getText()));
+    }
+
+    @Test
+    void 工具图片只留在右侧明细而最终回复引用的图片进入聊天记录() throws Exception {
+        Path image = ProjectAccessPolicy.projectRoot().resolve(
+                "src/main/resources/images/javaclaw-app-icon-capabilities.png");
+        assertTrue(Files.isRegularFile(image));
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+        ChatStreamRenderer renderer = field(turns, "renderer", ChatStreamRenderer.class);
+
+        startChat(chat, "检查工具图片");
+        AssistantMessageView toolOnly = callFx(renderer::message);
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolResult("网页搜索", image.toString()));
+            chat.event(new ConversationEvent.SubAgentReply("知识专家", image.toString()));
+            chat.event(new ConversationEvent.Reply("图片已检查"));
+            chat.complete();
+        });
+        assertTrue(callFx(() -> renderedText(sections).contains(image.toString())));
+        assertEquals(2, callFx(() -> sections.lookupAll(".screenshot-image").size()));
+        assertTrue(lastMessage(ChatMessage.Role.ASSISTANT).getImagePaths().isEmpty());
+        assertTrue(callFx(() -> toolOnly.replyContentHost().getChildren().stream()
+                .noneMatch(ImageView.class::isInstance)));
+
+        startChat(chat, "引用同一图片");
+        AssistantMessageView referenced = callFx(renderer::message);
+        runFx(() -> {
+            chat.event(new ConversationEvent.Reply("请查看 " + image));
+            chat.complete();
+        });
+        assertEquals(List.of(image.toString()),
+                lastMessage(ChatMessage.Role.ASSISTANT).getImagePaths());
+        assertTrue(callFx(() -> referenced.replyContentHost().getChildren().stream()
+                .anyMatch(ImageView.class::isInstance)));
+    }
+
+    @Test
+    void 长结果截断文字后右侧仍显示原始图片且不重复() throws Exception {
+        Path image = ProjectAccessPolicy.projectRoot().resolve(
+                "src/main/resources/images/javaclaw-app-icon-capabilities.png");
+        assertTrue(Files.isRegularFile(image));
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+
+        startChat(chat, "检查长结果图片");
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolResult("网页搜索",
+                    image + "\n" + image + "\n" + "x".repeat(17_000)));
+            chat.event(new ConversationEvent.SubAgentReply("知识专家",
+                    image + "\n" + "y".repeat(17_000)));
+        });
+        assertEquals(2, callFx(() -> sections.lookupAll(".screenshot-image").size()));
+        runFx(() -> chat.event(new ConversationEvent.SubAgentReply("知识专家", image.toString())));
+        assertEquals(2, callFx(() -> sections.lookupAll(".screenshot-image").size()));
     }
 
     @Test
@@ -474,6 +601,17 @@ class ChatTurnControllerBehaviorTest {
         assertTrue(completed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS));
         if (failure.get() != null) throw new AssertionError(failure.get());
         return result.get();
+    }
+
+    private static String renderedText(Node node) {
+        StringBuilder text = new StringBuilder();
+        if (node instanceof Label label) text.append(label.getText()).append('\n');
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                text.append(renderedText(child));
+            }
+        }
+        return text.toString();
     }
 
     @SuppressWarnings("unchecked")

@@ -36,10 +36,12 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class ExternalEndpointManagerTest {
     private static final String API_KEY = "test-key-0123456789-abcdefghijkl";
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final RunnerExecutor timers = new RunnerExecutor();
 
     @AfterEach
     void closeExecutor() {
         executor.shutdownNow();
+        timers.close();
     }
 
     @Test
@@ -115,7 +117,7 @@ class ExternalEndpointManagerTest {
     void rejectsUnapprovedDuplicateAndInvalidEndpointDefinitions() {
         ServicePluginWire.Endpoint http = endpoint("http", "HTTP", "127.0.0.1");
         assertThrows(IllegalArgumentException.class, () -> new ExternalEndpointManager(
-                List.of(http, http), executor, new ObjectMapper(), new RunnerLogger("test")));
+                List.of(http, http), executor, timers, new ObjectMapper(), new RunnerLogger("test")));
 
         try (ExternalEndpointManager manager = manager(http)) {
             assertThrows(IllegalStateException.class, () -> manager.register(
@@ -362,7 +364,7 @@ class ExternalEndpointManagerTest {
     }
 
     private ExternalEndpointManager manager(ServicePluginWire.Endpoint endpoint) {
-        return new ExternalEndpointManager(List.of(endpoint), executor,
+        return new ExternalEndpointManager(List.of(endpoint), executor, timers,
                 new ObjectMapper(), new RunnerLogger("test"));
     }
 

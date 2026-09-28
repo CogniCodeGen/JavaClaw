@@ -50,11 +50,11 @@ final class ServicePluginSchemaConfigurationPane implements AutoCloseable {
                     this.json.readTree(plugin.configurationSchema()), requestedFields);
             fields = Set.copyOf(iterable(schema.path("properties").fieldNames()));
             compact = compactSchema(schema);
-            ObjectNode existing = existingValues(schema, plugin.configuration());
+            ObjectNode existing = existingValues(this.json, schema, plugin.configuration());
             editor = new JsonSchemaForm(this.json).render(
                     schema, JsonNodeFactory.instance.objectNode(), existing, false);
         } catch (Exception invalid) {
-            throw new IllegalArgumentException("插件配置 Schema 无效，无法安全编辑", invalid);
+            throw new IllegalArgumentException("插件配置 Schema 或已保存配置无效，请重新配置", invalid);
         }
         build(plugin);
     }
@@ -155,7 +155,8 @@ final class ServicePluginSchemaConfigurationPane implements AutoCloseable {
         return result;
     }
 
-    private ObjectNode existingValues(JsonNode schema, Map<String, String> values) {
+    static ObjectNode existingValues(
+            ObjectMapper json, JsonNode schema, Map<String, String> values) {
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         if (values == null) return result;
         values.forEach((name, raw) -> {
@@ -163,14 +164,26 @@ final class ServicePluginSchemaConfigurationPane implements AutoCloseable {
             if (property == null || raw == null) return;
             try {
                 result.set(name, switch (property.path("type").asText("string")) {
-                    case "boolean" -> JsonNodeFactory.instance.booleanNode(Boolean.parseBoolean(raw));
+                    case "boolean" -> {
+                        if (!raw.equals("true") && !raw.equals("false")) {
+                            throw new IllegalArgumentException("invalid boolean");
+                        }
+                        yield JsonNodeFactory.instance.booleanNode(Boolean.parseBoolean(raw));
+                    }
                     case "integer" -> JsonNodeFactory.instance.numberNode(Long.parseLong(raw));
                     case "number" -> JsonNodeFactory.instance.numberNode(new java.math.BigDecimal(raw));
-                    case "object", "array" -> json.readTree(raw);
+                    case "object", "array" -> {
+                        JsonNode parsed = json.readTree(raw);
+                        boolean object = property.path("type").asText().equals("object");
+                        if (parsed == null || (object ? !parsed.isObject() : !parsed.isArray())) {
+                            throw new IllegalArgumentException("invalid structured value");
+                        }
+                        yield parsed;
+                    }
                     default -> JsonNodeFactory.instance.textNode(raw);
                 });
-            } catch (Exception ignored) {
-                // Registration validates persisted values. Invalid legacy values use Schema defaults.
+            } catch (Exception invalid) {
+                throw new IllegalArgumentException("已保存的插件配置字段无效: " + name, invalid);
             }
         });
         return result;

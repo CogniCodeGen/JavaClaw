@@ -40,10 +40,10 @@ public class WorkspaceManager {
             "workflow_checkpoints", "workflow_runs", "workflow_threads",
             "workflow_definitions", "app_properties", "mcp_servers",
             "site_account_bindings", "site_sessions", "site_credentials",
-            "scheduled_tasks", "custom_agents", "plugin_state", "plugin_storage",
+            "scheduled_tasks", "plugin_state", "plugin_storage",
             "command_whitelist", "chat_messages", "chat_sessions", "token_usage_daily",
             "skill_usage", "skill_proposals", "sdd_tasks", "sdd_spec_docs",
-            "sdd_verify_cache", "knowledge_doc_prefs", "browser_state",
+            "sdd_verify_cache", "knowledge_doc_prefs",
             "inference_workspace_bindings");
 
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();

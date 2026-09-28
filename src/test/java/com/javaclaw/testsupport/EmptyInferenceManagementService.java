@@ -3,6 +3,7 @@ package com.javaclaw.testsupport;
 import com.javaclaw.application.inference.InferenceAssetPreparationPort;
 import com.javaclaw.application.inference.InferenceCatalogPort;
 import com.javaclaw.application.inference.InferenceManagementApplicationService;
+import com.javaclaw.application.inference.HuggingFaceModelCatalogPort;
 import com.javaclaw.inference.api.InferenceModelAsset;
 import com.javaclaw.inference.api.InferenceModelProfile;
 
@@ -20,6 +21,12 @@ public class EmptyInferenceManagementService implements InferenceManagementAppli
             List.of(), InferenceCatalogPort.GatewayConfiguration.defaults(), List.of());
 
     @Override public Snapshot snapshot(String workspaceId) { return snapshot; }
+    @Override public Snapshot snapshot(String workspaceId, Projection projection) { return snapshot; }
+    @Override public List<InferenceModelProfile> readyProfiles(InferenceModelProfile.Kind kind) {
+        return List.of();
+    }
+    @Override public Map<UUID, com.javaclaw.application.inference.InferenceRuntimePort.RuntimeProfileStatus>
+            runtimeStatuses(Set<UUID> profileIds) { return Map.of(); }
     @Override public String gatewayEndpoint() { return ""; }
     @Override public InferenceModelAsset importLocal(Path source,
             Consumer<InferenceAssetPreparationPort.Progress> progress,
@@ -30,6 +37,19 @@ public class EmptyInferenceManagementService implements InferenceManagementAppli
     @Override public InferenceModelAsset downloadHuggingFace(
             InferenceAssetPreparationPort.HuggingFaceRequest request,
             Consumer<InferenceAssetPreparationPort.Progress> progress,
+            BooleanSupplier cancelled) { throw unsupported(); }
+    @Override public HuggingFaceModelCatalogPort.SearchPage searchOnlineModels(
+            HuggingFaceModelCatalogPort.SearchRequest request,
+            Consumer<HuggingFaceModelCatalogPort.SearchProgress> progress,
+            BooleanSupplier cancelled) { return new HuggingFaceModelCatalogPort.SearchPage(List.of(), ""); }
+    @Override public HuggingFaceModelCatalogPort.ModelDetail onlineModelDetail(
+            String repository, BooleanSupplier cancelled) { throw unsupported(); }
+    @Override public InferenceModelAsset downloadOnlineModel(
+            HuggingFaceModelCatalogPort.ModelDetail model,
+            Consumer<InferenceAssetPreparationPort.Progress> progress,
+            BooleanSupplier cancelled) { throw unsupported(); }
+    @Override public RecommendedProfile recommendedProfile(
+            UUID assetId, InferenceModelProfile.Kind kind,
             BooleanSupplier cancelled) { throw unsupported(); }
     @Override public InferenceModelProfile saveAndVerifyProfile(
             ProfileDraft draft, BooleanSupplier cancelled) { throw unsupported(); }
@@ -50,6 +70,12 @@ public class EmptyInferenceManagementService implements InferenceManagementAppli
             InferenceCatalogPort.GatewayConfiguration configuration) { throw unsupported(); }
     @Override public void saveGateway(InferenceCatalogPort.GatewayConfiguration configuration,
             char[] keyStorePassword) { throw unsupported(); }
+    @Override public void setInvocationLogging(boolean enabled) { throw unsupported(); }
+    @Override public boolean invocationLoggingSupported() { return false; }
+    @Override public com.javaclaw.application.inference.InferenceApiServerControlPort.ServiceSnapshot
+            modelServiceSnapshot() {
+        return com.javaclaw.application.inference.InferenceApiServerControlPort.NOOP.serviceSnapshot();
+    }
     @Override public CreatedApiKey createApiKey(String name,
             Set<InferenceCatalogPort.ApiScope> scopes, Set<String> aliases,
             int rpm, long tpm, int concurrency) { throw unsupported(); }

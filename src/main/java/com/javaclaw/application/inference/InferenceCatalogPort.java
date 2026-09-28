@@ -23,12 +23,7 @@ public interface InferenceCatalogPort {
     void deleteRuntime(String runtimeId);
 
     List<InferenceModelAsset> assets();
-    default List<ModelAssetSummary> assetSummaries() {
-        return assets().stream().map(asset -> new ModelAssetSummary(
-                asset.id(), asset.displayName(), asset.modelType(), asset.sizeBytes(),
-                asset.state(), asset.failure()))
-                .toList();
-    }
+    List<ModelAssetSummary> assetSummaries();
     Optional<InferenceModelAsset> asset(UUID id);
     Optional<InferenceModelAsset> assetByHash(String sha256);
     void saveAsset(InferenceModelAsset asset);
@@ -36,12 +31,7 @@ public interface InferenceCatalogPort {
     void deleteAsset(UUID id);
 
     List<InferenceModelProfile> profiles();
-    default List<ModelProfileSummary> profileSummaries(InferenceModelProfile.Kind kind) {
-        return profiles().stream().filter(profile -> profile.kind() == kind)
-                .map(profile -> new ModelProfileSummary(profile.id(), profile.assetId(),
-                        profile.kind(), profile.state(), profile.failure(), profile.updatedAt()))
-                .toList();
-    }
+    List<ModelProfileSummary> profileSummaries(InferenceModelProfile.Kind kind);
     Optional<InferenceModelProfile> profile(UUID id);
     void saveProfile(InferenceModelProfile profile);
     boolean profileReferenced(UUID id);
@@ -61,13 +51,7 @@ public interface InferenceCatalogPort {
     void saveGatewayConfiguration(GatewayConfiguration configuration);
 
     List<ApiKeyRecord> apiKeys();
-    default boolean hasActiveApiKey(Set<ApiScope> requiredScopes, String alias) {
-        Set<ApiScope> required = requiredScopes == null ? Set.of() : Set.copyOf(requiredScopes);
-        return apiKeys().stream().anyMatch(key -> !key.revoked()
-                && key.scopes().containsAll(required)
-                && (alias == null || key.modelAliases().isEmpty()
-                || key.modelAliases().contains(alias)));
-    }
+    boolean hasActiveApiKey(Set<ApiScope> requiredScopes, String alias);
     Optional<ApiKeyRecord> apiKeyByPrefix(String prefix);
     void saveApiKey(ApiKeyRecord key);
     void revokeApiKey(UUID keyId);
@@ -99,11 +83,6 @@ public interface InferenceCatalogPort {
             failure = failure == null ? "" : failure.strip();
         }
 
-        public ModelAssetSummary(
-                UUID id, String displayName, long sizeBytes,
-                InferenceModelAsset.State state, String failure) {
-            this(id, displayName, "unknown", sizeBytes, state, failure);
-        }
     }
 
     record ModelProfileSummary(
@@ -184,38 +163,6 @@ public interface InferenceCatalogPort {
                 throw new IllegalArgumentException("请求超时必须在 1 到 3600 秒之间");
             }
             updatedAt = updatedAt == null ? Instant.now() : updatedAt;
-        }
-
-        /** 兼容已有调用方；未显式选择时绝不允许未加密局域网监听。 */
-        public GatewayConfiguration(
-                boolean enabled,
-                String bindAddress,
-                int port,
-                boolean tlsEnabled,
-                boolean allowInsecureLanWithoutTls,
-                String keyStorePath,
-                String encryptedKeyStorePassword,
-                long maxRequestBytes,
-                int requestTimeoutSeconds,
-                Instant updatedAt) {
-            this(enabled, bindAddress, port, tlsEnabled, allowInsecureLanWithoutTls,
-                    keyStorePath, encryptedKeyStorePassword, maxRequestBytes,
-                    requestTimeoutSeconds, false, updatedAt);
-        }
-
-        public GatewayConfiguration(
-                boolean enabled,
-                String bindAddress,
-                int port,
-                boolean tlsEnabled,
-                String keyStorePath,
-                String encryptedKeyStorePassword,
-                long maxRequestBytes,
-                int requestTimeoutSeconds,
-                Instant updatedAt) {
-            this(enabled, bindAddress, port, tlsEnabled, false, keyStorePath,
-                    encryptedKeyStorePassword, maxRequestBytes, requestTimeoutSeconds,
-                    false, updatedAt);
         }
 
         public static GatewayConfiguration defaults() {

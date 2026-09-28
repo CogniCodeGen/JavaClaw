@@ -1,6 +1,7 @@
 package com.javaclaw.task.sdd.run;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.task.sdd.spec.SpecPaths;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -130,7 +131,9 @@ public final class SddTaskStore {
 
     private SddManagedTask decode(String value) {
         try {
-            return json.decode(value, SddManagedTask.class);
+            return json.mapper().readerFor(SddManagedTask.class)
+                    .with(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(value);
         } catch (JsonProcessingException failure) {
             throw new IllegalStateException("SDD 任务索引 JSON 损坏", failure);
         }

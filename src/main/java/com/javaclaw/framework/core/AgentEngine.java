@@ -377,7 +377,7 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         active.control.throwIfCancelled();
         JsonNode encoded = active.plan.encodeEvent(type, version, payload);
         var event = runs.append(active.id, Set.of(RunState.RUNNING), RunState.RUNNING,
-                event(active.request, type, producer, encoded, null), null, null);
+                event(active.request, type, version, producer, encoded, null), null, null);
         event.ifPresent(value -> {
             if (type.equals("core.tool.started")) {
                 String fingerprint = payload.path("fingerprint").asText("");
@@ -623,7 +623,9 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         for (RunEventEnvelope event : events) {
             if (event.type().equals("core.tool.started")) {
                 String fingerprint = event.payload().path("fingerprint").asText("");
-                if (fingerprint.isBlank()) fingerprint = "recovered-tool-event:" + event.sequence();
+                if (fingerprint.isBlank()) {
+                    throw new IllegalStateException("persisted tool start lacks a fingerprint");
+                }
                 active.control.restoreToolCall(fingerprint);
                 if (pendingApprovedInvocation != null
                         && pendingApprovedInvocation.challenge().fingerprint().equals(fingerprint)) {
@@ -631,14 +633,8 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 }
             }
             if (event.type().equals("core.run.waiting_approval")) {
-                try {
-                    pendingApproval = ToolApprovalChallenge.fromEventPayload(event.payload());
-                    pendingApprovedInvocation = null;
-                } catch (IllegalArgumentException ignored) {
-                    // Keep malformed legacy events replayable, but never synthesize an authorization.
-                    pendingApproval = null;
-                    pendingApprovedInvocation = null;
-                }
+                pendingApproval = ToolApprovalChallenge.fromEventPayload(event.payload());
+                pendingApprovedInvocation = null;
             } else if (event.type().equals("core.run.resumed") && pendingApproval != null) {
                 JsonNode command = event.payload().path("command");
                 String commandType = event.payload().path("commandType").asText("");
@@ -676,7 +672,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
 
     private RunEventDraft event(
             RunRequest request, String type, String producer, JsonNode payload, String causationId) {
-        return new RunEventDraft(type, 1, producer,
+        return event(request, type, 1, producer, payload, causationId);
+    }
+
+    private RunEventDraft event(
+            RunRequest request, String type, int schemaVersion, String producer,
+            JsonNode payload, String causationId) {
+        return new RunEventDraft(type, schemaVersion, producer,
                 request.linkage().correlationId(), causationId, payload);
     }
 

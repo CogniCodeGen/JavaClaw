@@ -12,6 +12,7 @@ import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.http.HttpRetryPolicy;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.application.settings.DefaultModelProviderCatalog;
+import com.javaclaw.config.CredentialUsage;
 import com.javaclaw.inference.api.InferenceChatRequest;
 import com.javaclaw.inference.api.InferenceEmbeddingRequest;
 import com.javaclaw.inference.api.InferenceMessage;
@@ -64,6 +65,11 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
                     + " · " + elapsedMillis(started) + "ms · "
                     + response.usage().totalTokens() + " tokens");
         }
+        try {
+            CredentialUsage.requirePlaintext(settings.apiKey());
+        } catch (IllegalStateException unreadable) {
+            return new ProbeResult(false, unreadable.getMessage());
+        }
         long started = System.nanoTime();
         URI endpoint = endpoint(settings.baseUrl(), "models");
         var response = http.sendAndWait("settings-model-probe", () -> {
@@ -112,6 +118,11 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
                     UUID.randomUUID().toString(), UUID.fromString(form.managedProfileId()),
                     List.of("嵌入连通性测试"), Duration.ofMinutes(5)));
             return dimensions(form, response.dimensions(), elapsedMillis(started), !form.equals(persisted));
+        }
+        try {
+            CredentialUsage.requirePlaintext(form.apiKey());
+        } catch (IllegalStateException unreadable) {
+            return new ProbeResult(false, unreadable.getMessage());
         }
         if (form.equals(persisted) && runtimeEmbedding.isReady()) {
             long started = System.nanoTime();

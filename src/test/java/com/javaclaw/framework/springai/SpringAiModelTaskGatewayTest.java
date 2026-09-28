@@ -29,12 +29,16 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SpringAiModelTaskGatewayTest {
 
@@ -149,6 +153,44 @@ class SpringAiModelTaskGatewayTest {
         assertEquals(4, budgeted.ledger.snapshot(budgeted.runId).inputTokens());
     }
 
+    @Test
+    void inlineTimeoutReturnsWhenProviderIgnoresInterruptAndDoesNotRetryLateResponse() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel provider = prompt -> {
+            calls.incrementAndGet();
+            while (release.getCount() != 0) {
+                try { release.await(); }
+                catch (InterruptedException ignored) { interrupted.countDown(); }
+            }
+            return response("not-json", 7, 3);
+        };
+        Fixture fixture = fixture(provider, RunBudget.UNBOUNDED);
+        ModelTaskRequest original = request(fixture.runId, 2);
+        ModelTaskRequest shortDeadline = new ModelTaskRequest(
+                original.purpose(), original.tier(), original.input(), original.mediaInputs(), original.outputSchema(),
+                original.ownerRunId(), original.budgetAccount(), Duration.ofMillis(300),
+                original.maxRetries(), original.cancellation(), false);
+
+        try {
+            IllegalStateException failure = assertTimeoutPreemptively(Duration.ofSeconds(3),
+                    () -> assertThrows(IllegalStateException.class,
+                            () -> fixture.gateway.executeInline(shortDeadline)));
+            assertTrue(failure.getMessage().contains("timed out"));
+            assertTrue(interrupted.await(1, TimeUnit.SECONDS));
+            assertEquals(1, fixture.audit.failedCalls.get());
+            assertEquals(0, fixture.audit.completedCalls.get());
+        } finally {
+            release.countDown();
+        }
+        assertTrue(fixture.audit.usageRecorded.await(3, TimeUnit.SECONDS));
+        assertEquals(1, calls.get(), "timed-out task must not start another physical attempt");
+        assertEquals(7, fixture.ledger.snapshot(fixture.runId).inputTokens());
+        assertEquals(1, fixture.audit.failedCalls.get());
+        assertEquals(0, fixture.audit.completedCalls.get());
+    }
+
     private static Fixture fixture(ChatModel model, RunBudget budget) {
         SpringAiModelRegistry registry = new SpringAiModelRegistry();
         registry.register("test:model", model);
@@ -169,7 +211,7 @@ class SpringAiModelTaskGatewayTest {
         schema.putArray("required").add("ok");
         schema.put("additionalProperties", false);
         return new ModelTaskRequest("test", ModelTier.LIGHT,
-                JsonNodeFactory.instance.objectNode().put("value", 1), schema,
+                JsonNodeFactory.instance.objectNode().put("value", 1), List.of(), schema,
                 owner, "test", Duration.ofSeconds(5), retries, () -> false, false);
     }
 
@@ -187,14 +229,22 @@ class SpringAiModelTaskGatewayTest {
 
     private static final class RecordingAudit implements ModelTaskAuditSink {
         private final AtomicInteger usageCalls = new AtomicInteger();
+        private final AtomicInteger completedCalls = new AtomicInteger();
+        private final AtomicInteger failedCalls = new AtomicInteger();
+        private final CountDownLatch usageRecorded = new CountDownLatch(1);
         @Override public void started(ModelTaskRequest request) { }
         @Override public void usage(ModelTaskRequest request, String model, int attempt,
                                     long inputTokens, long outputTokens,
                                     BigDecimal estimatedCostCny) {
             usageCalls.incrementAndGet();
+            usageRecorded.countDown();
         }
-        @Override public void completed(ModelTaskRequest request, ModelTaskResult result) { }
-        @Override public void failed(ModelTaskRequest request, Throwable failure) { }
+        @Override public void completed(ModelTaskRequest request, ModelTaskResult result) {
+            completedCalls.incrementAndGet();
+        }
+        @Override public void failed(ModelTaskRequest request, Throwable failure) {
+            failedCalls.incrementAndGet();
+        }
     }
 
     private static final class DirectExecutor implements CancellableTaskExecutor {

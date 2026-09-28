@@ -76,7 +76,8 @@ class SpringAiModelFactoryLocalFixtureTest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + basePath;
         configureTier(config, baseUrl);
         config.setRagEmbeddingBaseUrl(baseUrl);
-        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP,
+                null, null, null, null);
         SpringAiModelRegistry registry = new SpringAiModelRegistry();
         factory.install("fixture-workspace", registry);
 

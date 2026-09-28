@@ -1,5 +1,6 @@
 package com.javaclaw.workflow;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.GraphDefinition;
@@ -28,6 +29,34 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkflowStateAndSecurityTest {
+
+    @Test
+    void 图定义缺少当前Schema版本时拒绝读取() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        var draft = json.valueToTree(WorkflowEditorModel.blank("测试"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) draft).remove("schemaVersion");
+
+        assertThrows(Exception.class,
+                () -> json.readValue(draft.toString(), GraphDefinition.class));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GraphDefinition(0, "wf", "测试", "", 1, GraphKind.CUSTOM,
+                        "start", List.of(), List.of(), 200));
+        var missingSafety = json.valueToTree(WorkflowEditorModel.blank("测试"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) missingSafety.path("nodes").get(1))
+                .remove("resumeSafety");
+        assertThrows(Exception.class,
+                () -> json.readValue(missingSafety.toString(), GraphDefinition.class));
+    }
+
+    @Test
+    void Agent节点不接受旧专家引用作为唯一配置() {
+        var config = JsonNodeFactory.instance.objectNode().put("expertRef", "old-role");
+        NodeDefinition node = new NodeDefinition("agent", NodeType.AGENT, "agent", "Agent",
+                config, 0, 0, RetryPolicy.NONE, ResumeSafety.CONFIRM_RETRY);
+
+        assertTrue(new AgentNodeExecutor().validate(node).stream()
+                .anyMatch(message -> message.contains("agentDefinitionRef")));
+    }
 
     @Test
     void 空白会话工作流自带输出节点并可直接发布() {

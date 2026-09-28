@@ -13,13 +13,8 @@ import java.time.Duration;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.net.Socket;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,13 +24,21 @@ class SingleInstanceCoordinatorTest {
     Path dataDir;
 
     @Test
+    void buildFingerprintIsRequired() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SingleInstanceCoordinator.acquire(dataDir, " "));
+    }
+
+    @Test
     void secondInstanceSignalsPrimaryWithoutOpeningDatabase() throws Exception {
         CountDownLatch shown = new CountDownLatch(1);
-        try (SingleInstanceCoordinator primary = SingleInstanceCoordinator.acquire(dataDir)) {
+        try (SingleInstanceCoordinator primary =
+                     SingleInstanceCoordinator.acquire(dataDir, "test-build")) {
             assertNotNull(primary);
             primary.setShowHandler(shown::countDown);
 
-            SingleInstanceCoordinator secondary = SingleInstanceCoordinator.acquire(dataDir);
+            SingleInstanceCoordinator secondary =
+                    SingleInstanceCoordinator.acquire(dataDir, "test-build");
             assertNull(secondary);
             assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
                 shown.await();
@@ -47,9 +50,10 @@ class SingleInstanceCoordinatorTest {
     @Test
     void earlyShowRequestIsDeliveredAfterWindowHandlerRegisters() throws Exception {
         CountDownLatch shown = new CountDownLatch(1);
-        try (SingleInstanceCoordinator primary = SingleInstanceCoordinator.acquire(dataDir)) {
+        try (SingleInstanceCoordinator primary =
+                     SingleInstanceCoordinator.acquire(dataDir, "test-build")) {
             assertNotNull(primary);
-            assertNull(SingleInstanceCoordinator.acquire(dataDir));
+            assertNull(SingleInstanceCoordinator.acquire(dataDir, "test-build"));
             primary.setShowHandler(shown::countDown);
             assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
                 shown.await();
@@ -59,10 +63,11 @@ class SingleInstanceCoordinatorTest {
 
     @Test
     void lockCanBeAcquiredAgainAfterPrimaryCloses() throws Exception {
-        SingleInstanceCoordinator first = SingleInstanceCoordinator.acquire(dataDir);
+        SingleInstanceCoordinator first = SingleInstanceCoordinator.acquire(dataDir, "test-build");
         assertNotNull(first);
         first.close();
-        try (SingleInstanceCoordinator next = SingleInstanceCoordinator.acquire(dataDir)) {
+        try (SingleInstanceCoordinator next =
+                     SingleInstanceCoordinator.acquire(dataDir, "test-build")) {
             assertNotNull(next);
         }
     }
@@ -112,11 +117,10 @@ class SingleInstanceCoordinatorTest {
     }
 
     @Test
-    void newLauncherCanStillWakeLegacyTwoLineEndpoint() throws Exception {
+    void twoLineEndpointIsNotAccepted() throws Exception {
         Path lockPath = dataDir.resolve("javaclaw.instance.lock");
         Path endpointPath = dataDir.resolve("javaclaw.instance.endpoint");
-        String token = "legacy-token";
-        AtomicReference<String> command = new AtomicReference<>();
+        String token = "outdated-token";
         try (FileChannel channel = FileChannel.open(lockPath,
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE);
              FileLock ignored = channel.lock();
@@ -124,28 +128,9 @@ class SingleInstanceCoordinatorTest {
             server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
             Files.writeString(endpointPath,
                     token + "\n" + server.getLocalPort() + "\n", StandardCharsets.UTF_8);
-            Thread responder = new Thread(() -> respondAsLegacy(server, token, command));
-            responder.start();
-
-            assertNull(SingleInstanceCoordinator.acquire(dataDir, "new-build"));
-            responder.join(2000);
-            assertEquals("SHOW", command.get());
-        }
-    }
-
-    private static void respondAsLegacy(
-            ServerSocket server, String token, AtomicReference<String> command) {
-        try (Socket socket = server.accept();
-             BufferedReader reader = new BufferedReader(new InputStreamReader(
-                     socket.getInputStream(), StandardCharsets.UTF_8));
-             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
-                     socket.getOutputStream(), StandardCharsets.UTF_8))) {
-            assertEquals(token, reader.readLine());
-            command.set(reader.readLine());
-            writer.write("OK\n");
-            writer.flush();
-        } catch (Exception failure) {
-            throw new AssertionError(failure);
+            assertNull(SingleInstanceCoordinator.acquire(dataDir, "current-build"));
+            server.setSoTimeout(100);
+            assertThrows(SocketTimeoutException.class, server::accept);
         }
     }
 }

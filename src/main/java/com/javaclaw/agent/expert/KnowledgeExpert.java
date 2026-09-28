@@ -6,6 +6,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.KnowledgeChunk;
+import com.javaclaw.memory.model.MemoryContextBody;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
@@ -67,7 +68,12 @@ public class KnowledgeExpert implements AutoCloseable {
     private final Set<String> disabledDocs = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** 检索命中片段（供知识库中心「检索测试」结构化展示）。 */
-    public record KnowledgeHit(String docName, String scope, double score, String content) {}
+    public record KnowledgeHit(String id, String docName, String scope,
+                               double score, String content) {}
+
+    /** Metadata-only hit for the deferred context planner. */
+    public record DeferredKnowledgeHit(String id, String docName, String scope,
+                                       double score, String version, String summary) {}
 
     // ==================== 构造 ====================
 
@@ -613,7 +619,7 @@ public class KnowledgeExpert implements AutoCloseable {
             for (MemoryStore.Scored<KnowledgeChunk> h : hits) {
                 KnowledgeChunk c = h.entity();
                 if (!enabled.contains(c.docName)) continue;
-                out.add(new KnowledgeHit(c.docName, c.scope, h.score(), c.content));
+                out.add(new KnowledgeHit(c.id, c.docName, c.scope, h.score(), c.content));
                 if (out.size() >= topK) break;
             }
             if (!out.isEmpty()) return out;
@@ -632,10 +638,73 @@ public class KnowledgeExpert implements AutoCloseable {
         scored.sort((a, b) -> Integer.compare(b.hits(), a.hits()));
         for (SC s : scored.subList(0, Math.min(topK, scored.size()))) {
             // 关键词降级无相似度分数，用命中比例粗略归一供进度条展示
-            out.add(new KnowledgeHit(s.c().docName, s.c().scope,
+            out.add(new KnowledgeHit(s.c().id, s.c().docName, s.c().scope,
                     Math.min(1.0, s.hits() / (double) Math.max(1, terms.length)), s.c().content));
         }
         return out;
+    }
+
+    /** Search only bounded, persisted metadata; selected chunk content is fetched separately. */
+    public List<DeferredKnowledgeHit> searchDeferred(String query, int topK) {
+        int limit = Math.min(topK, 256);
+        if (!ragEnabled || query == null || query.isBlank() || limit < 1
+                || getTotalChunkCount() == 0) return List.of();
+        Set<String> enabled = getEnabledDocs();
+        if (enabled.isEmpty()) return List.of();
+        float[] vector = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
+        if (vector != null) {
+            List<MemoryStore.Scored<KnowledgeChunk>> hits = new ArrayList<>();
+            double threshold = config.getRagScoreThreshold();
+            hits.addAll(globalStore.searchKnowledge(vector, limit * 3, threshold));
+            hits.addAll(workspaceStore.searchKnowledge(vector, limit * 3, threshold));
+            hits.sort((a, b) -> Float.compare(b.score(), a.score()));
+            List<DeferredKnowledgeHit> selected = new ArrayList<>();
+            for (MemoryStore.Scored<KnowledgeChunk> hit : hits) {
+                KnowledgeChunk chunk = hit.entity();
+                if (!enabled.contains(chunk.docName)) continue;
+                selected.add(deferredHit(chunk, hit.score()));
+                if (selected.size() >= limit) break;
+            }
+            if (!selected.isEmpty()) return selected;
+        }
+        String[] terms = query.toLowerCase(java.util.Locale.ROOT).split("\\s+");
+        record ScoredChunk(KnowledgeChunk chunk, int hits) { }
+        List<ScoredChunk> scored = new ArrayList<>();
+        for (KnowledgeChunk chunk : allChunks()) {
+            if (!enabled.contains(chunk.docName) || chunk.deferredSearchText == null) continue;
+            String haystack = chunk.deferredSearchText.toLowerCase(java.util.Locale.ROOT);
+            int matches = 0;
+            for (String term : terms) if (!term.isEmpty() && haystack.contains(term)) matches++;
+            if (matches > 0) scored.add(new ScoredChunk(chunk, matches));
+        }
+        scored.sort((a, b) -> Integer.compare(b.hits(), a.hits()));
+        List<DeferredKnowledgeHit> selected = new ArrayList<>();
+        for (ScoredChunk hit : scored.subList(0, Math.min(limit, scored.size()))) {
+            selected.add(deferredHit(hit.chunk(),
+                    Math.min(1.0, hit.hits() / (double) Math.max(1, terms.length))));
+        }
+        return selected;
+    }
+
+    private static DeferredKnowledgeHit deferredHit(KnowledgeChunk chunk, double score) {
+        if (chunk.id == null || chunk.id.isBlank() || chunk.deferredContextDigest == null
+                || chunk.deferredContextDigest.isBlank() || chunk.deferredSummary == null) {
+            throw new IllegalStateException("knowledge chunk has no indexed context metadata");
+        }
+        return new DeferredKnowledgeHit(chunk.id, chunk.docName, chunk.scope,
+                score, chunk.deferredContextDigest, chunk.deferredSummary);
+    }
+
+    /** Read one still-enabled chunk by durable ID; the caller checks its content version. */
+    public String fetchDeferredContext(String chunkId) {
+        if (!ragEnabled || chunkId == null || chunkId.isBlank()) return null;
+        Set<String> enabled = getEnabledDocs();
+        for (KnowledgeChunk chunk : allChunks()) {
+            if (chunkId.equals(chunk.id) && enabled.contains(chunk.docName)) {
+                return MemoryContextBody.knowledge(chunk);
+            }
+        }
+        return null;
     }
 
     /** 某文档前 max 个片段的正文（按 chunkIndex 排序），供详情抽屉「片段预览」。 */

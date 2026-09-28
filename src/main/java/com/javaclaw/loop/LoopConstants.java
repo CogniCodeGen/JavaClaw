@@ -70,7 +70,7 @@ public final class LoopConstants {
 
     // ==================== 引擎内部阈值（不对用户暴露的判定常量） ====================
 
-    /** 连续失败达到该次数则停止；第一次先给重试机会（对齐 ExecutionMonitor 的连败阈值）。 */
+    /** 连续失败达到该次数则停止；第一次先给重试机会。 */
     public static final int CONSECUTIVE_FAIL_LIMIT = 2;
     /** 连续无进展达到该轮数则判定「收敛不了」并停止。 */
     public static final int NO_PROGRESS_ROUND_LIMIT = 2;

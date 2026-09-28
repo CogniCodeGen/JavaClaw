@@ -62,7 +62,8 @@ class InferenceManagementUseCaseTest {
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, "", "qwen2",
                 "b".repeat(64), "/tmp/model", "", "",
                 List.of(new InferenceModelAsset.AssetFile("config.json", 1, "c".repeat(64))), 1,
-                InferenceModelAsset.State.READY, "", Instant.now());
+                InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(1));
         catalog.saveAsset(asset);
         profile = new InferenceModelProfile(UUID.randomUUID(), "ready",
                 InferenceModelProfile.Kind.GENERATION, asset.id(), manifest.runtimeId(), Map.of(), Map.of(),
@@ -185,7 +186,7 @@ class InferenceManagementUseCaseTest {
                 "salt", "digest", Set.of(InferenceCatalogPort.ApiScope.MODELS_READ), Set.of(),
                 60, 10_000, 1, false, Instant.now(), null));
         catalog.saveGatewayConfiguration(new InferenceCatalogPort.GatewayConfiguration(true,
-                "127.0.0.1", 18080, false, "", "", 4096, 30, Instant.now()));
+                "127.0.0.1", 18080, false, false, "", "", 4096, 30, false, Instant.now()));
 
         assertThrows(IllegalStateException.class, () -> useCase(new FakeRuntime(null)).revokeApiKey(keyId));
         assertEquals(false, catalog.apiKeys().getFirst().revoked());
@@ -221,7 +222,8 @@ class InferenceManagementUseCaseTest {
         InferenceModelAsset unsupported = new InferenceModelAsset(UUID.randomUUID(),
                 InferenceModelAsset.Source.LOCAL_DIRECTORY, "unsupported", "phi3",
                 "e".repeat(64), "/tmp/unsupported", "", "", List.of(), 0,
-                InferenceModelAsset.State.READY, "", Instant.now());
+                InferenceModelAsset.State.READY, "", Instant.now(),
+                InferenceModelAsset.ArtifactMetadata.unknown(0));
         catalog.saveAsset(unsupported);
         var unsupportedDraft = new InferenceManagementApplicationService.ProfileDraft(
                 UUID.randomUUID(), "unsupported", InferenceModelProfile.Kind.GENERATION,
@@ -266,9 +268,11 @@ class InferenceManagementUseCaseTest {
                         throw failure.getCause();
                     }
                 });
-        var useCase = new InferenceManagementUseCase(failingCatalog, new FakeAssets(),
+        FakeAssets assets = new FakeAssets();
+        var useCase = new InferenceManagementUseCase(failingCatalog, assets, assets,
                 new FakeRuntime(null), InferenceSecretPort.PASSTHROUGH,
-                InferenceApiServerControlPort.NOOP);
+                InferenceApiServerControlPort.NOOP, HuggingFaceModelCatalogPort.UNAVAILABLE,
+                InferenceSystemProfilePort.CONSERVATIVE);
 
         assertThrows(IllegalStateException.class,
                 () -> useCase.saveAndVerifyProfile(draft(profile), () -> false));
@@ -447,7 +451,7 @@ class InferenceManagementUseCaseTest {
                 gateway(true, "192.168.1.8", true, "", "")));
         useCase.saveGateway(gateway(true, "192.168.1.8", true, "/tmp/server.p12", "encrypted"));
         useCase.saveGateway(new InferenceCatalogPort.GatewayConfiguration(true,
-                "192.168.1.8", 19090, false, true, "", "", 4096, 30, Instant.now()));
+                "192.168.1.8", 19090, false, true, "", "", 4096, 30, false, Instant.now()));
         assertTrue(catalog.gatewayConfiguration().allowInsecureLanWithoutTls());
         assertEquals(4, server.reconfigureCalls);
     }
@@ -580,16 +584,20 @@ class InferenceManagementUseCaseTest {
     }
 
     private InferenceManagementUseCase useCase(InferenceRuntimePort runtime) {
-        return new InferenceManagementUseCase(catalog, new FakeAssets(), runtime,
-                InferenceSecretPort.PASSTHROUGH, InferenceApiServerControlPort.NOOP);
+        FakeAssets assets = new FakeAssets();
+        return new InferenceManagementUseCase(catalog, assets, assets, runtime,
+                InferenceSecretPort.PASSTHROUGH, InferenceApiServerControlPort.NOOP,
+                HuggingFaceModelCatalogPort.UNAVAILABLE, InferenceSystemProfilePort.CONSERVATIVE);
     }
 
     private InferenceManagementUseCase useCase(
             InferenceRuntimePort runtime,
-            InferenceAssetPreparationPort preparedAssets,
+            FakeAssets preparedAssets,
             InferenceSecretPort secrets,
             InferenceApiServerControlPort server) {
-        return new InferenceManagementUseCase(catalog, preparedAssets, runtime, secrets, server);
+        return new InferenceManagementUseCase(catalog, preparedAssets, preparedAssets,
+                runtime, secrets, server, HuggingFaceModelCatalogPort.UNAVAILABLE,
+                InferenceSystemProfilePort.CONSERVATIVE);
     }
 
     private InferenceModelProfile profileWith(
@@ -604,7 +612,7 @@ class InferenceManagementUseCaseTest {
     private InferenceModelAsset assetWith(InferenceModelAsset.State state) {
         return new InferenceModelAsset(UUID.randomUUID(), InferenceModelAsset.Source.LOCAL_DIRECTORY,
                 "", "qwen2", "d".repeat(64), "/tmp/model-staging", "", "", List.of(), 0,
-                state, "", Instant.now());
+                state, "", Instant.now(), InferenceModelAsset.ArtifactMetadata.unknown(0));
     }
 
     private static InferenceManagementApplicationService.ProfileDraft draft(InferenceModelProfile value) {
@@ -616,7 +624,7 @@ class InferenceManagementUseCaseTest {
     private static InferenceCatalogPort.GatewayConfiguration gateway(
             boolean enabled, String address, boolean tls, String keyStorePath, String encrypted) {
         return new InferenceCatalogPort.GatewayConfiguration(enabled, address, 19090, tls,
-                keyStorePath, encrypted, 4096, 30, Instant.now());
+                false, keyStorePath, encrypted, 4096, 30, false, Instant.now());
     }
 
     private void saveKey(UUID id, boolean revoked) {

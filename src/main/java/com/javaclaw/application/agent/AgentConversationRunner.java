@@ -30,8 +30,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * approval pause/resume and terminal arbitration remain in the one {@link AgentClient}.
  */
 public final class AgentConversationRunner implements AutoCloseable {
-    private static final String LEGACY_BUDGET_EXCEPTION =
-            "com.javaclaw.framework.core.BudgetExceededException";
     private final AgentClient agents;
     private final Executor callbacksExecutor;
     private final ConcurrentHashMap<RunId, Active> runs = new ConcurrentHashMap<>();
@@ -123,7 +121,7 @@ public final class AgentConversationRunner implements AutoCloseable {
                 agents.cancel(handle.id(), cancelReason(reason)));
     }
 
-    /** Compatibility operation for product shutdown paths; normal callers cancel their handle. */
+    /** Cancels all active runs during product shutdown or runtime replacement. */
     public boolean cancel(CancellationReason reason) {
         boolean accepted = false;
         for (Active current : runs.values()) {
@@ -255,14 +253,8 @@ public final class AgentConversationRunner implements AutoCloseable {
         String errorType = payload.path("errorType").asText("");
         String message = payload.path("message").asText("");
         String kindName = payload.path("budgetKind").asText("");
-        if (errorType.equals(BudgetExceededException.class.getName())
-                || errorType.equals(LEGACY_BUDGET_EXCEPTION) || !kindName.isBlank()) {
-            BudgetExceededException.Kind kind;
-            try {
-                kind = BudgetExceededException.Kind.valueOf(kindName);
-            } catch (IllegalArgumentException ignored) {
-                kind = BudgetExceededException.Kind.UNKNOWN;
-            }
+        if (errorType.equals(BudgetExceededException.class.getName())) {
+            BudgetExceededException.Kind kind = BudgetExceededException.Kind.valueOf(kindName);
             return new BudgetExceededException(kind, message,
                     payload.path("budgetActual").asText(""),
                     payload.path("budgetLimit").asText(""));
@@ -275,16 +267,6 @@ public final class AgentConversationRunner implements AutoCloseable {
     private static Throwable fallbackFailure(String persistedError) {
         if (persistedError == null || persistedError.isBlank()) {
             return new IllegalStateException("Agent run failed");
-        }
-        String budgetType = BudgetExceededException.class.getName();
-        String matchedType = persistedError.contains(budgetType)
-                ? budgetType : LEGACY_BUDGET_EXCEPTION;
-        if (persistedError.contains(matchedType)) {
-            int messageStart = persistedError.indexOf(':', persistedError.indexOf(matchedType));
-            String message = messageStart < 0
-                    ? "execution budget exceeded"
-                    : persistedError.substring(messageStart + 1).strip();
-            return new BudgetExceededException(message);
         }
         return new IllegalStateException(persistedError);
     }

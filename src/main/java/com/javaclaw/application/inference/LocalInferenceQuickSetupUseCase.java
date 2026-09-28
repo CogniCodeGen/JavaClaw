@@ -2,8 +2,6 @@ package com.javaclaw.application.inference;
 
 import com.javaclaw.inference.api.InferenceModelAsset;
 import com.javaclaw.inference.api.InferenceModelProfile;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -23,7 +21,6 @@ import java.util.function.Consumer;
 public final class LocalInferenceQuickSetupUseCase
         implements LocalInferenceQuickSetupApplicationService {
 
-    private static final Logger log = LoggerFactory.getLogger(LocalInferenceQuickSetupUseCase.class);
     private static final int FIRST_PORT = 18080;
     private static final int LAST_PORT = 18089;
 
@@ -74,8 +71,7 @@ public final class LocalInferenceQuickSetupUseCase
         }
 
         List<LocalModel> models = new ArrayList<>();
-        for (InferenceCatalogPort.ModelAssetSummary unresolved : catalog.assetSummaries()) {
-            InferenceCatalogPort.ModelAssetSummary asset = resolveLegacyModelType(unresolved);
+        for (InferenceCatalogPort.ModelAssetSummary asset : catalog.assetSummaries()) {
             if (!supportedTypeIds.contains(asset.modelType())) continue;
             InferenceCatalogPort.ModelProfileSummary profile = latest.get(asset.id());
             Status status = status(asset, profile, publishedId, api.available());
@@ -92,26 +88,6 @@ public final class LocalInferenceQuickSetupUseCase
                 gateway.enabled(), keyConfigured,
                 gateway.tlsEnabled() || gateway.allowInsecureLanWithoutTls(),
                 api.state(), supportedTypes);
-    }
-
-    private InferenceCatalogPort.ModelAssetSummary resolveLegacyModelType(
-            InferenceCatalogPort.ModelAssetSummary summary) {
-        if (!"unknown".equals(summary.modelType())) return summary;
-        try {
-            InferenceModelAsset asset = catalog.asset(summary.id()).orElseThrow();
-            String modelType = metadata.inspectModel(Path.of(asset.location()), () -> false).modelType();
-            InferenceModelAsset updated = new InferenceModelAsset(
-                    asset.id(), asset.source(), asset.displayName(), modelType,
-                    asset.contentSha256(), asset.location(), asset.huggingFaceRepository(),
-                    asset.huggingFaceCommit(), asset.files(), asset.sizeBytes(), asset.state(),
-                    asset.failure(), asset.createdAt());
-            catalog.saveAsset(updated);
-            return new InferenceCatalogPort.ModelAssetSummary(summary.id(), summary.displayName(),
-                    modelType, summary.sizeBytes(), summary.state(), summary.failure());
-        } catch (Exception failure) {
-            log.debug("无法回填本地模型类型: {}", summary.id(), failure);
-            return summary;
-        }
     }
 
     @Override

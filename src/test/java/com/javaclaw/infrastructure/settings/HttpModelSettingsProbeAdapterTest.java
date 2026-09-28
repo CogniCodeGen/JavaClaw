@@ -74,6 +74,16 @@ class HttpModelSettingsProbeAdapterTest {
     }
 
     @Test
+    void modelProbeRejectsUnreadableCiphertextWithoutSendingIt() throws Exception {
+        var result = adapter.probeModel(model("ENC(YmFk)"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.message().contains("API 密钥无法解密"));
+        assertFalse(result.message().contains("ENC(YmFk)"));
+        assertNull(modelUri.get());
+    }
+
+    @Test
     void modelProbeRejectsErrorsEvenWhenTheServerReturnsHttp200() throws Exception {
         for (String response : new String[] {
                 "{\"error\":\"Unexpected endpoint; secret-response-marker\"}",
@@ -92,7 +102,7 @@ class HttpModelSettingsProbeAdapterTest {
 
     @Test
     void openAiCompatibleModelProbesRequireADataArray() throws Exception {
-        for (String provider : new String[] {"OpenAI", "dashscope", "百炼"}) {
+        for (String provider : new String[] {"OpenAI", "dashscope"}) {
             for (String response : new String[] {"{}", "{\"data\":{}}", "{\"data\":null}"}) {
                 modelResponse = response;
 
@@ -157,6 +167,18 @@ class HttpModelSettingsProbeAdapterTest {
         assertEquals(1, embeddingRequests.get());
         assertEquals("Bearer new-key", embeddingAuthorization.get());
         assertTrue(embeddingBody.get().contains("\"model\":\"embedding-model\""));
+    }
+
+    @Test
+    void embeddingProbeRejectsUnreadableCiphertextBeforeRuntimeOrHttp() throws Exception {
+        EmbeddingSettings unreadable = embedding("ENC(YmFk)", 3);
+
+        var result = adapter.probeEmbedding(unreadable, unreadable);
+
+        assertFalse(result.succeeded());
+        assertTrue(result.message().contains("API 密钥无法解密"));
+        assertEquals(0, runtime.probes);
+        assertEquals(0, embeddingRequests.get());
     }
 
     @Test

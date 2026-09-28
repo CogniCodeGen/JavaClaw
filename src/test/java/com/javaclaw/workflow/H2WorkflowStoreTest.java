@@ -98,11 +98,10 @@ class H2WorkflowStoreTest {
                         checkpoints.loadRun(recovery.id()).status());
             }
 
-            var copiedSystem = definitions.cloneFrom(SystemGraphFactory.pipeline(
-                    "system-sample", "系统样例", "只读系统图", "执行"), "可编辑副本");
+            var copiedSystem = definitions.cloneFrom(SystemGraphFactory.chat(), "可编辑副本");
             assertEquals(com.javaclaw.workflow.model.GraphKind.CUSTOM, copiedSystem.draft().kind());
             assertEquals("可编辑副本", copiedSystem.name());
-            assertNotEquals("system-sample", copiedSystem.id());
+            assertNotEquals("system-chat", copiedSystem.id());
             assertTrue(definitions.validate(copiedSystem.draft(), registry).isEmpty(),
                     "系统图副本应转换为可直接发布的公共节点模板");
             assertTrue(definitions.publish(copiedSystem.id(), registry).isPublished());

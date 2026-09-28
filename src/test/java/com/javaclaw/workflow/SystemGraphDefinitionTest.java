@@ -1,6 +1,7 @@
 package com.javaclaw.workflow;
 
 import com.javaclaw.api.conversation.ConversationRequest;
+import com.javaclaw.api.conversation.ConversationOptions;
 import com.javaclaw.workflow.service.SystemGraphFactory;
 import com.javaclaw.workflow.service.SystemInvocationState;
 import com.javaclaw.workflow.node.SystemPipelineNodeExecutor;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SystemGraphDefinitionTest {
@@ -37,12 +39,19 @@ class SystemGraphDefinitionTest {
     @Test
     void 系统请求可从检查点状态重建() {
         ConversationRequest original = new ConversationRequest("原始问题",
-                List.of(new File("target/original.png")), "session-1");
+                List.of(new File("target/original.png")), "session-1",
+                ConversationOptions.DEFAULT, List.of());
         ConversationRequest restored = SystemInvocationState.request(SystemInvocationState.from(original));
         assertEquals(original.userInput(), restored.userInput());
         assertEquals(original.sessionId(), restored.sessionId());
         assertEquals(original.attachments().getFirst().getAbsolutePath(),
                 restored.attachments().getFirst().getAbsolutePath());
+    }
+
+    @Test
+    void 系统请求缺少保存的计划档位时拒绝重建() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SystemInvocationState.request(new com.javaclaw.workflow.model.GraphState()));
     }
 
     @Test

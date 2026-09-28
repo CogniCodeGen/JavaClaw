@@ -8,7 +8,6 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
-import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.theme.FontSelectionService;
@@ -45,11 +44,8 @@ public class ChatViewController implements AutoCloseable {
     private final java.util.concurrent.Executor persistExecutor;
     private final FxDispatcher fx;
     private final AssistantMessageFactory assistantMessages;
-    private final ExpandableMarkdownBlockFactory expandableBlocks;
     private final ChatMessageRowFactory messageRows;
-    private final LoopDecisionFactory loopDecisions;
     private final ClarificationCardFactory clarificationCards;
-    private final LoopStatusViewFactory loopStatusViews;
     private final ChatInlineImageRenderer inlineImages;
     private final ChatShortcutHelpFactory shortcutHelp;
     private final ChatHistoryApplicationService history;
@@ -60,11 +56,6 @@ public class ChatViewController implements AutoCloseable {
     private ChatStreamRenderer streamRenderer;
     private ChatTurnController turns;
     private ChatSessionCoordinator sessionCoordinator;
-
-    /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
-    public void shutdownPersistence() {
-        close();
-    }
 
     /**
      * 停止页面动画和订阅，并取消仍属于本页面的后台任务。关闭是幂等的；迟到的任务结果
@@ -109,11 +100,8 @@ public class ChatViewController implements AutoCloseable {
             FxDispatcher fx,
             ManagedTaskExecutor taskExecutor,
             AssistantMessageFactory assistantMessages,
-            ExpandableMarkdownBlockFactory expandableBlocks,
             ChatMessageRowFactory messageRows,
-            LoopDecisionFactory loopDecisions,
             ClarificationCardFactory clarificationCards,
-            LoopStatusViewFactory loopStatusViews,
             DiagnosticsViewFactory diagnosticsViews,
             PluginCenterViewFactory pluginCenterViews,
             ChatInlineImageRenderer inlineImages,
@@ -125,13 +113,9 @@ public class ChatViewController implements AutoCloseable {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.assistantMessages = java.util.Objects.requireNonNull(
                 assistantMessages, "assistantMessages");
-        this.expandableBlocks = java.util.Objects.requireNonNull(
-                expandableBlocks, "expandableBlocks");
         this.messageRows = java.util.Objects.requireNonNull(messageRows, "messageRows");
-        this.loopDecisions = java.util.Objects.requireNonNull(loopDecisions, "loopDecisions");
         this.clarificationCards = java.util.Objects.requireNonNull(
                 clarificationCards, "clarificationCards");
-        this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
         this.inlineImages = java.util.Objects.requireNonNull(inlineImages, "inlineImages");
         this.shortcutHelp = java.util.Objects.requireNonNull(shortcutHelp, "shortcutHelp");
         this.history = java.util.Objects.requireNonNull(history, "history");
@@ -238,8 +222,6 @@ public class ChatViewController implements AutoCloseable {
                 composerController,
                 thinkingPanel,
                 assistantMessages,
-                expandableBlocks,
-                loopStatusViews,
                 inlineImages,
                 this::currentModelDisplayName);
         sessionCoordinator = new ChatSessionCoordinator(
@@ -280,8 +262,7 @@ public class ChatViewController implements AutoCloseable {
                 modeBarController,
                 sidebarController,
                 workspaceSwitchOverlayController,
-                status,
-                this::showLoopInteractionBubble);
+                status);
     }
 
     private void configureShell() {
@@ -298,20 +279,6 @@ public class ChatViewController implements AutoCloseable {
                 () -> sessionCoordinator.clearCurrentHistory(),
                 navigation::openMcp);
         shell.install();
-    }
-
-    /**
-     * 交互式循环检测气泡 — 让用户决定是继续还是终止
-     *
-     * <p>该方法在 Reactor 线程上被调用，必须切回 JavaFX 线程更新 UI。
-     * 用户点击"继续"或"终止"后回调 {@code decision}，超时由 Hook 层处理。</p>
-     */
-    private void showLoopInteractionBubble(String toolName, int repeats,
-                                           java.util.function.Consumer<Boolean> decision) {
-        fx.dispatch(() -> {
-            LoopDecisionView view = loopDecisions.create(toolName, repeats, decision);
-            sessionViewController.addMessage(view.root());
-        });
     }
 
     /** 获取主页根节点。 */

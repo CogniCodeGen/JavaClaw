@@ -175,6 +175,38 @@ class DistillerBehaviorTest {
         }
     }
 
+    @Test
+    void distillationUsesSelectedEvidenceAndLeavesOversizedRequiredInputPending() {
+        try (Fixture fixture = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
+            ObjectNode response = extraction();
+            addFact(response, "用户偏好蓝色主题", 0.99);
+            fixture.gateway.respond(response);
+            Episode episode = episode("请核实当前主题设置并记录经过工具确认的用户偏好，后续继续沿用", "已核实当前主题设置");
+            episode.toolTraceJson = JsonNodeFactory.instance.arrayNode()
+                    .add(toolEvent("core.tool.started", "irrelevant argument"))
+                    .add(toolEvent("core.tool.completed", "用户偏好蓝色主题"))
+                    .toString();
+
+            assertTrue(fixture.distiller.distillWithStatus(RunId.random(), episode));
+            JsonNode input = fixture.gateway.requests.getFirst().input();
+            assertFalse(input.has("verifiedToolTrace"));
+            assertEquals("用户偏好蓝色主题",
+                    input.path("verifiedToolEvidence").get(0).path("text").asText());
+            assertEquals(1, fixture.store.allFacts().size());
+
+            Episode oversized = episode("x".repeat(12_001), "reply");
+            assertFalse(fixture.distiller.distillWithStatus(RunId.random(), oversized));
+            assertEquals(1, fixture.gateway.calls, "必需原文过大时不能提交截断证据");
+        }
+    }
+
+    private static ObjectNode toolEvent(String type, String output) {
+        ObjectNode event = JsonNodeFactory.instance.objectNode();
+        event.put("type", type);
+        event.putObject("payload").put("tool", "web_get_text").put("output", output);
+        return event;
+    }
+
     private Fixture fixture(TestEmbeddingGatewayFactory.Invoker invoker) {
         TestEmbeddingGatewayFactory.Fixture embedding =
                 TestEmbeddingGatewayFactory.create(4, invoker);
@@ -184,7 +216,8 @@ class DistillerBehaviorTest {
         store.open();
         FakeGateway gateway = new FakeGateway();
         return new Fixture(gateway, store, embedding,
-                new Distiller(gateway, store, embedding.gateway(), settings));
+                new Distiller(gateway, store, embedding.gateway(), settings,
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     private static Episode episode(String input, String reply) {

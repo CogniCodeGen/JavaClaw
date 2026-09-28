@@ -20,13 +20,6 @@ class ThreadRuntimeConfiguration {
             @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
         return new com.javaclaw.application.agent.SubAgentApprovalObserver(agents::getObject, executor);
     }
-    @Bean com.javaclaw.infrastructure.agent.LegacyThreadImporter legacyThreadImporter(
-            JdbcTemplate jdbc, org.springframework.transaction.PlatformTransactionManager transactions,
-            ObjectMapper json, JdbcRunStore runs) {
-        var importer = new com.javaclaw.infrastructure.agent.LegacyThreadImporter(jdbc, transactions, json, runs);
-        importer.migrate();
-        return importer;
-    }
     @Bean JdbcThreadStore threadStore(JdbcRunStore runs) { return runs.threads(); }
     @Bean ThreadLifecycleRegistry threadLifecycleRegistry(JdbcTemplate jdbc,
             org.springframework.transaction.PlatformTransactionManager transactions,

@@ -10,7 +10,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -308,20 +307,6 @@ public class TokenTracker {
         DailyUsage u = aggregateMonth();
         String model = settings.getModelName();
         return PricingTable.estimateCostCny(model, u.input, u.output);
-    }
-
-    /**
-     * 获取按日期统计的总量（最近 30 天）— 兼容旧 UI
-     */
-    public Map<String, Long> getRecentDailyUsage() {
-        Map<String, Long> recent = new LinkedHashMap<>();
-        LocalDate now = LocalDate.now();
-        for (int i = 29; i >= 0; i--) {
-            String date = now.minusDays(i).format(DateTimeFormatter.ISO_LOCAL_DATE);
-            DailyUsage u = dailyUsage.get(date);
-            recent.put(date, u == null ? 0L : u.total());
-        }
-        return recent;
     }
 
     /**

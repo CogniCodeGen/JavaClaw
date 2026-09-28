@@ -463,7 +463,7 @@ class GraphRuntimeTest {
         long now = System.currentTimeMillis();
         GraphRun paused = new GraphRun("paused", graph.id(), graph.version(), "shared-thread",
                 graph, new GraphState(), RunStatus.PAUSED, "work", "work",
-                1, 0, null, null, null, now, now);
+                1, 0, null, null, null, List.of(), now, now);
         store.createRun(paused);
 
         CountDownLatch finished = new CountDownLatch(1);
@@ -496,7 +496,7 @@ class GraphRuntimeTest {
         long now = System.currentTimeMillis();
         GraphRun recovery = new GraphRun("recovery", graph.id(), graph.version(), "thread", graph,
                 new GraphState(), RunStatus.RECOVERY_REQUIRED, "work", null,
-                1, 0, null, null, null, now, now);
+                1, 0, null, null, null, List.of(), now, now);
         store.createRun(recovery);
         assertThrows(SecurityException.class,
                 () -> manager.resume(recovery.id(), null, false, GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
@@ -543,12 +543,16 @@ class GraphRuntimeTest {
         private final Map<String, GraphState> threads = new ConcurrentHashMap<>();
         private final List<CheckpointPhase> phases = new CopyOnWriteArrayList<>();
         public void createRun(GraphRun run) { runs.put(run.id(), run); }
+        public void createRunningRun(GraphRun run) { createRun(run); }
+        public void activateExistingRun(GraphRun run, RunStatus expectedStatus) { updateRun(run); }
         public void updateRun(GraphRun run) { runs.put(run.id(), run); }
         public void checkpoint(GraphRun run, String nodeId, CheckpointPhase phase) {
             phases.add(phase); run.nextCheckpointSeq(); updateRun(run);
         }
         public GraphRun loadRun(String runId) { return runs.get(runId); }
         public List<GraphRun> listRuns(String workflowId, int limit) { return new ArrayList<>(runs.values()); }
+        public List<GraphRun> listNonTerminalRuns() { return runs.values().stream()
+                .filter(run -> !run.status().terminal()).toList(); }
         public GraphRun findWaitingRun(String workflowId, String threadId) { return runs.values().stream()
                 .filter(r -> r.workflowId().equals(workflowId) && r.threadId().equals(threadId)
                         && r.status() == RunStatus.WAITING_INPUT).findFirst().orElse(null); }
@@ -559,5 +563,6 @@ class GraphRuntimeTest {
         public GraphState loadThreadState(String workflowId, String threadId) { return threads.getOrDefault(workflowId+threadId, new GraphState()); }
         public void saveThreadState(String workflowId, String threadId, GraphState state) { threads.put(workflowId+threadId, state); }
         public int markRunningAsRecoveryRequired() { return 0; }
+        public void deleteThread(String threadId) { runs.values().removeIf(run -> run.threadId().equals(threadId)); }
     }
 }

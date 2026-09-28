@@ -1,7 +1,5 @@
 package com.javaclaw.task.sdd.run;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-
 /**
  * SDD 托管任务的精简持久化模型 —— 取代 v5 那个塞满状态机字段的 ManagedTask。
  *
@@ -11,7 +9,6 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  *
  * @author JavaClaw
  */
-@JsonIgnoreProperties(ignoreUnknown = true)
 public class SddManagedTask {
 
     public String id;

@@ -2,7 +2,10 @@ package com.javaclaw.framework.springai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.framework.core.*;
+import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.ToolInvocationGateway;
+import com.javaclaw.framework.core.ToolInvocationRequest;
+import com.javaclaw.framework.core.ToolInvocationResult;
 import com.javaclaw.framework.spi.FrameworkTool;
 import com.javaclaw.framework.spi.ToolExecutionContext;
 import org.springframework.ai.chat.model.ToolContext;
@@ -15,7 +18,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
 /** Spring AI callback adapter. Actual execution always delegates to ToolInvocationGateway. */
-final class SpringAiToolCallback implements ToolCallback {
+final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.GroupedCallback {
     private final FrameworkTool tool;
     private final ReasoningRequest reasoning;
     private final ToolInvocationGateway gateway;
@@ -44,6 +47,11 @@ final class SpringAiToolCallback implements ToolCallback {
                 .description(descriptor.description())
                 .inputSchema(descriptor.inputSchema().toString())
                 .build();
+    }
+
+    @Override
+    public String group() {
+        return tool.descriptor().group();
     }
 
     @Override
@@ -84,17 +92,31 @@ final class SpringAiToolCallback implements ToolCallback {
             ReasoningRequest reasoning,
             ToolInvocationGateway gateway,
             String invocationId) {
+        return invoke(tool, arguments, reasoning, gateway, invocationId, false);
+    }
+
+    static ToolInvocationResult invokeInline(
+            FrameworkTool tool, JsonNode arguments, ReasoningRequest reasoning,
+            ToolInvocationGateway gateway, String invocationId) {
+        return invoke(tool, arguments, reasoning, gateway, invocationId, true);
+    }
+
+    private static ToolInvocationResult invoke(
+            FrameworkTool tool, JsonNode arguments, ReasoningRequest reasoning,
+            ToolInvocationGateway gateway, String invocationId, boolean inline) {
         try {
             ToolExecutionContext context = new ToolExecutionContext(
                     reasoning.runId(), invocationId, reasoning.control(),
                     reasoning.control().deadline());
-            return gateway.invoke(new ToolInvocationRequest(
+            ToolInvocationRequest invocation = new ToolInvocationRequest(
                     tool, arguments, context, reasoning.runRequest(),
                     reasoning.plan().descriptor().permissions(),
                     reasoning.plan().descriptor().toolPolicy(),
                     reasoning.plan().toolPolicies(),
                     reasoning.plan().toolResultPostProcessors(), reasoning.control(),
-                    reasoning.events())).toCompletableFuture().join();
+                    reasoning.events());
+            return inline ? gateway.invokeInline(invocation)
+                    : gateway.invoke(invocation).toCompletableFuture().join();
         } catch (CompletionException failure) {
             throw propagate(failure);
         }

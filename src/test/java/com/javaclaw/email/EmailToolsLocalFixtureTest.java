@@ -106,4 +106,28 @@ class EmailToolsLocalFixtureTest {
         assertTrue(notified.contains("通知邮件发送成功"), notified);
         assertTrue(mail.waitForIncomingEmail(5_000, 5), "本地 SMTP 未投递通知邮件");
     }
+
+    @Test
+    void unreadablePasswordNeverReachesMailAuthentication() {
+        emailConfig.setPassword("ENC(YmFk)");
+        assertTrue(emailConfig.getPassword().startsWith("ENC("));
+
+        String send = tools.sendEmail(ADDRESS, "subject", "body", false);
+        String inbox = tools.listInbox(10);
+        NotificationConfig notificationConfig = context.getBean(NotificationConfig.class);
+        notificationConfig.setEmailNotifyEnabled(true);
+        notificationConfig.setEmailNotifyTo(ADDRESS);
+        NotificationTools notificationTools = new NotificationTools(
+                null, notificationConfig, emailConfig);
+        String notify = notificationTools.sendEmailNotify(
+                "", "subject", "body");
+        String routed = notificationTools.sendByChannel("email", "subject", "body");
+
+        assertAll(
+                () -> assertTrue(send.contains("邮件密码无法解密"), send),
+                () -> assertTrue(inbox.contains("邮件密码无法解密"), inbox),
+                () -> assertTrue(notify.contains("邮件密码无法解密"), notify),
+                () -> assertTrue(routed.contains("邮件密码无法解密"), routed),
+                () -> assertTrue(mail.getReceivedMessages().length == 0));
+    }
 }
