@@ -213,10 +213,9 @@ public final class SkillManagementAdapter implements SkillManagementPort {
 
     @Override
     public ScriptReport checkScript(String code) {
-        List<String> lines = JShellRunner.check(code);
-        boolean success = !lines.isEmpty() && lines.getFirst().startsWith("结构检查通过");
-        return new ScriptReport(success, false, 0,
-                String.join("\n", lines), "", success ? List.of() : lines);
+        JShellRunner.CheckResult check = JShellRunner.checkResult(code);
+        return new ScriptReport(check.valid(), false, 0,
+                String.join("\n", check.lines()), "", check.valid() ? List.of() : check.lines());
     }
 
     @Override

@@ -3,7 +3,7 @@ package com.javaclaw.plugin.api.exec;
 import java.time.Duration;
 
 /**
- * Plugin API 3.0 执行面 —— 插件获取并发能力的唯一入口。
+ * Plugin API 4.0 执行面 —— 插件获取并发能力的唯一入口。
  *
  * <p><b>插件不创建任何真实线程</b>（连 {@code Thread.ofVirtual()} 也无须、不应使用）：所有同步/异步/
  * 后台执行都向本接口申请，跑在宿主统一记账、限额、可中断的虚拟线程上。

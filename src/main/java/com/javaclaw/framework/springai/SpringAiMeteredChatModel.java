@@ -57,9 +57,10 @@ final class SpringAiMeteredChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        try (var ignored = admission.get()) {
+        try (var admitted = admission.get()) {
             cancelled.run();
             validate(prompt);
+            admitted.requireInputCapacity(ModelInputBudgetPreflight.approximatePromptFloor(prompt));
             var step = journal.started(prompt, attempt.get(),
                     boundary.toolCandidateStepId());
             ChatResponse response = invoke(prompt, step);
@@ -141,8 +142,13 @@ final class SpringAiMeteredChatModel implements ChatModel {
             if (boundary.expectedTools() == null || !actual.equals(boundary.expectedTools())) {
                 throw new IllegalStateException("provider tools differ from the planned step selection");
             }
-            int characters = actual.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
-            if (actual.size() > request.plan().descriptor().stepContextPolicy().maxTools()
+            if (actual.stream().filter(HarnessDecisionToolCallback.class::isInstance).count() != 1) {
+                throw new IllegalStateException("provider selection lacks the trusted control tool");
+            }
+            List<ToolCallback> business = actual.stream()
+                    .filter(callback -> !(callback instanceof HarnessDecisionToolCallback)).toList();
+            int characters = business.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
+            if (business.size() > request.plan().descriptor().stepContextPolicy().maxTools()
                     || characters > request.plan().descriptor().stepContextPolicy()
                             .maxToolSchemaCharacters()) {
                 throw new IllegalStateException("provider tool selection exceeds context policy");
@@ -150,7 +156,8 @@ final class SpringAiMeteredChatModel implements ChatModel {
             return;
         }
         if (catalog == null) {
-            if (!actual.isEmpty()) {
+            if (actual.size() != 1
+                    || !(actual.getFirst() instanceof HarnessDecisionToolCallback)) {
                 throw new IllegalStateException("provider exposed tools outside the authorized projection");
             }
         } else {

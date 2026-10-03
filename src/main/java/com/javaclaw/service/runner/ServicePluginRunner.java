@@ -69,6 +69,7 @@ final class ServicePluginRunner implements AutoCloseable {
     private final Map<String, ReversePending> reversePending = new ConcurrentHashMap<>();
     private final AtomicBoolean accepting = new AtomicBoolean(true);
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean catalogPublished = new AtomicBoolean();
     private final AtomicLong lastHeartbeat = new AtomicLong(System.nanoTime());
     private final AtomicInteger runningRequests = new AtomicInteger();
     private final AtomicReference<Thread> controlThread = new AtomicReference<>();
@@ -123,6 +124,7 @@ final class ServicePluginRunner implements AutoCloseable {
             return servicePlugin;
         });
         sendCatalog();
+        catalogPublished.set(true);
         if (enforceLease) {
             leaseMonitor = Thread.ofPlatform().name("service-lease-" + pluginId).start(this::monitorLease);
         }
@@ -556,7 +558,24 @@ final class ServicePluginRunner implements AutoCloseable {
                 @Override public Map<String, String> asMap() { return pluginConfig.get(); }
             };
         }
-        @Override public PluginLogger logger() { return new RunnerLogger(pluginId); }
+        @Override public PluginLogger logger() {
+            return new RunnerLogger(pluginId, ServicePluginRunner.this::sendLog);
+        }
+    }
+
+    private void sendLog(PluginLogger.Kind kind, String message) {
+        if (closed.get()) return;
+        if (!catalogPublished.get()) {
+            log.info(message);
+            return;
+        }
+        try {
+            codec.write(ServicePluginWire.Frame.control(ServicePluginWire.Type.LOG,
+                    desktopGeneration, pluginId, pluginVersion,
+                    json.valueToTree(Map.of("kind", kind.name(), "message", message))));
+        } catch (IOException failure) {
+            log.warn("typed plugin log could not be delivered: " + failure.getMessage());
+        }
     }
 
     private final class DesktopClient implements DesktopServiceClient {

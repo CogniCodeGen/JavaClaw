@@ -1,6 +1,7 @@
 package com.javaclaw.loop;
 
 import com.javaclaw.agent.goal.SuccessCriterion;
+import com.javaclaw.framework.api.TaskOutcome;
 import com.javaclaw.loop.model.CompletionCheck;
 import com.javaclaw.loop.model.IterationResult;
 
@@ -10,10 +11,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 完成判定器：三层合流——执行体提议（结构化汇报/哨兵）+ 客观谓词核验 + 验收员兜底。
+ * 完成判定器：Harness 任务结果与显式客观谓词共同裁决。
  *
- * <p>核心规则：<b>「执行体说完成」且「核验通过」两者同时成立才判完成。</b>
- * 自报完成但核验没过 → 不算完成，交由后续继续/停止判定处理（绝不默认放行）。</p>
+ * <p>轮次汇报仅提供进度和延迟；正文与汇报里的 done 字段均不能授予完成。</p>
  *
  * <p><b>核验缓存</b>：命令类核验（可能是 {@code mvn test} 这种分钟级开销）与验收员核验
  * （一次模型调用）不必每轮重跑——只在「本轮有工具行动」「等待外部条件」或「执行体提议完成
@@ -50,23 +50,15 @@ public final class CompletionChecker {
      *                  等待轮意味着世界状态可能被外部改变，命令/文件类核验缓存需失效重测
      */
     public CompletionCheck check(IterationResult result, CarryContext context, boolean waitRound) {
-        // 结构化汇报（loop_report 工具）优先，模型未按协议汇报时降级到哨兵行解析
-        boolean proposedDone = result.report() != null
-                ? result.report().done()
-                : SentinelParser.proposesDone(result.finalReply());
+        boolean harnessDone = result.taskResult() != null
+                && (result.taskResult().outcome() == TaskOutcome.VERIFIED_COMPLETE
+                    || result.taskResult().outcome() == TaskOutcome.DELIVERED);
 
-        // 无结构化准则：退回「提议 + 验收员」模式。验收员必须由「提议完成」触发（终审语义）：
-        // 提议未完成时结论注定是「未完成」，先跑验收纯属白烧一次模型调用（每轮一次、贯穿全循环）
+        // 无额外 Loop 准则时，当前子 Run 的 Harness TaskResult 即为唯一完成判据。
         if (criteria.isEmpty()) {
-            if (!proposedDone) {
-                return new CompletionCheck(false, 0, 0, List.of("执行体尚未确认完成"));
-            }
-            // useJudge=false 到此意味着用户显式 @loop judge=off（无准则且未表态者由
-            // LoopService 装配期自动启用验收员）：仅凭自报判完成是知情选择，装配层已告警
-            boolean confirmed = !useJudge || judge.goalMet(context.goal(), context.transcript()).met();
-            return confirmed
+            return harnessDone
                     ? new CompletionCheck(true, 0, 0, List.of())
-                    : new CompletionCheck(false, 0, 0, List.of("验收未通过"));
+                    : new CompletionCheck(false, 0, 0, List.of("Harness 尚未确认任务完成"));
         }
 
         // 有准则：逐条核验（带缓存），freeform/external 交验收员
@@ -77,7 +69,7 @@ public final class CompletionChecker {
         for (int i = 0; i < criteria.size(); i++) {
             SuccessCriterion c = criteria.get(i);
             boolean verdict;
-            if (shouldReverify(c, i, acted, waiting, proposedDone)) {
+            if (shouldReverify(c, i, acted, waiting, harnessDone)) {
                 verdict = verifier.verify(c, context);
                 verdictCache.put(i, verdict);
             } else {
@@ -90,7 +82,7 @@ public final class CompletionChecker {
             }
         }
         boolean allPass = missing.isEmpty();
-        boolean done = proposedDone && allPass;
+        boolean done = harnessDone && allPass;
         return new CompletionCheck(done, satisfied, criteria.size(), missing);
     }
 

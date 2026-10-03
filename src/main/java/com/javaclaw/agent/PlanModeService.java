@@ -37,7 +37,7 @@ public final class PlanModeService {
         return runs.start(requests.conversation(request, "plan",
                 new InvocationSource("plan", "desktop"),
                         PermissionSet.of("tool.read", "memory.read", "knowledge.read",
-                                "interaction.request")),
+                                "interaction.request", "subagent.delegate")),
                 ToolCallOrigin.INTERACTIVE, callbacks);
     }
 

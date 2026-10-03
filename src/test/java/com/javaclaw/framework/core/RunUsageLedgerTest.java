@@ -10,9 +10,38 @@ import java.math.BigDecimal;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RunUsageLedgerTest {
+
+    @Test
+    void 已逻辑失败的物理调用使同预算族的新请求及排队请求及时暂停() throws Exception {
+        RunUsageLedger ledger = new RunUsageLedger();
+        RunId parent = open(ledger, "abandoned-parent", RunBudget.UNBOUNDED);
+        RunId child = new RunId("abandoned-child");
+        ledger.open(child, RunBudget.UNBOUNDED, new RunScope("workspace", "user", "child"), parent);
+        var lease = ledger.beginModelCall(parent);
+        var queued = new java.util.concurrent.CompletableFuture<Throwable>();
+        var waiting = new java.util.concurrent.CountDownLatch(1);
+        Thread contender = Thread.startVirtualThread(() -> {
+            waiting.countDown();
+            try (var ignored = ledger.beginModelCall(child)) {
+                queued.completeExceptionally(new AssertionError("旧物理调用尚未结束，不得准入新请求"));
+            } catch (Throwable failure) { queued.complete(failure); }
+        });
+        try {
+            assertTrue(waiting.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            lease.markAbandoned();
+            assertTrue(queued.get(1, java.util.concurrent.TimeUnit.SECONDS)
+                    instanceof com.javaclaw.framework.api.TurnPausedException);
+            assertThrows(com.javaclaw.framework.api.TurnPausedException.class,
+                    () -> ledger.beginModelCall(child));
+            ledger.record(parent, 7, 3, BigDecimal.ONE);
+            assertEquals(7, ledger.aggregateSnapshot(child).inputTokens() + ledger.snapshot(parent).inputTokens());
+        } finally { lease.close(); contender.join(1000); }
+        try (var ignored = ledger.beginModelCall(child)) {}
+    }
 
     @Test
     void reportsTheExactExceededModelBudgetDimensionAndStillAccountsTheResponse() {
@@ -99,6 +128,30 @@ class RunUsageLedgerTest {
                 ledger.record(first, 10, 1, BigDecimal.ONE);
             } finally { lease.close(); }
             assertEquals(BudgetExceededException.Kind.MODEL_INPUT_TOKENS, second.get().kind());
+        }
+    }
+
+    @Test void preflightRejectsAProjectedCallAgainstAncestorWithoutChargingIt() {
+        RunUsageLedger ledger = new RunUsageLedger();
+        RunId parent = open(ledger, "preflight-parent", budget(10, 100, "5"));
+        RunId child = new RunId("preflight-child");
+        ledger.open(child, RunBudget.UNBOUNDED,
+                new RunScope("workspace", "user", "child"), parent);
+        ledger.record(parent, 9, 0, BigDecimal.ZERO);
+
+        try (var admitted = ledger.beginModelCall(child)) {
+            BudgetExceededException failure = assertThrows(BudgetExceededException.class,
+                    () -> admitted.requireInputCapacity(2));
+            assertEquals(BudgetExceededException.Kind.MODEL_INPUT_TOKENS, failure.kind());
+            assertEquals("9", failure.actual());
+            assertEquals("10", failure.limit());
+            assertTrue(failure.getMessage().contains("remaining=1"));
+            assertTrue(failure.getMessage().contains("approximatePromptFloor=2"));
+            assertTrue(failure.getMessage().contains("provider was not called"));
+            assertEquals(0, ledger.snapshot(child).inputTokens());
+        }
+        try (var admitted = ledger.beginModelCall(child)) {
+            admitted.requireInputCapacity(1);
         }
     }
 

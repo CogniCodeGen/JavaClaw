@@ -50,10 +50,7 @@ import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.storage.AtomicContentStore;
-import com.javaclaw.desktop.DesktopAutomation;
-import com.javaclaw.desktop.DesktopAutomationPort;
-import com.javaclaw.desktop.DesktopToolFactory;
-import com.javaclaw.desktop.RobotInput;
+import com.javaclaw.desktop.api.DesktopSessionService;
 import com.javaclaw.system.JShellRunner;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
@@ -89,7 +86,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Import;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -103,7 +99,8 @@ import java.time.Duration;
 
 /** 进程级基础设施的显式 Spring 装配。 */
 @Configuration(proxyBeanMethods = false)
-@Import({InferenceRootConfiguration.class, ThreadRuntimeConfiguration.class})
+@Import({InferenceRootConfiguration.class, ThreadRuntimeConfiguration.class,
+        DesktopRootConfiguration.class})
 public class RootConfiguration {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory
             .getLogger(RootConfiguration.class);
@@ -114,8 +111,8 @@ public class RootConfiguration {
         return io.micrometer.observation.ObservationRegistry.create();
     }
 
-    @Bean
-    DataSource dataSource(DataRoot dataRoot) {
+    @Bean(destroyMethod = "close")
+    H2DataSource dataSource(DataRoot dataRoot) {
         return new H2DataSource(dataRoot);
     }
 
@@ -267,7 +264,9 @@ public class RootConfiguration {
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
             ObjectMapper json,
-            Clock frameworkClock) {
+            Clock frameworkClock,
+            SchemaInitializer schemaInitializer) {
+        schemaInitializer.ensureThreadSchema();
         return new com.javaclaw.framework.store.JdbcRunStore(
                 jdbc, transactionManager, json, frameworkClock);
     }
@@ -457,30 +456,7 @@ public class RootConfiguration {
     @Bean
     com.javaclaw.framework.spi.ToolApprovalPolicy frameworkToolApprovalPolicy(
             AgentConfig settings) {
-        return new com.javaclaw.framework.spi.ToolApprovalPolicy() {
-            private com.javaclaw.agent.ToolApprovalRiskPolicy.Assessment assess(
-                    com.javaclaw.framework.spi.ToolDescriptor tool) {
-                return com.javaclaw.agent.ToolApprovalRiskPolicy.assess(
-                        tool.name(), ToolConfirmationManager.isEnabled(),
-                        settings.getToolReviewMode());
-            }
-
-            @Override
-            public com.javaclaw.framework.spi.ToolApprovalDecision evaluate(
-                    com.javaclaw.framework.spi.ToolDescriptor tool,
-                    com.fasterxml.jackson.databind.JsonNode arguments,
-                    com.javaclaw.framework.api.RunRequest request) {
-                return assess(tool).decision();
-            }
-
-            @Override
-            public String approvalKind(
-                    com.javaclaw.framework.spi.ToolDescriptor tool,
-                    com.fasterxml.jackson.databind.JsonNode arguments,
-                    com.javaclaw.framework.api.RunRequest request) {
-                return assess(tool).kind();
-            }
-        };
+        return new TrustedToolApprovalPolicy(settings);
     }
 
     @Bean
@@ -520,8 +496,15 @@ public class RootConfiguration {
                         + (challenge.arguments().isEmpty()
                         ? "" : "\n参数: " + challenge.arguments());
             }
+            var operationParameters = java.util.Set.of("cmd_execute", "code_build", "code_test")
+                    .contains(challenge.tool())
+                    ? java.util.Map.of(
+                            "command", challenge.arguments().path("command").asText(""),
+                            "workDir", challenge.arguments().path("workDir").asText(
+                                    workDir == null ? "" : workDir))
+                    : java.util.Map.<String, String>of();
             var outcome = ToolConfirmationManager.requestConfirmationOutcome(
-                    origin, challenge.tool(), description);
+                    origin, challenge.tool(), description, operationParameters);
             return outcome.isAllow()
                     ? com.javaclaw.framework.api.ToolApprovalGrant.approve(
                             challenge, outcome == ToolConfirmationManager.ConfirmOutcome.ALLOWED_HUMAN)
@@ -569,9 +552,28 @@ public class RootConfiguration {
             java.util.concurrent.Executor executor,
             ObjectMapper json,
             Clock frameworkClock,
-            com.javaclaw.framework.core.RunUsageLedger usage) {
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTasks,
+            DesktopSessionService desktopSessions) {
         return new com.javaclaw.framework.core.AgentEngine(
-                compiler, runs, plans, reasoning, executor, json, frameworkClock, usage);
+                compiler, runs, plans, reasoning, executor, json, frameworkClock, usage,
+                modelTasks, (request, proof) -> {
+                    var owner = new com.javaclaw.desktop.api.DesktopSessionOwner(
+                            request.scope().workspaceId(), request.scope().sessionId(),
+                            request.source().kind(), request.source().id());
+                    try {
+                        boolean reconciled = desktopSessions.reconcilePendingAction(owner,
+                                proof.sessionId(), proof.actionObservationId(),
+                                proof.evidenceObservationId()).toCompletableFuture().join();
+                        if (!reconciled) log.warn("已核验动作未能解除桌面会话输入门禁: session={} action={} evidence={}",
+                                proof.sessionId(), proof.actionObservationId(),
+                                proof.evidenceObservationId());
+                    } catch (RuntimeException failure) {
+                        // The durable Run barrier is already reconciled. A closed or replaced
+                        // native session remains conservatively blocked until reopened.
+                        log.warn("无法同步已核验桌面动作的会话状态: {}", proof.sessionId(), failure);
+                    }
+                });
     }
 
     @Bean
@@ -604,28 +606,6 @@ public class RootConfiguration {
     @Bean
     ProcessRunner processRunner(ManagedTaskExecutor executor) {
         return new ProcessRunner(executor);
-    }
-
-    @Bean
-    DesktopAutomation desktopAutomation(ProcessRunner processes) {
-        return new DesktopAutomation(processes);
-    }
-
-    @Bean
-    DesktopAutomationPort desktopAutomationPort(DesktopAutomation automation) {
-        return automation.create();
-    }
-
-    @Bean
-    @Lazy
-    RobotInput robotInput() {
-        return new RobotInput();
-    }
-
-    @Bean
-    DesktopToolFactory desktopToolFactory(
-            DesktopAutomationPort port, ObjectProvider<RobotInput> input) {
-        return new DesktopToolFactory(port, input::getObject);
     }
 
     @Bean

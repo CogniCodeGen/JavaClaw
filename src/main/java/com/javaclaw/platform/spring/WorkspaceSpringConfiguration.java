@@ -18,6 +18,10 @@ import com.javaclaw.application.workflow.WorkflowApplicationService;
 import com.javaclaw.application.workflow.WorkflowPort;
 import com.javaclaw.application.workflow.WorkflowUseCase;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryPort;
+import com.javaclaw.application.settings.ModelDiscoveryUseCase;
+import com.javaclaw.application.settings.ModelProviderCatalog;
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsPort;
 import com.javaclaw.application.settings.BehaviorSettingsUseCase;
@@ -49,6 +53,7 @@ import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
 import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
+import com.javaclaw.infrastructure.settings.HttpModelDiscoveryAdapter;
 import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
 import com.javaclaw.infrastructure.settings.CommunicationSettingsAdapter;
 import com.javaclaw.infrastructure.schedule.ScheduleManagerAdapter;
@@ -211,7 +216,7 @@ public class WorkspaceSpringConfiguration {
             com.javaclaw.config.EmailConfig emailSettings,
             com.javaclaw.config.NotificationConfig notificationSettings,
             com.javaclaw.system.CommandToolFactory commandTools,
-            com.javaclaw.desktop.DesktopToolFactory desktopTools,
+            com.javaclaw.desktop.api.DesktopSessionService desktopSessions,
             com.javaclaw.platform.process.ProcessRunner processes,
             com.javaclaw.agent.expert.KnowledgeExpert knowledge,
             McpConfigManager mcpConfigurations,
@@ -229,7 +234,7 @@ public class WorkspaceSpringConfiguration {
                 hostToolContractTypes());
         var objects = new com.javaclaw.application.agent.WorkspaceToolObjects(
                 options.browserManager(), siteCredentials, workspace, settings,
-                emailSettings, notificationSettings, commandTools, desktopTools, processes,
+                emailSettings, notificationSettings, commandTools, desktopSessions, processes,
                 knowledge, mcpConfigurations, mcpClients, pluginTools, skills, jshell,
                 sddTasks::getObject, schedules, json, modelTasks,
                 com.javaclaw.framework.builtin.ClarifyTools::new);
@@ -433,12 +438,33 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
+    ModelDiscoveryPort modelDiscoveryPort(ManagedTaskExecutor executor, JsonCodec json) {
+        return new HttpModelDiscoveryAdapter(noRedirectModelGateway(executor), json);
+    }
+
+    @Bean
+    ModelDiscoveryApplicationService modelDiscoveryApplicationService(
+            ModelProviderCatalog providers, ModelDiscoveryPort discovery) {
+        return new ModelDiscoveryUseCase(providers, discovery);
+    }
+
+    @Bean
     ModelSettingsProbePort modelSettingsProbePort(
-            HttpGateway http,
+            ManagedTaskExecutor executor,
             JsonCodec json,
             EmbeddingRuntimeProbePort runtimeEmbedding,
-            com.javaclaw.inference.api.LocalInferenceGateway inference) {
-        return new HttpModelSettingsProbeAdapter(http, json, runtimeEmbedding, inference);
+            com.javaclaw.inference.api.LocalInferenceGateway inference,
+            ModelDiscoveryApplicationService discovery) {
+        return new HttpModelSettingsProbeAdapter(noRedirectModelGateway(executor),
+                json, runtimeEmbedding, inference, discovery);
+    }
+
+    private static HttpGateway noRedirectModelGateway(ManagedTaskExecutor executor) {
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .followRedirects(java.net.http.HttpClient.Redirect.NEVER)
+                .build();
+        return new HttpGateway(executor, client);
     }
 
     @Bean

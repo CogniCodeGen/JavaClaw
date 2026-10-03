@@ -62,7 +62,8 @@ public final class SddTaskRunner implements AutoCloseable {
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId,
-                SddThreadGuard.coordinator(workspaceId, ctx.id(), workflowService != null));
+                SddThreadGuard.coordinator(workspaceId, ctx.id(), workflowService != null),
+                json.mapper());
         this.agents = new FrameworkSddAgents(
                 agentClient, workspace, settings, skills, tokenSink, json.mapper());
         this.commandRunner = new ProcessCommandRunner(processes);

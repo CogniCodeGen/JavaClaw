@@ -25,6 +25,8 @@ final class StepMessageCodec {
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         result.put("role", message.getMessageType().getValue());
         result.put("text", message.getText() == null ? "" : message.getText());
+        HostContextBlock.Metadata host = HostContextBlock.metadata(message);
+        if (host != null) result.set("hostContextBlock", HostContextBlock.wire(host));
         if (message instanceof AssistantMessage assistant) {
             ArrayNode calls = result.putArray("toolCalls");
             assistant.getToolCalls().forEach(call -> calls.addObject()
@@ -35,6 +37,13 @@ final class StepMessageCodec {
             response.getResponses().forEach(value -> values.addObject()
                     .put("id", value.id()).put("name", value.name()).put("data", value.responseData()));
         } else if (message instanceof UserMessage user) {
+            if (TaskRepairContext.isRepair(user)) {
+                result.put("taskRepairModelStepId",
+                        (String) user.getMetadata().get(TaskRepairContext.MODEL_STEP_METADATA));
+                result.put("taskRepairSequence", Long.toString(((Number) user.getMetadata().get(
+                        TaskRepairContext.SEQUENCE_METADATA)).longValue()));
+            }
+            if (ProviderToolManifest.isManifest(user)) result.put("providerToolManifest", true);
             if (SpringAiPromptFactory.isOriginalTask(user)) result.put("originalTask", true);
             if (SpringAiPromptFactory.isResumeCommand(user)) result.put("resumeCommand", true);
             if (Boolean.TRUE.equals(user.getMetadata().get(OnDemandContextSession.CONTEXT_METADATA))) {
@@ -65,7 +74,7 @@ final class StepMessageCodec {
     }
     static Message message(JsonNode value) {
         String text = value.path("text").asText("");
-        return switch (value.path("role").asText()) {
+        Message decoded = switch (value.path("role").asText()) {
             case "system" -> new SystemMessage(text);
             case "assistant" -> {
                 List<AssistantMessage.ToolCall> calls = new ArrayList<>();
@@ -90,6 +99,16 @@ final class StepMessageCodec {
                     media.add(builder.build());
                 });
                 java.util.Map<String, Object> metadata = new java.util.HashMap<>();
+                if (!value.path("taskRepairModelStepId").asText().isBlank()
+                        && value.path("taskRepairSequence").asLong() > 0) {
+                    metadata.put(TaskRepairContext.MODEL_STEP_METADATA,
+                            value.path("taskRepairModelStepId").asText());
+                    metadata.put(TaskRepairContext.SEQUENCE_METADATA,
+                            value.path("taskRepairSequence").asLong());
+                }
+                if (value.path("providerToolManifest").asBoolean(false)) {
+                    metadata.put(ProviderToolManifest.METADATA, true);
+                }
                 if (value.path("originalTask").asBoolean(false)) {
                     metadata.put(SpringAiPromptFactory.ORIGINAL_TASK_METADATA, true);
                 }
@@ -114,6 +133,9 @@ final class StepMessageCodec {
             }
             default -> throw new IllegalStateException("unknown persisted message role: " + value.path("role"));
         };
+        return value.has("hostContextBlock")
+                ? HostContextBlock.mark(decoded, HostContextBlock.fromWire(value.path("hostContextBlock")))
+                : decoded;
     }
     static ObjectNode response(ChatResponse response) {
         ObjectNode result = JsonNodeFactory.instance.objectNode();

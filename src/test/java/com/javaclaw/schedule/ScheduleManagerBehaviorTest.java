@@ -263,7 +263,7 @@ class ScheduleManagerBehaviorTest {
                 manager.runNow(cleanupId, true));
         release.countDown();
         await(() -> !manager.isRunning(cleanupId), Duration.ofSeconds(2));
-        assertEquals("成功", manager.getTask(cleanupId).getLastRunStatus());
+        assertEquals("SUCCESS", manager.getTask(cleanupId).getLastRunStatus());
         assertTrue(events.stream().anyMatch(value -> value.equals("start:" + cleanupId)));
         assertTrue(events.stream().anyMatch(value -> value.equals("complete:" + cleanupId)));
 
@@ -278,7 +278,7 @@ class ScheduleManagerBehaviorTest {
         assertEquals(ScheduleManager.RunNowResult.STARTED, manager.runNow(reviewId, true));
         await(() -> !manager.isRunning(reviewId)
                 && manager.getTask(reviewId).getRunCount() == 1, Duration.ofSeconds(2));
-        assertEquals("失败", manager.getTask(reviewId).getLastRunStatus());
+        assertEquals("FAILURE", manager.getTask(reviewId).getLastRunStatus());
         manager.recordBuiltinRun("missing", true, 1, "ignored");
         manager.recordBuiltinRun(reviewId, true, 1, "manual record");
         assertEquals(2, manager.getTask(reviewId).getRunCount());
@@ -332,7 +332,7 @@ class ScheduleManagerBehaviorTest {
                 manager.runNow(richId, false));
         await(() -> !manager.isActive(richId), Duration.ofSeconds(2));
         ScheduledTask completed = manager.getTask(richId);
-        assertEquals("成功", completed.getLastRunStatus());
+        assertEquals("SUCCESS", completed.getLastRunStatus());
         assertEquals(1, completed.getRunCount());
         assertEquals(1, completed.getExecRecords().size());
         assertEquals(61, completed.getExecRecords().getFirst().getNote().length());
@@ -347,7 +347,7 @@ class ScheduleManagerBehaviorTest {
                 manager.runNow(onceId, false));
         await(() -> !manager.isActive(onceId), Duration.ofSeconds(2));
         ScheduledTask autoDisabled = manager.getTask(onceId);
-        assertEquals("失败", autoDisabled.getLastRunStatus());
+        assertEquals("FAILURE", autoDisabled.getLastRunStatus());
         assertFalse(autoDisabled.isEnabled());
 
         manager.reload(new NullMessageFailureRunner());
@@ -355,7 +355,7 @@ class ScheduleManagerBehaviorTest {
         assertEquals(ScheduleManager.RunNowResult.STARTED,
                 manager.runNow(failure.getId(), false));
         await(() -> !manager.isActive(failure.getId()), Duration.ofSeconds(2));
-        assertEquals("失败", manager.getTask(failure.getId()).getLastRunStatus());
+        assertEquals("FAILURE", manager.getTask(failure.getId()).getLastRunStatus());
     }
 
     @Test

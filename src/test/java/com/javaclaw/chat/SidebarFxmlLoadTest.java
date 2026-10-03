@@ -129,15 +129,32 @@ class SidebarFxmlLoadTest {
                 controller.appendThinking("思考明细：筛选亲子地点");
                 controller.updatePlan("规划明细：先确认交通再安排景点");
                 controller.recordPipelineProgress(
-                        "route", "路由", "done", "阶段明细：已选择普通对话");
-                controller.appendSubAgentThinking("知识专家", "智能体过程：核对开放时间");
+                        "route", "路由", ThinkingContentRenderer.StageState.DONE,
+                        "阶段明细：已选择普通对话");
+                controller.appendSubAgentThinking("知识专家", "智能体过程：核对开放时间；失败、已停止只是内容");
+                assertEquals(1, countNodesWithClass(sections, "agent-status-thinking"));
                 controller.markSubAgentReplying("知识专家");
                 assertTrue(renderedText(sections).contains("返回结果中"));
                 controller.markSubAgentResult("知识专家", "智能体结果：找到两个候选景点");
-                controller.appendToolCall("搜索", "工具输入：亲子景点", "running");
-                controller.appendToolCall("搜索", "工具输入：亲子景点", "ok");
-                controller.appendToolCall("搜索", "工具输入：中秋交通", "running");
-                controller.appendToolCall("搜索", "工具输入：中秋交通", "ok");
+                assertEquals(1, countNodesWithClass(sections, "agent-status-done"));
+                controller.appendSubAgentThinking("验证专家", "校验失败只是思考内容");
+                assertEquals(1, countNodesWithClass(sections, "agent-status-thinking"));
+                controller.completeSubAgentIfPresent("验证专家",
+                        com.javaclaw.framework.api.ToolExecutionStatus.FAILED);
+                assertEquals(1, countNodesWithClass(sections, "agent-status-failed"));
+                controller.appendSubAgentThinking("复核专家", "核验尚无结论");
+                controller.completeSubAgentIfPresent("复核专家",
+                        com.javaclaw.framework.api.ToolExecutionStatus.UNCERTAIN);
+                assertEquals(1, countNodesWithClass(sections, "agent-status-stopped"));
+                controller.appendToolCall("搜索", "工具输入：亲子景点 error failed done",
+                        ThinkingContentRenderer.ToolState.RUNNING);
+                assertEquals(1, countNodesWithClass(sections, "tp-tool-status-running"));
+                controller.appendToolCall("搜索", "工具输入：亲子景点",
+                        ThinkingContentRenderer.ToolState.SUCCEEDED);
+                controller.appendToolCall("搜索", "工具输入：中秋交通",
+                        ThinkingContentRenderer.ToolState.RUNNING);
+                controller.appendToolCall("搜索", "工具输入：中秋交通",
+                        ThinkingContentRenderer.ToolState.SUCCEEDED);
                 controller.recordLoopStatus(new LoopStatus(
                         2, Decision.CONTINUE, "PRIVATE_LOOP_REASON", 1, 3, 42, 5));
                 String visibleDetails = visibleRenderedText(sections);
@@ -155,13 +172,17 @@ class SidebarFxmlLoadTest {
                 assertTrue(visibleDetails.contains("第 2 轮 · 已满足 1/3 项 · 5 秒后继续"));
                 assertFalse(renderedText(sections).contains("PRIVATE_LOOP_REASON"),
                         "循环自由文本理由不属于进度明细");
-                controller.recordPipelineProgress("planning", "选择上下文", "running",
+                controller.recordPipelineProgress("planning", "选择上下文",
+                        ThinkingContentRenderer.StageState.RUNNING,
                         "正在确定本轮需要的资料和工具");
                 assertTrue(visibleRenderedText(sections).contains("正在确定本轮需要的资料和工具"));
-                controller.recordPipelineProgress("planning", "选择上下文", "done", null);
+                controller.recordPipelineProgress("planning", "选择上下文",
+                        ThinkingContentRenderer.StageState.DONE, null);
                 assertFalse(visibleRenderedText(sections).contains("正在确定本轮需要的资料和工具"));
-                controller.recordPipelineProgress("failed", "读取资料", "running", "正在读取资料");
-                controller.recordPipelineProgress("failed", "读取资料", "error", "资料读取失败");
+                controller.recordPipelineProgress("failed", "读取资料",
+                        ThinkingContentRenderer.StageState.RUNNING, "正在读取资料");
+                controller.recordPipelineProgress("failed", "读取资料",
+                        ThinkingContentRenderer.StageState.ERROR, "资料读取失败");
                 assertTrue(visibleRenderedText(sections).contains("资料读取失败"));
                 assertFalse(visibleRenderedText(sections).contains("正在读取资料"));
                 controller.appendToolResult("认证检查",

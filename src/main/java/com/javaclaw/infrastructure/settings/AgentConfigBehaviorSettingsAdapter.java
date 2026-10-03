@@ -29,7 +29,7 @@ public final class AgentConfigBehaviorSettingsAdapter implements BehaviorSetting
                         config.getSkillEvolutionSuccessThreshold(),
                         config.isSkillNudgeEnabled(), config.isSkillBundlesEnabled()),
                 new GeneralSettings(config.isTrayMinimizeOnClose(),
-                        config.isTaskRiskAutoApproveEnabled()),
+                        config.isComputerAppAccessEnabled()),
                 config.getConfigFilePath());
     }
 
@@ -55,8 +55,20 @@ public final class AgentConfigBehaviorSettingsAdapter implements BehaviorSetting
 
     @Override
     public synchronized void saveGeneral(GeneralSettings value) {
-        config.setTrayMinimizeOnClose(value.minimizeToTrayOnClose());
-        config.setTaskRiskAutoApproveEnabled(value.taskRiskAutoApproveEnabled());
-        config.save();
+        // Readers of the desktop access switch must never observe an enablement
+        // that has not been persisted successfully.
+        synchronized (config) {
+            boolean previousTray = config.isTrayMinimizeOnClose();
+            boolean previousDesktopAccess = config.isComputerAppAccessEnabled();
+            config.setTrayMinimizeOnClose(value.minimizeToTrayOnClose());
+            config.setComputerAppAccessEnabled(value.computerAppAccessEnabled());
+            try {
+                config.saveChecked();
+            } catch (RuntimeException failure) {
+                config.setTrayMinimizeOnClose(previousTray);
+                config.setComputerAppAccessEnabled(previousDesktopAccess);
+                throw failure;
+            }
+        }
     }
 }

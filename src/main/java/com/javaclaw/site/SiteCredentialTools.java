@@ -256,18 +256,18 @@ public final class SiteCredentialTools {
         if (raw == null) return existing;
         String value = raw.strip();
         if (value.isEmpty()) return null;
+        URI uri;
         try {
-            URI uri = URI.create(value);
-            if (uri.getHost() == null
-                    || !("http".equalsIgnoreCase(uri.getScheme())
-                    || "https".equalsIgnoreCase(uri.getScheme()))) {
-                throw new IllegalArgumentException("login_url 必须是有效的 http:// 或 https:// URL。");
-            }
-            return uri.toString();
+            uri = URI.create(value);
         } catch (IllegalArgumentException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("login_url")) throw e;
             throw new IllegalArgumentException("login_url 格式不正确。", e);
         }
+        if (uri.getHost() == null
+                || !("http".equalsIgnoreCase(uri.getScheme())
+                || "https".equalsIgnoreCase(uri.getScheme()))) {
+            throw new IllegalArgumentException("login_url 必须是有效的 http:// 或 https:// URL。");
+        }
+        return uri.toString();
     }
 
     private static SiteCredential copyOf(SiteCredential source) {

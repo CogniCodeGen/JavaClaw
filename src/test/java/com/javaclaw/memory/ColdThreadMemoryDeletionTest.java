@@ -7,6 +7,7 @@ import com.javaclaw.framework.api.ThreadClient;
 import com.javaclaw.framework.api.ThreadStartRequest;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
 import com.javaclaw.memory.model.Episode;
+import com.javaclaw.memory.model.PreferenceProposal;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.Test;
@@ -29,9 +30,11 @@ class ColdThreadMemoryDeletionTest {
             MemoryGraphScope graph = MemoryGraphScope.thread(source);
             var survivor = new MemoryGraphScope("cold-workspace", "local-user", "fork-survivor", MemoryGraphScope.Kind.THREAD);
             try (var fixture = fixture(memoryRoot, settings)) {
-                fixture.memory.rememberTurn(graph, null, "old-turn", 2, "冷会话问题", "冷会话答案", null, false);
+                fixture.memory.rememberTurn(graph, null, "old-turn", 2,
+                        "我喜欢简洁的中文回答", "冷会话答案", null, true);
                 fixture.memory.rememberTurn(survivor, null, "fork-turn", 2, "独立分支的问题", "独立分支的答案", null, false);
-                fixture.memory.rememberExplicitPreference(graph, "old-turn", "我喜欢简洁的中文回答");
+                fixture.memory.rememberPreferenceProposal(graph, "old-turn",
+                        new PreferenceProposal("我喜欢简洁的中文回答", .99));
             }
             assertTrue(Files.isDirectory(graph.directory(memoryRoot)));
             RunScope otherUser = new RunScope("cold-workspace", "other-user", "removed");
@@ -64,7 +67,12 @@ class ColdThreadMemoryDeletionTest {
             Path memoryRoot = global.resolve("memory-stores/cold-workspace");
             var graph = new MemoryGraphScope("cold-workspace", "local-user", "active-source", MemoryGraphScope.Kind.THREAD);
             try (var fixture = fixture(memoryRoot, settings)) {
-                fixture.memory.rememberExplicitPreference(graph, "turn", "我偏好表格展示方案");
+                fixture.memory.rememberTurn(graph, null, "turn", 2,
+                        "我偏好表格展示方案", "已记录", null, true);
+                fixture.memory.rememberPreferenceProposal(graph, "turn",
+                        new PreferenceProposal("我偏好表格展示方案", .99));
+                assertEquals(1, fixture.memory.facts().size(),
+                        "已提交的用户原文应在后台情景迁移期间仍可用于偏好证据");
                 var stale = fixture.memory.inScope(graph).store();
                 var cleanup = new ThreadMemoryCleanup(global);
                 cleanup.delete(new RunScope("cold-workspace", "local-user", "active-source"));

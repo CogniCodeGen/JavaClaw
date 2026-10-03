@@ -3,6 +3,7 @@
 <?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Separator?>
@@ -50,21 +51,26 @@
                     </children>
                 </HBox>
                 <Separator/>
-                <Label text="托管任务 · 风险评估" styleClass="settings-group-title"/>
+                <Label text="电脑应用访问" styleClass="settings-group-title"/>
                 <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle"
-                      onMouseClicked="#taskRiskRowClicked">
+                      onMouseClicked="#computerAppAccessRowClicked">
                     <children>
                         <VBox spacing="1.0" HBox.hgrow="ALWAYS">
                             <children>
-                                <Label text="目录内高风险操作自动放行" styleClass="rt-main"/>
-                                <Label text="托管任务中由风险评估智能体判定影响范围，只触及任务工作目录内则免人工确认；可能越界或无法确定时仍照常弹确认。仅作用于托管任务"
+                                <Label text="允许智能体访问电脑应用" styleClass="rt-main"/>
+                                <Label text="开启时会逐项检查并打开缺失权限的系统设置。请为当前运行宿主授权；从 IDE 启动时可能显示 IDE 或 java。授权完成后保存设置。"
                                        wrapText="true" styleClass="rt-sub"/>
                             </children>
                         </VBox>
-                        <ToggleSwitch fx:id="taskRiskAutoApproveCheck"
-                                      accessibleText="目录内高风险操作自动放行"/>
+                        <ToggleSwitch fx:id="computerAppAccessCheck"
+                                      accessibleText="允许智能体访问电脑应用"/>
                     </children>
                 </HBox>
+                <Label fx:id="computerAppAccessStatus" wrapText="true"
+                       accessibleText="电脑应用系统权限状态" styleClass="settings-hint"/>
+                <Button fx:id="computerAppAccessPermissionButton" text="检查并继续授权"
+                        onAction="#refreshComputerPermission"
+                        styleClass="button, settings-reset-button"/>
             </children>
         </VBox>
     </content>

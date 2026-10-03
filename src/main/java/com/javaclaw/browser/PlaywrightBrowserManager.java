@@ -1,11 +1,14 @@
 package com.javaclaw.browser;
 
+import com.javaclaw.platform.data.ApplicationHome;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -126,7 +129,29 @@ public class PlaywrightBrowserManager {
         log.info("正在启动 Playwright 浏览器（headless={}）...", launchHeadless);
 
         try {
-            this.playwright = Playwright.create();
+            Path browsers;
+            Path temporary;
+            try {
+                ApplicationHome home = ApplicationHome.resolve().prepare();
+                browsers = home.playwrightBrowsersDirectory();
+                temporary = home.temporaryDirectory();
+                if (browserDir.toAbsolutePath().normalize().startsWith(home.dataDirectory())) {
+                    home.requireManaged(browserDir);
+                    home.requireManaged(screenshotDir);
+                }
+                home.requireManaged(browsers);
+                home.requireManaged(temporary);
+            } catch (IOException failure) {
+                throw new IllegalStateException("无法准备应用内浏览器资产目录", failure);
+            }
+            // Playwright's Java driver otherwise extracts to java.io.tmpdir and downloads browsers
+            // to an OS user cache. Both are application-owned runtime assets.
+            System.setProperty("playwright.driver.tmpdir", temporary.toString());
+            this.playwright = Playwright.create(new Playwright.CreateOptions().setEnv(Map.of(
+                    "PLAYWRIGHT_BROWSERS_PATH", browsers.toString(),
+                    "TMPDIR", temporary.toString(),
+                    "TEMP", temporary.toString(),
+                    "TMP", temporary.toString())));
 
             // 检测系统默认浏览器并启动（无需下载 Chromium）
             String channel = detectDefaultBrowserChannel();

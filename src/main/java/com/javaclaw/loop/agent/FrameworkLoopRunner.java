@@ -23,12 +23,13 @@ import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.api.RunRequest;
 import com.javaclaw.framework.api.RunScope;
 import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.loop.LoopConstants;
 import com.javaclaw.loop.LoopIterationRunner;
 import com.javaclaw.loop.model.IterationResult;
 import com.javaclaw.loop.model.LoopReport;
 import com.javaclaw.runtime.WorkspaceContext;
-import com.javaclaw.util.ChineseOutputGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
@@ -100,8 +101,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                         .input(InputBlock.text(this.systemPrompt))
                         .permissionCeiling(PermissionSet.UNRESTRICTED)
                         .idempotencyKey("loop:" + loopId + ":coordinator")
-                        .attributes(Map.of("framework.managedTaskId",
-                                JsonNodeFactory.instance.textNode(loopId)))
+                        .attributes(coordinatorAttributes(loopId))
                         .build()) : null;
         this.ownerRunId = parentRunId != null ? parentRunId
                 : coordinator == null ? null : coordinator.id();
@@ -156,12 +156,14 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                 capture.outputTokens = output.path("usage").path("outputTokens")
                         .asLong(capture.outputTokens);
             }
-            String visible = ChineseOutputGuard.enforceUserVisibleReply(reply);
+            String visible = reply;
             if (!visible.isBlank()) callbacks.onEvent(new ConversationEvent.Reply(visible));
             callbacks.onEvent(new ConversationEvent.Usage(
                     capture.inputTokens, capture.outputTokens));
             return IterationResult.ok(reply, capture.inputTokens, capture.outputTokens,
-                    List.copyOf(capture.toolCalls), capture.report.get());
+                    List.copyOf(capture.toolCalls), capture.report.get(),
+                    agents.taskResult(handle.id()).orElse(null),
+                    modelDecision(output, capture.modelDecision.get()));
         } catch (com.javaclaw.framework.api.TurnPausedException paused) {
             suspended = true;
             throw paused;
@@ -203,6 +205,12 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                 .build();
     }
 
+    private static Map<String, JsonNode> coordinatorAttributes(String loopId) {
+        Map<String, JsonNode> attributes = new java.util.LinkedHashMap<>();
+        attributes.put("framework.managedTaskId", JsonNodeFactory.instance.textNode(loopId));
+        return attributes;
+    }
+
     private void onEvent(
             RunHandle handle,
             ConversationCallbacks callbacks,
@@ -216,25 +224,61 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                 capture.inputTokens = payload.path("inputTokens").asLong(capture.inputTokens);
                 capture.outputTokens = payload.path("outputTokens").asLong(capture.outputTokens);
             }
+            case "core.harness.decision_submitted" -> {
+                if (event.schemaVersion() == 1 && "framework.springai".equals(event.producer())) {
+                    try {
+                        capture.modelDecision.set(ModelDecisionV1.fromJson(payload.path("value")).decision());
+                    } catch (IllegalArgumentException invalid) {
+                        log.warn("循环第 {} 轮忽略无效 Harness 决策事件", iteration.get(), invalid);
+                    }
+                }
+            }
             case "core.tool.started" -> {
                 String tool = payload.path("tool").asText("unknown");
                 JsonNode arguments = payload.path("arguments");
                 if (LoopConstants.REPORT_TOOL_NAME.equals(tool)) {
-                    capture.report.set(parseReport(arguments));
+                    String invocationId = payload.path("invocationId").asText("");
+                    if (!invocationId.isBlank()) {
+                        capture.pendingReports.put(invocationId, arguments.deepCopy());
+                    }
                 } else {
-                    capture.toolCalls.add(tool + "#" + Integer.toHexString(arguments.toString().hashCode()));
-                    callbacks.onEvent(new ConversationEvent.Hint("正在执行工具：" + tool));
+                    String invocationId = payload.path("invocationId").asText("");
+                    if (!invocationId.isBlank()) {
+                        capture.pendingToolCalls.put(invocationId,
+                                tool + "#" + Integer.toHexString(arguments.toString().hashCode()));
+                    }
+                    callbacks.onEvent(new ConversationEvent.ToolStarted(tool,
+                            invocationId, render(arguments)));
                 }
             }
             case "core.tool.completed" -> {
                 String tool = payload.path("tool").asText("unknown");
-                if (!LoopConstants.REPORT_TOOL_NAME.equals(tool)) {
+                ToolExecutionStatus status = executionStatus(payload);
+                if (LoopConstants.REPORT_TOOL_NAME.equals(tool)) {
+                    JsonNode arguments = capture.pendingReports.remove(
+                            payload.path("invocationId").asText(""));
+                    if (status == ToolExecutionStatus.SUCCEEDED) {
+                        capture.report.set(parseReport(arguments));
+                    }
+                } else {
+                    String invocationId = payload.path("invocationId").asText("");
+                    String fingerprint = capture.pendingToolCalls.remove(invocationId);
+                    if (status == ToolExecutionStatus.SUCCEEDED && fingerprint != null) {
+                        capture.toolCalls.add(fingerprint);
+                    }
                     callbacks.onEvent(new ConversationEvent.ToolResult(
-                            tool, render(payload.get("output"))));
+                            tool, render(payload.get("output")),
+                            invocationId, payload.path("output"), status));
                 }
             }
-            case "core.tool.failed" -> callbacks.onEvent(new ConversationEvent.Hint(
-                    "工具执行失败：" + payload.path("message").asText("unknown error")));
+            case "core.tool.failed" -> {
+                String invocationId = payload.path("invocationId").asText("");
+                capture.pendingToolCalls.remove(invocationId);
+                capture.pendingReports.remove(invocationId);
+                callbacks.onEvent(new ConversationEvent.ToolFailed(
+                        payload.path("tool").asText("unknown"), invocationId,
+                        payload.path("message").asText("unknown error")));
+            }
             case "core.run.waiting_approval" -> requestApproval(handle, payload);
             case "core.run.waiting_input" -> agents.cancel(handle.id(),
                     new CancelReason("LOOP_UNEXPECTED_INPUT", "loop iterations cannot await input"));
@@ -254,13 +298,33 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
     private static LoopReport parseReport(JsonNode arguments) {
         if (arguments == null || !arguments.isObject()) return null;
         return new LoopReport(
-                arguments.path("done").asBoolean(false),
                 arguments.path("summary").asText(""),
                 arguments.path("remaining").asText(""),
                 arguments.has("nextDelaySeconds")
                         ? arguments.path("nextDelaySeconds").asLong(0)
                         : arguments.path("next_delay_seconds").asLong(0),
                 arguments.path("reason").asText(""));
+    }
+
+    private static ModelDecisionV1.Decision modelDecision(
+            JsonNode output, ModelDecisionV1.Decision submitted) {
+        if (output == null || !output.path("modelDecision").isTextual()) return submitted;
+        try {
+            ModelDecisionV1.Decision completed = ModelDecisionV1.Decision.valueOf(
+                    output.path("modelDecision").textValue());
+            // The persisted event and terminal Run output must describe the same decision.
+            return submitted == null || submitted == completed ? completed : null;
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
+    private static ToolExecutionStatus executionStatus(JsonNode payload) {
+        try {
+            return ToolExecutionStatus.valueOf(payload.path("status").asText("UNKNOWN"));
+        } catch (IllegalArgumentException invalid) {
+            return ToolExecutionStatus.UNKNOWN;
+        }
     }
 
     private static String render(JsonNode node) {
@@ -316,7 +380,12 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
 
     private static final class Capture {
         private final List<String> toolCalls = java.util.Collections.synchronizedList(new ArrayList<>());
+        private final java.util.Map<String, JsonNode> pendingReports =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.Map<String, String> pendingToolCalls =
+                new java.util.concurrent.ConcurrentHashMap<>();
         private final AtomicReference<LoopReport> report = new AtomicReference<>();
+        private final AtomicReference<ModelDecisionV1.Decision> modelDecision = new AtomicReference<>();
         private final AtomicReference<Throwable> failure = new AtomicReference<>();
         private volatile long inputTokens;
         private volatile long outputTokens;

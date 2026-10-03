@@ -5,6 +5,7 @@ import com.icegreen.greenmail.util.ServerSetup;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.notification.NotificationTools;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
@@ -17,6 +18,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** End-to-end mail transport acceptance against local SMTP and IMAP servers. */
@@ -92,7 +94,12 @@ class EmailToolsLocalFixtureTest {
         assertTrue(withCc.contains("邮件发送成功"), withCc);
         assertTrue(mail.waitForIncomingEmail(5_000, 3), "本地 SMTP 未投递 TO/CC 邮件");
 
-        String reply = tools.replyEmail(1, "E2E fixture reply", false);
+        String reply;
+        try (ToolEffectCapture.Scope capture = ToolEffectCapture.begin("email_reply")) {
+            reply = tools.replyEmail(1, "E2E fixture reply", false);
+            assertEquals(ToolEffectCapture.Signal.SUCCESS, capture.signal());
+            assertEquals(ADDRESS, capture.target());
+        }
         assertTrue(reply.contains("回复邮件成功"), reply);
         assertTrue(mail.waitForIncomingEmail(5_000, 4), "本地 SMTP 未投递回复邮件");
 
@@ -101,9 +108,11 @@ class EmailToolsLocalFixtureTest {
         notificationConfig.setEmailNotifyTo(ADDRESS);
         NotificationTools notificationTools = new NotificationTools(
                 null, notificationConfig, emailConfig);
-        String notified = notificationTools.sendEmailNotify(
-                "", "E2E notification subject", "E2E notification body");
-        assertTrue(notified.contains("通知邮件发送成功"), notified);
+        try (ToolEffectCapture.Scope capture = ToolEffectCapture.begin("notify_email")) {
+            notificationTools.sendEmailNotify(
+                    "", "E2E notification subject", "E2E notification body");
+            assertEquals(ToolEffectCapture.Signal.SUCCESS, capture.signal());
+        }
         assertTrue(mail.waitForIncomingEmail(5_000, 5), "本地 SMTP 未投递通知邮件");
     }
 

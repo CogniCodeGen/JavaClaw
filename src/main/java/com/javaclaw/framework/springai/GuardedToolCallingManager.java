@@ -30,8 +30,22 @@ final class GuardedToolCallingManager implements ToolCallingManager {
 
     @Override
     public ToolExecutionResult executeToolCalls(Prompt prompt, ChatResponse response) {
-        AssistantMessage assistant = response.getResults().stream()
+        List<AssistantMessage> outputs = response.getResults().stream()
                 .map(generation -> generation.getOutput())
+                .toList();
+        List<AssistantMessage.ToolCall> calls = outputs.stream()
+                .flatMap(output -> output.getToolCalls().stream()).toList();
+        long decisions = calls.stream()
+                .filter(call -> HarnessDecisionToolCallback.NAME.equals(call.name())).count();
+        if (decisions > 0 && outputs.size() != 1) {
+            // Only the first generation is durably journaled. No correction can
+            // safely replay a rejected batch spread across multiple results.
+            throw new ProtocolBatchException(false);
+        }
+        if (decisions > 0 && (decisions != 1 || calls.size() != 1)) {
+            throw new ProtocolBatchException(true);
+        }
+        AssistantMessage assistant = outputs.stream()
                 .filter(output -> !output.getToolCalls().isEmpty())
                 .findFirst().orElse(null);
         if (assistant == null) return delegate.executeToolCalls(prompt, response);
@@ -46,5 +60,17 @@ final class GuardedToolCallingManager implements ToolCallingManager {
             return delegate.executeToolCalls(prompt, response);
         }
         return journal.rejectUnavailableToolBatch(prompt, assistant);
+    }
+
+    /** A rejected control batch has executed no callbacks and may receive one correction. */
+    static final class ProtocolBatchException extends RuntimeException {
+        private final boolean recoverable;
+
+        ProtocolBatchException(boolean recoverable) {
+            super("harness_submit_decision must be the only call in one provider result");
+            this.recoverable = recoverable;
+        }
+
+        boolean recoverable() { return recoverable; }
     }
 }

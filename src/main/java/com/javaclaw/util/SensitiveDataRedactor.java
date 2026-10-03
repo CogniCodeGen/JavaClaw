@@ -17,9 +17,10 @@ public final class SensitiveDataRedactor {
             "(?i)(password|passwd|secret|token|api[_ .-]?key|authorization|cookie)\\s*=\\s*([^,}\\n]*)");
     private static final Pattern JSON_SECRET = Pattern.compile(
             "(?i)(\\\"(?:password|passwd|secret|token|api[_ .-]?key|authorization|cookie)\\\"\\s*:\\s*\\\")([^\\\"]*)(\\\")");
+    // “会话”须是独立标签；“桌面会话: Target window...”是普通错误信息。
     private static final Pattern LABELED_SECRET = Pattern.compile(
             "(?i)[\\\"']?(?:password|passwd|pwd|passcode|secret|token|api[_ .-]?key|authorization|cookie"
-                    + "|密码|口令|令牌|密钥|验证码|会话)[\\\"']?\\s*[:：=]\\s*"
+                    + "|密码|口令|令牌|密钥|验证码|(?<![\\p{L}\\p{N}_])会话)[\\\"']?\\s*[:：=]\\s*"
                     + "(?:[\\\"']([^\\\"'\\r\\n]{4,})[\\\"']|([^\\s,，;；\\r\\n]{4,}))");
     private static final Pattern PRIVATE_KEY = Pattern.compile(
             "-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----");
@@ -31,7 +32,7 @@ public final class SensitiveDataRedactor {
             "(?i)https?://[^/@\\s:]+:[^/@\\s]+@");
     private static final Pattern COMPARATIVE_SECRET = Pattern.compile(
             "(?i)(?:password|passwd|pwd|passcode|secret|token|api[_ .-]?key|authorization|cookie"
-                    + "|密码|口令|令牌|密钥|验证码|会话)\\s*(?:不是|不再是|从|由|改为|改成)\\s*"
+                    + "|密码|口令|令牌|密钥|验证码|(?<![\\p{L}\\p{N}_])会话)\\s*(?:不是|不再是|从|由|改为|改成)\\s*"
                     + "[^\\s,，;；\\r\\n]{4,}");
     private static final Pattern BEARER_SECRET = Pattern.compile(
             "(?i)(?:authorization\\s*[:=]\\s*)?bearer\\s+[A-Za-z0-9._~+/-]{8,}={0,2}");
@@ -81,9 +82,17 @@ public final class SensitiveDataRedactor {
      * 对任意日志/轨迹文本做保守处理。命中凭据时整段隐藏，避免复杂格式的秘密被局部正则漏出。
      */
     public static String redactText(String text) {
-        if (text == null || text.isEmpty()) return text == null ? "" : text;
-        if (containsLikelyCredential(text)) return "<敏感内容已隐藏>";
-        return redactFallback(text);
+        return redactTextWithStatus(text).value();
+    }
+
+    /** Keep the redaction decision separate from the localized replacement text. */
+    public record RedactedText(String value, boolean redacted) { }
+
+    public static RedactedText redactTextWithStatus(String text) {
+        if (text == null || text.isEmpty()) return new RedactedText(text == null ? "" : text, false);
+        if (containsLikelyCredential(text)) return new RedactedText("<敏感内容已隐藏>", true);
+        String value = redactFallback(text);
+        return new RedactedText(value, !value.equals(text));
     }
 
     private static boolean isPlaceholder(String value) {

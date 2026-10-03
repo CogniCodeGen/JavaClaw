@@ -1,5 +1,7 @@
 package com.javaclaw.skill;
 
+import com.javaclaw.platform.data.ApplicationHome;
+import com.javaclaw.platform.data.DataRoot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,6 +60,12 @@ public final class SkillInstaller {
         }
 
         Path target = skills.getSkillsDir().resolve(name);
+        try {
+            requireManagedPath(skills.getSkillsDir());
+            requireManagedPath(target);
+        } catch (IOException invalid) {
+            return new InstallResult(false, "技能目录无效: " + invalid.getMessage(), null, List.of());
+        }
         if (Files.exists(target)) {
             return new InstallResult(false, "目标技能目录已存在，请先删除或改名", null, List.of());
         }
@@ -84,7 +92,7 @@ public final class SkillInstaller {
         }
         Path tmp = null;
         try {
-            tmp = Files.createTempDirectory("javaclaw-skill-");
+            tmp = createTemporaryDirectory("javaclaw-skill-");
             unzip(zipFile, tmp);
             // 查找 SKILL.md 所在目录（可能是 zip 根或第一层子目录）
             Path skillRoot = findSkillRoot(tmp);
@@ -117,7 +125,7 @@ public final class SkillInstaller {
         }
         Path tmp = null;
         try {
-            tmp = Files.createTempDirectory("javaclaw-skill-inspect-");
+            tmp = createTemporaryDirectory("javaclaw-skill-inspect-");
             unzip(zipFile, tmp);
             Path skillRoot = findSkillRoot(tmp);
             return skillRoot == null
@@ -135,6 +143,28 @@ public final class SkillInstaller {
             message = message == null ? "" : message;
             scripts = List.copyOf(scripts == null ? List.of() : scripts);
         }
+    }
+
+    private Path createTemporaryDirectory(String prefix) throws IOException {
+        // The skills repository is data/skills; staging is always data/tmp (also for an
+        // explicitly supplied test repository), never the OS-wide temporary directory.
+        Path temporaryRoot = skills.getSkillsDir().toAbsolutePath().normalize()
+                .resolveSibling("tmp");
+        requireManagedPath(skills.getSkillsDir());
+        requireManagedPath(temporaryRoot);
+        Files.createDirectories(temporaryRoot);
+        requireManagedPath(temporaryRoot);
+        return Files.createTempDirectory(temporaryRoot, prefix);
+    }
+
+    private Path requireManagedPath(Path candidate) throws IOException {
+        Path skillsRoot = skills.getSkillsDir().toAbsolutePath().normalize();
+        ApplicationHome home = ApplicationHome.resolve();
+        if (skillsRoot.equals(home.dataDirectory().resolve("skills"))) {
+            return home.requireManaged(candidate);
+        }
+        // Explicit repositories used by tests retain the same sibling tmp layout.
+        return new DataRoot(skillsRoot.getParent()).requireManaged(candidate);
     }
 
     /** 列出 scripts/ 目录下的脚本文件（供 UI 弹窗展示以确认） */

@@ -2,8 +2,10 @@ package com.javaclaw.chat;
 
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.LongProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleLongProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 
@@ -14,8 +16,10 @@ import javafx.beans.property.StringProperty;
  * Repository 或 Node，因此状态转换可以脱离布局独立测试。</p>
  */
 public final class ThinkingPanelViewModel {
+    enum PanelStatus { IDLE, THINKING, PLANNING, EXECUTING, REPLYING }
 
-    private final StringProperty statusType = new SimpleStringProperty("idle");
+    private final ObjectProperty<PanelStatus> statusType =
+            new SimpleObjectProperty<>(PanelStatus.IDLE);
     private final StringProperty statusText = new SimpleStringProperty("等待中");
     private final StringProperty elapsed = new SimpleStringProperty("0.0s");
     private final LongProperty tokensIn = new SimpleLongProperty();
@@ -23,7 +27,7 @@ public final class ThinkingPanelViewModel {
     private final StringProperty cost = new SimpleStringProperty("¥0.00");
     private final BooleanProperty empty = new SimpleBooleanProperty(true);
 
-    StringProperty statusTypeProperty() {
+    ObjectProperty<PanelStatus> statusTypeProperty() {
         return statusType;
     }
 
@@ -51,8 +55,8 @@ public final class ThinkingPanelViewModel {
         return empty;
     }
 
-    void setStatus(String type, String text) {
-        statusType.set(type == null || type.isBlank() ? "idle" : type);
+    void setStatus(PanelStatus type, String text) {
+        statusType.set(type == null ? PanelStatus.IDLE : type);
         statusText.set(text == null ? "" : text);
     }
 

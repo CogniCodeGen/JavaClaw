@@ -5,10 +5,12 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.CredentialUsage;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.search.FlagTerm;
 import org.slf4j.Logger;
@@ -105,7 +107,7 @@ public class EmailTools {
         try {
             Session session = getSmtpSession();
             MimeMessage message = new MimeMessage(session);
-            message.setFrom(new InternetAddress(getValidFromAddress()));
+            message.setFrom(senderAddress());
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(sanitizeAddress(to)));
             message.setSubject(sanitizeSubject(subject), "UTF-8");
 
@@ -142,7 +144,7 @@ public class EmailTools {
         try {
             Session session = getSmtpSession();
             MimeMessage message = new MimeMessage(session);
-            message.setFrom(new InternetAddress(getValidFromAddress()));
+            message.setFrom(senderAddress());
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(sanitizeAddress(to)));
             if (cc != null && !cc.isBlank()) {
                 message.setRecipients(Message.RecipientType.CC, InternetAddress.parse(sanitizeAddress(cc)));
@@ -415,7 +417,14 @@ public class EmailTools {
 
             Session smtpSession = getSmtpSession();
             MimeMessage reply = (MimeMessage) originalMsg.reply(replyAll);
-            reply.setFrom(new InternetAddress(config.getFromAddress()));
+            reply.setFrom(senderAddress());
+            Address[] recipients = reply.getAllRecipients();
+            String receiptTarget = recipients == null ? "" : java.util.Arrays.stream(recipients)
+                    .filter(InternetAddress.class::isInstance)
+                    .map(InternetAddress.class::cast)
+                    .map(InternetAddress::getAddress)
+                    .filter(address -> address != null && !address.isBlank())
+                    .collect(java.util.stream.Collectors.joining(","));
 
             // 构建回复正文：新内容 + 原始邮件引用
             String originalFrom = originalMsg.getFrom() != null && originalMsg.getFrom().length > 0
@@ -435,6 +444,7 @@ public class EmailTools {
                 transport.sendMessage(reply, reply.getAllRecipients());
             }
 
+            ToolEffectCapture.noteTarget("email_reply", receiptTarget);
             String replyTo = InternetAddress.toString(reply.getRecipients(Message.RecipientType.TO));
             log.info("回复邮件成功: to={}", replyTo);
             return ToolResponse.success("email_reply",
@@ -452,13 +462,20 @@ public class EmailTools {
     /**
      * 获取有效的发件人地址：fromAddress 无效时回退到 username
      */
-    private String getValidFromAddress() {
+    private InternetAddress senderAddress() throws AddressException {
         String from = config.getFromAddress();
-        if (from == null || from.isBlank() || !from.contains("@")) {
-            log.warn("发件人地址无效（{}），回退使用登录用户名: {}", from, config.getUsername());
-            return config.getUsername();
+        if (from != null && !from.isBlank()) {
+            try {
+                InternetAddress configured = new InternetAddress(from, true);
+                configured.validate();
+                return configured;
+            } catch (AddressException invalidConfiguredAddress) {
+                log.warn("发件人地址无效，回退使用登录用户名");
+            }
         }
-        return from;
+        InternetAddress account = new InternetAddress(config.getUsername(), true);
+        account.validate();
+        return account;
     }
 
     /**

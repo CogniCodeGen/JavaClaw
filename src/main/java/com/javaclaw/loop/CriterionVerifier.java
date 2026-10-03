@@ -95,7 +95,9 @@ public final class CriterionVerifier {
     /**
      * 输出包含：predicate 作为<b>字面关键词</b>做子串匹配。
      *
-     * <p>不按正则编译——predicate 由 GoalManager 分解产出，定义就是关键词（见 GoalPrompts），
+     * <p>不按正则编译——此类准则只能来自宿主明确接收的用户结构化内容条件；
+     * {@link LoopCriterionPolicy} 会删除 GoalManager 生成的同类准则。
+     * predicate 的定义是字面关键词，
      * 字面量里的元字符按正则解释会两头出错：{@code 版本 3.14} 的 {@code .} 匹配任意字符
      * （输出含 {@code 3714} 也算过 → 假完成）；含中缀 {@code $} 的合法正则永远匹配不上
      * （准则永不满足 → 烧满轮数上限）。假阳性违背「绝不默认放行」，字面匹配两种都杜绝。</p>

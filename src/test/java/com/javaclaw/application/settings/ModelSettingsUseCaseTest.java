@@ -49,7 +49,7 @@ class ModelSettingsUseCaseTest {
         Tier disabledWithStaleValues = new Tier(
                 false, "OpenAI", "not-a-url", "stale", "secret", true);
         Tier enabled = new Tier(
-                true, "Ollama", "http://localhost:11434", "qwen3:8b", "", false);
+                true, "ollama", "http://localhost:11434", "qwen3:8b", "", false);
 
         useCase.saveTiers(new TierSettings(disabledWithStaleValues, enabled));
 
@@ -71,7 +71,7 @@ class ModelSettingsUseCaseTest {
         FakeProbePort probes = new FakeProbePort();
         ModelSettingsUseCase useCase = new ModelSettingsUseCase(settings, probes);
         EmbeddingSettings changed = new EmbeddingSettings(
-                true, "OpenAI", "https://embeddings.example/v1", "key",
+                true, "openai", "https://embeddings.example/v1", "key",
                 "text-embedding-3-small", 1024, 8, 0.45);
 
         assertTrue(useCase.probeModel(initial.model()).succeeded());
@@ -81,9 +81,41 @@ class ModelSettingsUseCaseTest {
         assertEquals(changed, probes.probedEmbedding);
         assertEquals(initial.embedding(), probes.persistedEmbedding);
         assertThrows(ValidationException.class, () -> useCase.probeEmbedding(
-                new EmbeddingSettings(true, "OpenAI", "file:///tmp/model", "", "model",
+                new EmbeddingSettings(true, "openai", "file:///tmp/model", "", "model",
                         0, 0, Double.NaN)));
         assertEquals(1, probes.embeddingCalls);
+    }
+
+    @Test
+    void providerIdControlsManagedValidationAndDisplayLabelCannotEnterMachineState() {
+        FakeSettingsPort settings = new FakeSettingsPort(snapshot());
+        ModelSettingsUseCase useCase = new ModelSettingsUseCase(settings, new FakeProbePort());
+        ModelSettings managed = new ModelSettings("deliverance", "", "", "", true, 4096,
+                "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2, "profile-id");
+
+        useCase.saveModel(managed);
+        assertEquals(managed, settings.snapshot.model());
+        assertEquals(1, settings.modelSaves);
+
+        ModelSettings displayLabel = new ModelSettings("Deliverance（本地托管）", "", "", "", true,
+                4096, "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2, "profile-id");
+        assertThrows(ValidationException.class, () -> useCase.saveModel(displayLabel));
+        assertEquals(1, settings.modelSaves);
+
+        Tier managedTier = new Tier(true, "deliverance", "", "", "", false, "profile-id");
+        useCase.saveTiers(new TierSettings(managedTier,
+                new Tier(false, "", "", "", "", false)));
+        assertEquals(managedTier, settings.snapshot.tiers().normal());
+        assertThrows(ValidationException.class, () -> useCase.saveTiers(new TierSettings(
+                new Tier(true, "Deliverance（本地托管）", "", "", "", false, "profile-id"),
+                new Tier(false, "", "", "", "", false))));
+
+        EmbeddingSettings managedEmbedding = new EmbeddingSettings(true, "deliverance", "", "", "",
+                1024, 5, 0.35, "profile-id");
+        useCase.saveEmbedding(managedEmbedding);
+        assertEquals(managedEmbedding, settings.snapshot.embedding());
+        assertThrows(ValidationException.class, () -> useCase.saveEmbedding(new EmbeddingSettings(
+                true, "Deliverance（本地托管）", "", "", "", 1024, 5, 0.35, "profile-id")));
     }
 
     private static Snapshot snapshot() {
@@ -91,13 +123,13 @@ class ModelSettingsUseCaseTest {
         return new Snapshot(
                 validModel("https://api.example/v1", "chat-model"),
                 new TierSettings(disabled, disabled),
-                new EmbeddingSettings(true, "OpenAI", "https://api.example/v1", "key",
+                new EmbeddingSettings(true, "openai", "https://api.example/v1", "key",
                         "embedding-model", 1024, 5, 0.35),
                 "fake-config.json");
     }
 
     private static ModelSettings validModel(String baseUrl, String model) {
-        return new ModelSettings("OpenAI", baseUrl, model, "key", true, 4096,
+        return new ModelSettings("openai", baseUrl, model, "key", true, 4096,
                 "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2);
     }
 

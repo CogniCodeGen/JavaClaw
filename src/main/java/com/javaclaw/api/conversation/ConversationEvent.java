@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.javaclaw.agent.evaluation.EvaluationResult;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 
 import java.util.Objects;
 
@@ -33,8 +34,31 @@ public interface ConversationEvent {
     /** 编排器普通回复增量 */
     record Reply(String chunk) implements ConversationEvent {}
 
-    /** 工具调用结果（工具名 + 结果文本） */
-    record ToolResult(String toolName, String result) implements ConversationEvent {}
+    /** 工具调用开始；invocationId 在持久化工具事件之间关联同一次调用。 */
+    record ToolStarted(String toolName, String invocationId, String input) implements ConversationEvent {}
+
+    /** 工具调用返回。结构化结果用于呈现明确的目录调用状态。 */
+    record ToolResult(String toolName, String result, String invocationId,
+                      JsonNode output, ToolExecutionStatus status) implements ConversationEvent {
+        public ToolResult {
+            output = output == null ? NullNode.getInstance() : output.deepCopy();
+            status = status == null ? ToolExecutionStatus.UNKNOWN : status;
+        }
+
+        public ToolResult(String toolName, String result) {
+            this(toolName, result, "", NullNode.getInstance(), ToolExecutionStatus.UNKNOWN);
+        }
+
+        public ToolResult(String toolName, String result, String invocationId, JsonNode output) {
+            this(toolName, result, invocationId, output, ToolExecutionStatus.UNKNOWN);
+        }
+
+        @Override public JsonNode output() { return output.deepCopy(); }
+    }
+
+    /** 工具调用本身失败；效果收据由独立事件呈现。 */
+    record ToolFailed(String toolName, String invocationId, String message)
+            implements ConversationEvent {}
 
     /** 进度提示（如"协调者正在分析任务..."） */
     record Hint(String text) implements ConversationEvent {}

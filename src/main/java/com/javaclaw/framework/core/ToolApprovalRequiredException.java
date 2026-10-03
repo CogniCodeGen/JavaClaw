@@ -16,9 +16,19 @@ public final class ToolApprovalRequiredException extends RuntimeException {
             String fingerprint,
             String kind,
             String description) {
+        this(toolName, arguments, fingerprint, kind, description, false);
+    }
+
+    public ToolApprovalRequiredException(
+            String toolName,
+            JsonNode arguments,
+            String fingerprint,
+            String kind,
+            String description,
+            boolean trustedContextRead) {
         super("human approval required for tool " + toolName);
         this.challenge = new ToolApprovalChallenge(
-                toolName, arguments, fingerprint, kind, description);
+                toolName, arguments, fingerprint, kind, description, trustedContextRead);
     }
 
     public String toolName() { return challenge.tool(); }

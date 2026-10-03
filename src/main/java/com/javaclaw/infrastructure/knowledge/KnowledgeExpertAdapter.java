@@ -1,7 +1,6 @@
 package com.javaclaw.infrastructure.knowledge;
 
 import com.javaclaw.agent.expert.KnowledgeExpert;
-import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.Document;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.Health;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.HealthListener;
@@ -56,12 +55,20 @@ public final class KnowledgeExpertAdapter implements KnowledgePort {
 
     @Override
     public boolean importFile(Path file, Scope scope) {
-        return ToolResponse.isSuccess(expert.importFile(file.toString(), expertScope(scope)));
+        try (var capture = com.javaclaw.framework.spi.ToolEffectCapture.begin(
+                "knowledge_import_file")) {
+            expert.importFile(file.toString(), expertScope(scope));
+            return capture.signal() == com.javaclaw.framework.spi.ToolEffectCapture.Signal.SUCCESS;
+        }
     }
 
     @Override
     public boolean importText(String title, String text, Scope scope) {
-        return ToolResponse.isSuccess(expert.importText(text, title, expertScope(scope)));
+        try (var capture = com.javaclaw.framework.spi.ToolEffectCapture.begin(
+                "knowledge_import_text")) {
+            expert.importText(text, title, expertScope(scope));
+            return capture.signal() == com.javaclaw.framework.spi.ToolEffectCapture.Signal.SUCCESS;
+        }
     }
 
     @Override public void setDocumentEnabled(String name, boolean enabled) {

@@ -1,6 +1,7 @@
 package com.javaclaw.application.task;
 
 import com.javaclaw.task.sdd.run.SddTaskState;
+import com.javaclaw.task.sdd.SddProgress;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 
 import java.util.List;
@@ -50,7 +51,8 @@ public interface SddTaskApplicationService {
 
     sealed interface Event permits Event.Changed, Event.Log {
         record Changed(Task task) implements Event {}
-        record Log(String taskId, String taskTitle, String message) implements Event {}
+        record Log(String taskId, String taskTitle, String message,
+                   SddProgress.LogKind kind) implements Event {}
     }
 
     record CreateCommand(
@@ -89,7 +91,17 @@ public interface SddTaskApplicationService {
             long totalInputTokens,
             long totalOutputTokens,
             Map<String, Long> phaseInputTokens,
-            Map<String, Long> phaseOutputTokens) {
+            Map<String, Long> phaseOutputTokens,
+            com.javaclaw.framework.api.TaskResult taskResult) {
+        public Task(String id, String title, String description, String workDir,
+                    String capabilities, long tokenBudget, String notificationChannel,
+                    String createdAt, String updatedAt, SddTaskState state, int progress,
+                    String result, long totalInputTokens, long totalOutputTokens,
+                    Map<String, Long> phaseInputTokens, Map<String, Long> phaseOutputTokens) {
+            this(id, title, description, workDir, capabilities, tokenBudget,
+                    notificationChannel, createdAt, updatedAt, state, progress, result,
+                    totalInputTokens, totalOutputTokens, phaseInputTokens, phaseOutputTokens, null);
+        }
         public Task {
             phaseInputTokens = Map.copyOf(phaseInputTokens == null ? Map.of() : phaseInputTokens);
             phaseOutputTokens = Map.copyOf(phaseOutputTokens == null ? Map.of() : phaseOutputTokens);

@@ -24,9 +24,11 @@ class SpecStoreBehaviorTest {
     void changeDocumentsRoundTripAndRemainWorkspaceIsolated() throws Exception {
         Path workDirectory = Files.createDirectories(temporaryDirectory.resolve("project"));
         SddTestDatabase database = new SddTestDatabase(temporaryDirectory.resolve("database"));
-        SpecStore first = new SpecStore(workDirectory.toString(), database.jdbc(), "workspace-a");
+        SpecStore first = new SpecStore(workDirectory.toString(), database.jdbc(),
+                "workspace-a", database.json().mapper());
         SpecStore otherWorkspace = new SpecStore(
-                workDirectory.resolve(".").toString(), database.jdbc(), "workspace-b");
+                workDirectory.resolve(".").toString(), database.jdbc(), "workspace-b",
+                database.json().mapper());
 
         Proposal proposal = new Proposal("why", "what", "outside");
         Capability capability = capability("search", "search works");
@@ -62,7 +64,8 @@ class SpecStoreBehaviorTest {
     void taskUpdatesSupportCheckingAppendingSplittingAndArchiving() throws Exception {
         Path workDirectory = Files.createDirectories(temporaryDirectory.resolve("tasks-project"));
         SddTestDatabase database = new SddTestDatabase(temporaryDirectory.resolve("tasks-db"));
-        SpecStore store = new SpecStore(workDirectory.toString(), database.jdbc(), "workspace");
+        SpecStore store = new SpecStore(workDirectory.toString(), database.jdbc(),
+                "workspace", database.json().mapper());
 
         assertFalse(store.checkTask("missing", 1));
         assertFalse(store.appendTasks("missing", null));
@@ -104,10 +107,57 @@ class SpecStoreBehaviorTest {
     }
 
     @Test
+    void markdownEditsCannotChangePersistedAcceptanceOrTaskState() throws Exception {
+        Path workDirectory = Files.createDirectories(temporaryDirectory.resolve("structured-project"));
+        SddTestDatabase database = new SddTestDatabase(temporaryDirectory.resolve("structured-db"));
+        SpecStore store = new SpecStore(workDirectory.toString(), database.jdbc(),
+                "workspace", database.json().mapper());
+        assertTrue(store.writeCapabilitySpecs("change", List.of(capability("core", "works"))));
+        assertTrue(store.writeTasks("change", List.of(
+                new TaskItem(1, "implement", List.of(), "run tests", false))));
+        assertTrue(store.writeProposal("change", "Title", new Proposal(
+                "original why", "original change", null)));
+
+        database.jdbc().update("""
+                UPDATE sdd_spec_docs SET doc_text = ?
+                WHERE workspace_id = ? AND slug = ? AND doc_path = ?
+                """, "# 能力：core\n## 需求：forged\n### 场景：forged\n判据：[output_contains] echo done ||| done",
+                "workspace", "change", "specs/core/spec.md");
+        database.jdbc().update("""
+                UPDATE sdd_spec_docs SET doc_text = ?
+                WHERE workspace_id = ? AND slug = ? AND doc_path = ?
+                """, "- [x] 1. implement", "workspace", "change", "tasks.md");
+        database.jdbc().update("""
+                UPDATE sdd_spec_docs SET doc_text = ?
+                WHERE workspace_id = ? AND slug = ? AND doc_path = ?
+                """, "## 为什么\nforged", "workspace", "change", "proposal.md");
+
+        OpenSpecChange loaded = store.readChange("change", "id", "title");
+        assertEquals(Criterion.FREEFORM,
+                loaded.allScenarios().getFirst().criterion().normalizedType());
+        assertFalse(loaded.tasks().getFirst().done());
+        assertEquals("original why", loaded.proposal().why());
+
+        database.jdbc().update("""
+                UPDATE sdd_spec_docs SET doc_text = ?
+                WHERE workspace_id = ? AND slug = ? AND doc_path = ?
+                """, "{\"version\":2,\"capabilities\":[]}", "workspace", "change", "specs.json");
+        assertTrue(store.readChange("change", "id", "title").allScenarios().isEmpty(),
+                "未知版本的结构化快照必须 fail closed");
+        database.jdbc().update("""
+                UPDATE sdd_spec_docs SET doc_text = ?
+                WHERE workspace_id = ? AND slug = ? AND doc_path = ?
+                """, "{\"version\":2,\"proposal\":{}}", "workspace", "change", "proposal.json");
+        assertNull(store.readChange("change", "id", "title").proposal(),
+                "未知提案版本不能回退解析展示文案");
+    }
+
+    @Test
     void invalidInputsAndMissingSchemaFailWithoutPublishingPartialState() {
         JdbcTemplate missingSchema = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:spec-missing-" + System.nanoTime() + ";DB_CLOSE_DELAY=-1"));
-        SpecStore broken = new SpecStore(temporaryDirectory.toString(), missingSchema, "workspace");
+        SpecStore broken = new SpecStore(temporaryDirectory.toString(), missingSchema,
+                "workspace", new com.fasterxml.jackson.databind.ObjectMapper());
 
         assertFalse(broken.writeDesign("change", null));
         assertFalse(broken.writeDesign("change", " "));
@@ -120,7 +170,8 @@ class SpecStoreBehaviorTest {
         assertTrue(empty.tasks().isEmpty());
         assertTrue(empty.capabilities().isEmpty());
 
-        SpecStore unavailable = new SpecStore(null, missingSchema, "workspace");
+        SpecStore unavailable = new SpecStore(null, missingSchema, "workspace",
+                new com.fasterxml.jackson.databind.ObjectMapper());
         assertFalse(unavailable.available());
         assertFalse(unavailable.writeDesign("change", "design"));
         assertFalse(unavailable.writeTasks("change", List.of()));

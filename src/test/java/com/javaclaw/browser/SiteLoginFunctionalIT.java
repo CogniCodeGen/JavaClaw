@@ -2,7 +2,7 @@ package com.javaclaw.browser;
 
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ToastRequest;
@@ -34,9 +34,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -57,7 +57,6 @@ class SiteLoginFunctionalIT {
     private static HttpServer server;
     private static String baseUrl;
     private static org.springframework.context.annotation.AnnotationConfigApplicationContext root;
-    private static String previousDataDirectory;
 
     @TempDir
     static Path sharedDataDirectory;
@@ -72,10 +71,7 @@ class SiteLoginFunctionalIT {
     @BeforeAll
     static void startTestSite() throws IOException {
         // 与真实应用启动顺序一致：所有工作区维度配置必须在 WorkspaceManager.init() 后加载。
-        previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
-        System.setProperty(DataRoot.DATA_DIR_PROPERTY,
-                sharedDataDirectory.resolve("data").toString());
-        root = ApplicationContexts.createRoot(DataRoot.resolve());
+        root = ApplicationContexts.createRoot(new DataRoot(sharedDataDirectory.resolve("data")));
         server = HttpServer.create(new InetSocketAddress(TEST_HOST, 0), 0);
         server.createContext("/", SiteLoginFunctionalIT::handleRequest);
         server.start();
@@ -89,11 +85,6 @@ class SiteLoginFunctionalIT {
         }
         if (root != null) {
             root.close();
-        }
-        if (previousDataDirectory == null) {
-            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
-        } else {
-            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
         }
     }
 
@@ -126,10 +117,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort firstLogin = new AutomatedLoginPort(firstBrowser, true, true);
             ToolConfirmationManager.setPort(firstLogin);
 
-            String firstResult = siteTools(
-                    firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
+            String firstResult = expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(firstBrowser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertTrue(firstResult.contains("站点会话已保存"), firstResult);
             assertEquals(1, firstLogin.loginPrompts.get());
             assertEquals(1, firstLogin.savePrompts.get());
@@ -153,10 +143,9 @@ class SiteLoginFunctionalIT {
                     secondBrowser, false, false);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String secondResult = siteTools(
-                    secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
+            String secondResult = expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(secondBrowser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertTrue(secondResult.contains("已恢复"), secondResult);
             assertEquals(0, shouldNotPrompt.loginPrompts.get(),
                     "恢复成功时不应再次要求用户登录");
@@ -175,10 +164,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort declineSave = new AutomatedLoginPort(firstBrowser, true, false);
             ToolConfirmationManager.setPort(declineSave);
 
-            String firstResult = siteTools(
-                    firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
+            String firstResult = expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(firstBrowser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertTrue(firstResult.contains("未保存站点"), firstResult);
             assertEquals(1, declineSave.loginPrompts.get());
             assertEquals(1, declineSave.savePrompts.get());
@@ -192,10 +180,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort loginAgain = new AutomatedLoginPort(secondBrowser, true, false);
             ToolConfirmationManager.setPort(loginAgain);
 
-            String secondResult = siteTools(
-                    secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(secondBrowser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertEquals(1, loginAgain.loginPrompts.get(),
                     "未保存后使用全新浏览器应再次进入交互式登录");
         } finally {
@@ -211,10 +198,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort failedLogin = new AutomatedLoginPort(browser, false, true);
             ToolConfirmationManager.setPort(failedLogin);
 
-            String result = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertFalse(ToolResponse.isSuccess(result), result);
+            String result = expectStatus("web_navigate", ToolEffectCapture.Signal.ERROR,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertTrue(result.contains("仍显示登录状态"), result);
             assertEquals(1, failedLogin.loginPrompts.get());
             assertEquals(0, failedLogin.savePrompts.get(),
@@ -246,11 +232,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE)
-                    .navigate(baseUrl + "/password-settings");
-
-            assertTrue(ToolResponse.isSuccess(result), result);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/password-settings"));
             assertEquals(0, shouldNotPrompt.loginPrompts.get());
             assertEquals("PASSWORD_SETTINGS",
                     browser.getActivePage().locator("#result").textContent());
@@ -267,20 +251,20 @@ class SiteLoginFunctionalIT {
         try {
             PlaywrightBrowserTools firstTurn = browserBundle(
                     browser, ToolCallOrigin.INTERACTIVE);
-            String navigation = siteTools(firstTurn).navigate(baseUrl + "/readable");
-            assertTrue(ToolResponse.isSuccess(navigation), navigation);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(firstTurn).navigate(baseUrl + "/readable"));
             firstTurn.close();
 
             assertTrue(browser.isRunning(),
                     "结束一次推理工具束时不得关闭交互会话浏览器");
             PlaywrightBrowserTools resumedTurn = browserBundle(
                     browser, ToolCallOrigin.INTERACTIVE);
-            String body = readTools(resumedTurn).getText("body");
-            String pre = readTools(resumedTurn).getText("pre");
+            String body = expectStatus("web_get_text", ToolEffectCapture.Signal.SUCCESS,
+                    () -> readTools(resumedTurn).getText("css:body"));
+            String pre = expectStatus("web_get_text", ToolEffectCapture.Signal.SUCCESS,
+                    () -> readTools(resumedTurn).getText("css:pre"));
 
-            assertTrue(ToolResponse.isSuccess(body), body);
             assertTrue(body.contains("WEATHER_OK"), body);
-            assertTrue(ToolResponse.isSuccess(pre), pre);
             assertTrue(pre.contains("WEATHER_OK"), pre);
             assertTrue(readTools(resumedTurn).getUrl().contains("/readable"),
                     "审批恢复后的工具束应继续使用原页面");
@@ -309,10 +293,9 @@ class SiteLoginFunctionalIT {
                     baseUrl + "/login",
                     new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
-            String result = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).siteLoginNow("", "", "");
-
-            assertTrue(ToolResponse.isSuccess(result), result);
+            String result = expectStatus("site_login_now", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .siteLoginNow("", "", ""));
             assertTrue(result.contains("会话已保存"), result);
             assertEquals(0, saveSession.loginPrompts.get(),
                     "账号密码自动登录不应走手动登录提示");
@@ -344,10 +327,9 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort refreshSession = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(refreshSession);
 
-            String result = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(result), result);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertEquals(1, refreshSession.loginPrompts.get());
             assertEquals(1, refreshSession.savePrompts.get());
             assertTrue(manager.readSession(credential.getId()).contains(STORAGE_KEY),
@@ -365,10 +347,9 @@ class SiteLoginFunctionalIT {
             LoginThenCancelPort cancel = new LoginThenCancelPort(browser);
             ToolConfirmationManager.setPort(cancel);
 
-            String result = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
-
-            assertFalse(ToolResponse.isSuccess(result), result);
+            String result = expectStatus("web_navigate", ToolEffectCapture.Signal.ERROR,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/private"));
             assertTrue(result.contains("用户取消"), result);
             assertEquals(1, cancel.loginPrompts.get());
             assertEquals(0, cancel.savePrompts.get());
@@ -444,9 +425,9 @@ class SiteLoginFunctionalIT {
         try {
             browser.activateScope(scopeA);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountA.getId()));
-            String resultA = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
-            assertTrue(ToolResponse.isSuccess(resultA), resultA);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/identity"));
             assertEquals("ACCOUNT_A",
                     browser.getActivePage().locator("#result").textContent());
             assertEquals(accountA.getId(),
@@ -454,9 +435,9 @@ class SiteLoginFunctionalIT {
 
             browser.activateScope(scopeB);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountB.getId()));
-            String resultB = siteTools(
-                    browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
-            assertTrue(ToolResponse.isSuccess(resultB), resultB);
+            expectStatus("web_navigate", ToolEffectCapture.Signal.SUCCESS,
+                    () -> siteTools(browser, ToolCallOrigin.INTERACTIVE)
+                            .navigate(baseUrl + "/identity"));
             assertEquals("ACCOUNT_B",
                     browser.getActivePage().locator("#result").textContent());
             assertEquals(accountB.getId(),
@@ -481,15 +462,22 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = siteTools(browser, origin)
-                    .navigate(baseUrl + "/private");
-
-            assertTrue(ToolResponse.isSuccess(result), result);
+            String result = expectStatus("web_navigate", ToolEffectCapture.Signal.PENDING,
+                    () -> siteTools(browser, origin).navigate(baseUrl + "/private"));
             assertTrue(result.contains(expectedHint), result);
             assertEquals(0, shouldNotPrompt.loginPrompts.get());
             assertEquals(0, shouldNotPrompt.savePrompts.get());
         } finally {
             browser.shutdown();
+        }
+    }
+
+    private static String expectStatus(String tool, ToolEffectCapture.Signal expected,
+                                       Supplier<String> invocation) {
+        try (var capture = ToolEffectCapture.begin(tool)) {
+            String display = invocation.get();
+            assertEquals(expected, capture.signal(), display);
+            return display;
         }
     }
 
@@ -678,6 +666,10 @@ class SiteLoginFunctionalIT {
                 return;
             }
             sendHtml(exchange, 401, pageWithForm("账号或密码错误"));
+            return;
+        }
+        if (hasAuthenticatedCookie(exchange)) {
+            redirect(exchange, "/private");
             return;
         }
         sendHtml(exchange, 200, pageWithForm(""));

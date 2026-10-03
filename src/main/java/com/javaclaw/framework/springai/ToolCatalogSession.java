@@ -43,9 +43,11 @@ final class ToolCatalogSession implements FrameworkTool {
     private final StepContextPolicy policy;
     private final ToolDescriptor descriptor;
     private final List<String> authorizedNames;
+    private final List<FrameworkTool> authorizedTools;
     private List<ToolCallback> callbacks = List.of();
     private Map<String, ToolCallback> authorized = Map.of();
     private ToolCallback catalogCallback;
+    private HarnessDecisionToolCallback decisionCallback;
     private boolean directFit;
     private Boolean catalogAllowed;
     private boolean businessToolCompleted;
@@ -65,22 +67,26 @@ final class ToolCatalogSession implements FrameworkTool {
         }
         List<FrameworkTool> allowedTools = runTools.stream()
                 .filter(this::allowedByToolPolicy).toList();
+        authorizedTools = List.copyOf(allowedTools);
         authorizedNames = allowedTools.stream().map(tool -> tool.descriptor().name()).toList();
         try {
             JsonNode schema = json.readTree("""
                     {"type":"object","properties":{
-                      "action":{"type":"string","enum":["list","activate"]},
+                      "action":{"type":"string","enum":["list","activate"],"default":"list"},
                       "query":{"type":"string"},"group":{"type":"string"},
                       "page":{"type":"integer","minimum":1},
                       "names":{"type":"array","minItems":1,"items":{"type":"string"}}
-                    },"required":["action"],"additionalProperties":false}
+                    },"additionalProperties":false}
                     """);
             // Use a group with an allowed tool so group-scoped policies can admit discovery.
             String group = (allowedTools.isEmpty() ? runTools : allowedTools)
                     .getFirst().descriptor().group();
             descriptor = new ToolDescriptor(NAME,
                     "List authorized tools by page and activate tool names for the next model call. "
-                            + "Use action=list with optional query, group and page; use action=activate with names.",
+                            + "For a read-only list, omit action or use action=list with optional query, group and page. "
+                            + "Group must exactly match a listed authorized group (desktop tools use desktop-session). "
+                            + "To activate names, explicitly use action=activate with exact listed names. "
+                            + "Activation is atomic and limited by tool count and combined schema size.",
                     schema, group, PermissionSet.NONE, true);
         } catch (Exception failure) {
             throw new IllegalStateException("cannot construct tool catalog schema", failure);
@@ -105,9 +111,14 @@ final class ToolCatalogSession implements FrameworkTool {
         for (ToolCallback callback : allCallbacks) {
             String name = callback.getToolDefinition().name();
             if (name.equals(NAME)) catalogCallback = callback;
+            else if (callback instanceof HarnessDecisionToolCallback trusted) {
+                if (decisionCallback != null) throw new IllegalStateException("duplicate harness decision callback");
+                decisionCallback = trusted;
+            }
             else if (authorizedNames.contains(name)) allowed.put(name, callback);
         }
-        if (catalogCallback == null || allowed.size() != authorizedNames.size()) {
+        if (catalogCallback == null || decisionCallback == null
+                || allowed.size() != authorizedNames.size()) {
             throw new IllegalStateException("tool catalog callbacks do not match run tools");
         }
         authorized = Map.copyOf(allowed);
@@ -133,7 +144,14 @@ final class ToolCatalogSession implements FrameworkTool {
 
     @Override
     public JsonNode execute(JsonNode arguments, ToolExecutionContext context) {
-        return switch (arguments.path("action").asText()) {
+        String action = arguments.path("action").asText("");
+        if (action.isEmpty()) {
+            if (arguments.has("names")) {
+                return error("action=activate is required when names are supplied");
+            }
+            action = "list";
+        }
+        return switch (action) {
             case "list" -> list(arguments);
             case "activate" -> activate(arguments);
             default -> error("action must be list or activate");
@@ -142,55 +160,79 @@ final class ToolCatalogSession implements FrameworkTool {
 
     private JsonNode list(JsonNode arguments) {
         int page = arguments.path("page").asInt(1);
-        String query = arguments.path("query").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+        String query = arguments.path("query").asText("").trim();
         String group = arguments.path("group").asText("").trim();
-        if (page < 1 || query.length() > 128 || group.length() > 128) {
-            return error("page must be positive and query/group at most 128 characters");
+        if (arguments.has("names")) {
+            return error("list", "action=activate is required when names are supplied");
         }
-        List<ToolCallback> matches = authorizedNames.stream().map(authorized::get)
-                .filter(callback -> callback != null)
-                .filter(callback -> group.isEmpty() || group.equals(group(callback)))
-                .filter(callback -> query.isEmpty()
-                        || callback.getToolDefinition().name().toLowerCase(java.util.Locale.ROOT).contains(query)
-                        || callback.getToolDefinition().description()
-                                .toLowerCase(java.util.Locale.ROOT).contains(query))
-                .toList();
-        List<ToolCatalogPages.Entry> entries = matches.stream().map(callback ->
-                new ToolCatalogPages.Entry(callback.getToolDefinition().name(), group(callback),
-                        callback.getToolDefinition().description())).toList();
-        return ToolCatalogPages.list(entries, page, policy.maxToolResultCharacters());
+        if (page < 1 || query.length() > 128 || group.length() > 128) {
+            return error("list", "page must be positive and query/group at most 128 characters");
+        }
+        List<ToolCallback> allowed = authorizedCallbacks();
+        if (!group.isEmpty() && groupDirectory(allowed).stream()
+                .noneMatch(summary -> summary.name().equals(group))) {
+            return invalidGroupResult(allowed, group, policy.maxToolResultCharacters());
+        }
+        return ToolCatalogPages.list(listDirectory(allowed, query, group),
+                page, policy.maxToolResultCharacters());
     }
 
     private JsonNode activate(JsonNode arguments) {
-        JsonNode values = arguments.path("names");
-        if (!values.isArray() || values.isEmpty()) return error("names must be a nonempty array");
-        Set<String> names = new LinkedHashSet<>();
-        for (JsonNode value : values) {
-            if (!value.isTextual() || !names.add(value.asText())) {
-                return error("names must contain unique tool names");
-            }
-            if (!authorized.containsKey(value.asText())) {
-                return error("unknown or unauthorized tool name: " + value.asText());
-            }
-        }
         int capacity = policy.maxTools();
         if (request.plan().descriptor().onDemandContextPolicy() != null) {
             capacity = Math.min(capacity,
                     request.plan().descriptor().onDemandContextPolicy().selectedTools());
         }
-        if (names.size() > capacity) {
-            return error("activation exceeds tool count budget: " + names.size() + " > " + capacity);
+        return activateSelection(arguments, authorized, capacity,
+                policy.maxToolSchemaCharacters(), policy.maxToolResultCharacters());
+    }
+
+    /** Validate a complete activation before any durable completion can make it visible. */
+    static ObjectNode activateSelection(JsonNode arguments, Map<String, ToolCallback> authorized,
+            int maxTools, int maxSchemaCharacters, int maxResultCharacters) {
+        JsonNode values = arguments.path("names");
+        if (!values.isArray() || values.isEmpty()) {
+            return error("activate", "names must be a nonempty array", maxResultCharacters);
+        }
+        Set<String> names = new LinkedHashSet<>();
+        for (JsonNode value : values) {
+            if (!value.isTextual() || !names.add(value.asText())) {
+                return error("activate", "names must contain unique tool names", maxResultCharacters);
+            }
+            if (!authorized.containsKey(value.asText())) {
+                ObjectNode failure = error("activate",
+                        "unknown or unauthorized tool name: " + value.asText(), maxResultCharacters);
+                putIfFits(failure, "hint", "Use action=list to inspect exact names authorized for this Run",
+                        maxResultCharacters);
+                return failure;
+            }
+        }
+        if (names.size() > maxTools) {
+            ObjectNode failure = error("activate",
+                    "activation exceeds tool count budget: " + names.size() + " > " + maxTools,
+                    maxResultCharacters);
+            putIfFits(failure, "requestedTools", names.size(), maxResultCharacters);
+            putIfFits(failure, "maxTools", maxTools, maxResultCharacters);
+            return failure;
         }
         int characters = 0;
         for (String name : names) {
             int schema = SpringAiToolCatalog.schemaCharacters(authorized.get(name));
-            if (schema > policy.maxToolSchemaCharacters()) {
-                return error("tool schema exceeds model context policy: " + name);
+            if (schema > maxSchemaCharacters) {
+                ObjectNode failure = error("activate", "tool schema exceeds model context policy: " + name,
+                        maxResultCharacters);
+                putIfFits(failure, "requestedSchemaCharacters", schema, maxResultCharacters);
+                putIfFits(failure, "maxSchemaCharacters", maxSchemaCharacters, maxResultCharacters);
+                return failure;
             }
             characters += schema;
         }
-        if (characters > policy.maxToolSchemaCharacters()) {
-            return error("activated tool schemas exceed model context policy");
+        if (characters > maxSchemaCharacters) {
+            ObjectNode failure = error("activate", "activated tool schemas exceed model context policy",
+                    maxResultCharacters);
+            putIfFits(failure, "requestedSchemaCharacters", characters, maxResultCharacters);
+            putIfFits(failure, "maxSchemaCharacters", maxSchemaCharacters, maxResultCharacters);
+            return failure;
         }
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         result.put("action", "activate");
@@ -198,8 +240,9 @@ final class ToolCatalogSession implements FrameworkTool {
         ArrayNode activated = result.putArray("activated");
         names.forEach(activated::add);
         result.put("note", "These tools are available in the next model call.");
-        if (result.toString().length() > policy.maxToolResultCharacters()) {
-            return error("activation result exceeds the tool result character budget");
+        if (result.toString().length() > maxResultCharacters) {
+            return error("activate", "activation result exceeds the tool result character budget",
+                    maxResultCharacters);
         }
         return result;
     }
@@ -218,7 +261,8 @@ final class ToolCatalogSession implements FrameworkTool {
                 } else if (kind.equals("TOOL")) {
                     JsonNode input = payload.path("input");
                     startedTools.put(stepId, new StartedTool(input.path("tool").asText(),
-                            input.path("arguments").path("action").asText()));
+                            input.path("arguments").path("action").asText(),
+                            input.path("trustedContextRead").asBoolean(false)));
                 }
                 continue;
             }
@@ -237,7 +281,8 @@ final class ToolCatalogSession implements FrameworkTool {
                     JsonNode output = payload.path("output");
                     try {
                         applyToolCompletion(started.name(), output.path("rawOutput"),
-                                output.path("waitingInput").asBoolean(false));
+                                output.path("waitingInput").asBoolean(false),
+                                started.trustedContextRead());
                     } catch (IllegalStateException invalid) {
                         throw new ToolRecoveryRequiredException(stepId,
                                 "persisted tool completion cannot be restored: "
@@ -254,7 +299,8 @@ final class ToolCatalogSession implements FrameworkTool {
         }
     }
 
-    private void applyToolCompletion(String name, JsonNode output, boolean waitingInput) {
+    private void applyToolCompletion(String name, JsonNode output,
+            boolean waitingInput, boolean trustedContextRead) {
         if (waitingInput || name.isBlank()) return;
         if (name.equals(NAME)) {
             if (!output.path("action").asText().equals("activate")
@@ -278,7 +324,8 @@ final class ToolCatalogSession implements FrameworkTool {
             }
             activeNames = List.copyOf(names);
             activeModelSteps.clear();
-        } else if (!name.startsWith("framework_context_")) {
+        } else if (!trustedContextRead
+                && !name.equals(HarnessDecisionToolCallback.NAME)) {
             businessToolCompleted = true;
         }
     }
@@ -289,30 +336,25 @@ final class ToolCatalogSession implements FrameworkTool {
         List<ToolCallback> direct = authorizedNames.stream().map(authorized::get).toList();
         int remaining = request.control().remainingToolCalls();
         if (directFit) {
-            if (remaining == 0) return new ToolCatalogProjection(List.of(), 0, direct.size());
-            return new ToolCatalogProjection(direct,
+            if (remaining == 0) return withControl(List.of(), 0, direct.size());
+            return withControl(direct,
                     direct.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum(), direct.size());
         }
         if (remaining == 0) {
-            if (businessToolCompleted) return new ToolCatalogProjection(List.of(), 0, authorizedNames.size() + 1);
-            throw insufficientToolBudget();
+            return withControl(List.of(), 0, authorizedNames.size() + 1);
         }
         if (activeNames.isEmpty() && remaining < 2) {
-            if (businessToolCompleted) {
-                // A target result can still be used for a final answer, but another
-                // catalog activation and target call cannot fit in the Run budget.
-                return new ToolCatalogProjection(List.of(), 0, authorizedNames.size() + 1);
-            }
-            throw insufficientToolBudget();
+            // The model can still submit a structured blocked/needs-input decision.
+            return withControl(List.of(), 0, authorizedNames.size() + 1);
         }
         List<ToolCallback> selected = new ArrayList<>();
         int characters = 0;
         int activeCharacters = activeNames.stream().map(authorized::get)
                 .filter(Objects::nonNull).mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
         boolean catalogVisible = remaining > 1
-                && (activeNames.isEmpty() || (activeNames.size() < policy.maxTools()
+                && (activeNames.isEmpty() || (activeNames.size() < businessToolLimit()
                 && activeCharacters + SpringAiToolCatalog.schemaCharacters(catalogCallback)
-                    <= policy.maxToolSchemaCharacters()));
+                    <= businessSchemaLimit()));
         if (catalogVisible) {
             selected.add(catalogCallback);
             characters += SpringAiToolCatalog.schemaCharacters(catalogCallback);
@@ -323,7 +365,9 @@ final class ToolCatalogSession implements FrameworkTool {
             characters = addRequired(selected, characters, callback);
         }
         if (catalogVisible) {
-            Set<String> preferredGroups = SpringAiToolCatalog.preferredGroups(request, messages, callbacks);
+            Set<String> preferredGroups = SpringAiToolCatalog.preferredGroups(request, messages,
+                    callbacks.stream().filter(callback ->
+                            !(callback instanceof HarnessDecisionToolCallback)).toList());
             List<ToolCallback> optional = authorizedNames.stream().map(authorized::get)
                     .filter(Objects::nonNull)
                     .filter(callback -> !selected.contains(callback))
@@ -331,19 +375,57 @@ final class ToolCatalogSession implements FrameworkTool {
                             SpringAiToolCatalog.priority(callback, preferredGroups)))
                     .toList();
             for (ToolCallback callback : optional) {
-                if (selected.size() >= policy.maxTools()) break;
+                if (selected.size() >= businessToolLimit()) break;
                 int size = SpringAiToolCatalog.schemaCharacters(callback);
-                if (characters + size > policy.maxToolSchemaCharacters()) continue;
+                if (characters + size > businessSchemaLimit()) continue;
                 selected.add(callback);
                 characters += size;
             }
         }
-        return new ToolCatalogProjection(selected, characters, authorizedNames.size() + 1);
+        return withControl(selected, characters, authorizedNames.size() + 1);
     }
 
     /** The on-demand planner chooses business tools and discovery mode. */
     synchronized ToolCatalogProjection projectPlanned(List<String> names, int maxSelectedTools,
             CatalogMode mode) {
+        return projectPlanned(names, maxSelectedTools, mode, false);
+    }
+
+    /** A required host stage defers launch activation until identities or uncertain delivery are observed. */
+    synchronized ToolCatalogProjection projectComputerUseStage(List<String> names, int maxSelectedTools) {
+        return projectComputerUseStage(names, maxSelectedTools, false);
+    }
+
+    /** Defers callbacks whose native session arguments cannot be live during recovery. */
+    synchronized ToolCatalogProjection projectComputerUseStage(List<String> names, int maxSelectedTools,
+            boolean recoveringSession) {
+        return projectComputerUseStage(names, maxSelectedTools, recoveringSession, true);
+    }
+
+    /** Runtime capability masks affect provider projection only; activation remains journaled. */
+    synchronized ToolCatalogProjection projectComputerUseStage(List<String> names, int maxSelectedTools,
+            boolean recoveringSession, boolean inputAllowed) {
+        return projectPlanned(names, maxSelectedTools, CatalogMode.NONE,
+                !names.contains(OnDemandApplicationRecovery.LAUNCH), recoveringSession, !inputAllowed);
+    }
+
+    synchronized ToolCatalogProjection projectPlannedDesktop(List<String> names, int maxSelectedTools,
+            CatalogMode mode, boolean inputAllowed) {
+        return projectPlanned(names, maxSelectedTools, mode, false, false, !inputAllowed);
+    }
+
+    private ToolCatalogProjection projectPlanned(List<String> names, int maxSelectedTools,
+            CatalogMode mode, boolean deferLaunch) {
+        return projectPlanned(names, maxSelectedTools, mode, deferLaunch, false);
+    }
+
+    private ToolCatalogProjection projectPlanned(List<String> names, int maxSelectedTools,
+            CatalogMode mode, boolean deferLaunch, boolean recoveringSession) {
+        return projectPlanned(names, maxSelectedTools, mode, deferLaunch, recoveringSession, false);
+    }
+
+    private ToolCatalogProjection projectPlanned(List<String> names, int maxSelectedTools,
+            CatalogMode mode, boolean deferLaunch, boolean recoveringSession, boolean deferDesktopInput) {
         Objects.requireNonNull(names, "names");
         Objects.requireNonNull(mode, "mode");
         refresh();
@@ -353,17 +435,20 @@ final class ToolCatalogSession implements FrameworkTool {
             throw new IllegalStateException("tool discovery was requested but the Run has no authorized tools");
         }
         Set<String> unique = new LinkedHashSet<>(activeNames);
+        if (deferLaunch) unique.remove(OnDemandApplicationRecovery.LAUNCH);
+        if (recoveringSession) unique.removeIf(OnDemandDesktopSessionRecovery::requiresSession);
+        if (deferDesktopInput) unique.removeIf(OnDemandDesktopPrerequisites::desktopFrameAction);
         if (names.stream().distinct().count() != names.size()) {
             throw new IllegalStateException("duplicate planned tool name");
         }
         unique.addAll(names);
+        if (deferDesktopInput) unique.removeIf(OnDemandDesktopPrerequisites::desktopFrameAction);
         if (unique.size() > maxSelectedTools) {
             throw new IllegalStateException("planned and activated tools exceed on-demand selection limit");
         }
         int remaining = request.control().remainingToolCalls();
         if (remaining == 0) {
-            if (!unique.isEmpty() || mode == CatalogMode.REQUIRED) throw insufficientToolBudget();
-            return new ToolCatalogProjection(List.of(), 0, authorizedNames.size());
+            return withControl(List.of(), 0, authorizedNames.size());
         }
         List<ToolCallback> selected = new ArrayList<>();
         int characters = 0;
@@ -374,9 +459,9 @@ final class ToolCatalogSession implements FrameworkTool {
         }
         boolean hidden = authorizedNames.size() > unique.size();
         if (mode != CatalogMode.NONE && hidden && catalogAllowed && remaining >= 2
-                && selected.size() < policy.maxTools() && catalogCallback != null
+                && selected.size() < businessToolLimit() && catalogCallback != null
                 && characters + SpringAiToolCatalog.schemaCharacters(catalogCallback)
-                    <= policy.maxToolSchemaCharacters()) {
+                    <= businessSchemaLimit()) {
             selected.add(catalogCallback);
             characters += SpringAiToolCatalog.schemaCharacters(catalogCallback);
         } else if (mode == CatalogMode.REQUIRED) {
@@ -388,7 +473,7 @@ final class ToolCatalogSession implements FrameworkTool {
                     ? "tool catalog cannot fit the provider tool context limits"
                     : "tool discovery was requested but no hidden authorized tools remain");
         }
-        return new ToolCatalogProjection(List.copyOf(selected), characters,
+        return withControl(selected, characters,
                 authorizedNames.size() + (catalogAllowed && hidden ? 1 : 0));
     }
 
@@ -403,6 +488,27 @@ final class ToolCatalogSession implements FrameworkTool {
     /** Metadata only: candidates come from the Run-authorized callbacks, without a tool call. */
     synchronized List<ToolGroupSummary> groups() {
         return groupDirectory(authorizedCallbacks());
+    }
+
+    /** Read current host state without executing a tool or expanding Run authorization. */
+    synchronized List<JsonNode> currentRuntimeContext() {
+        Set<com.javaclaw.framework.spi.ToolRuntimeContextProvider> seen =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        List<JsonNode> context = new ArrayList<>();
+        int characters = 0;
+        for (FrameworkTool tool : authorizedTools) {
+            if (!SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)) continue;
+            var provider = tool.runtimeContextProvider();
+            if (provider == null || !seen.add(provider)) continue;
+            for (JsonNode value : provider.currentContext()) {
+                if (value == null || !value.isObject()) continue;
+                int size = value.toString().length();
+                if (characters + size > 800) continue;
+                context.add(value.deepCopy());
+                characters += size;
+            }
+        }
+        return List.copyOf(context);
     }
 
     /** Searches only the Run-authorized business tools; no external read or budget charge. */
@@ -420,7 +526,9 @@ final class ToolCatalogSession implements FrameworkTool {
     /** Recheck both the current definition and catalog policy when restoring a provider step. */
     synchronized boolean matchesProviderDefinition(String name, String fingerprint) {
         ToolCallback callback;
-        if (NAME.equals(name)) {
+        if (HarnessDecisionToolCallback.NAME.equals(name)) {
+            callback = decisionCallback;
+        } else if (NAME.equals(name)) {
             if (!allowedByToolPolicy(this)) return false;
             callback = catalogCallback;
         } else {
@@ -437,6 +545,7 @@ final class ToolCatalogSession implements FrameworkTool {
     static List<ToolGroupSummary> groupDirectory(List<ToolCallback> allowed) {
         Map<String, Integer> counts = new TreeMap<>();
         for (ToolCallback callback : allowed) {
+            if (callback instanceof HarnessDecisionToolCallback) continue;
             counts.merge(group(callback), 1, Integer::sum);
         }
         return counts.entrySet().stream()
@@ -461,6 +570,7 @@ final class ToolCatalogSession implements FrameworkTool {
         Set<String> groupsWithHits = new HashSet<>();
         int ordinal = 0;
         for (ToolCallback callback : allowed) {
+            if (callback instanceof HarnessDecisionToolCallback) continue;
             String group = group(callback);
             int position = ordinal++;
             if (!selectedGroups.isEmpty() && !selectedGroups.contains(group)) continue;
@@ -502,6 +612,64 @@ final class ToolCatalogSession implements FrameworkTool {
                     definition.description(), fingerprint(callback),
                     SpringAiToolCatalog.schemaCharacters(callback));
         }).toList();
+    }
+
+    /** A multi-term query expands one clearly matching authorized group for tool discovery. */
+    static List<ToolCatalogPages.Entry> listDirectory(
+            List<ToolCallback> allowed, String query, String selectedGroup) {
+        Objects.requireNonNull(allowed, "allowed");
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(selectedGroup, "selectedGroup");
+        String term = query.strip().toLowerCase(Locale.ROOT);
+        List<String> terms = List.of(term.split("[\\s\\p{P}\\p{S}]+"));
+        List<ScoredTool> scoped = new ArrayList<>();
+        int position = 0;
+        for (ToolCallback callback : allowed) {
+            if (callback instanceof HarnessDecisionToolCallback) continue;
+            String group = group(callback);
+            if (!selectedGroup.isEmpty() && !selectedGroup.equals(group)) continue;
+            scoped.add(new ScoredTool(callback, relevance(callback, term, terms), position++));
+        }
+        if (!term.isEmpty()) {
+            boolean expanded = !selectedGroup.isEmpty();
+            if (selectedGroup.isEmpty()) {
+                boolean exactName = scoped.stream().anyMatch(tool ->
+                        tool.callback().getToolDefinition().name().equalsIgnoreCase(term));
+                if (exactName) {
+                    scoped.removeIf(tool -> !tool.callback().getToolDefinition()
+                            .name().equalsIgnoreCase(term));
+                } else {
+                    String dominantGroup = terms.size() > 1 ? dominantGroup(scoped) : null;
+                    if (dominantGroup != null) {
+                        scoped.removeIf(tool -> !dominantGroup.equals(group(tool.callback())));
+                        expanded = true;
+                    }
+                }
+            }
+            if (!expanded) scoped.removeIf(tool -> tool.score() == 0);
+            scoped.sort(Comparator.comparingInt(ScoredTool::score).reversed()
+                    .thenComparingInt(ScoredTool::position));
+        }
+        return scoped.stream().map(tool -> {
+            var definition = tool.callback().getToolDefinition();
+            return new ToolCatalogPages.Entry(definition.name(), group(tool.callback()),
+                    definition.description());
+        }).toList();
+    }
+
+    private static String dominantGroup(List<ScoredTool> tools) {
+        Map<String, Integer> best = new HashMap<>();
+        for (ScoredTool tool : tools) {
+            if (tool.score() > 0) {
+                best.merge(group(tool.callback()), tool.score(), Math::max);
+            }
+        }
+        if (best.isEmpty()) return null;
+        int maximum = best.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+        List<String> winners = best.entrySet().stream()
+                .filter(entry -> entry.getValue() == maximum)
+                .map(Map.Entry::getKey).toList();
+        return winners.size() == 1 ? winners.getFirst() : null;
     }
 
     private static int relevance(ToolCallback callback, String query, List<String> terms) {
@@ -551,6 +719,11 @@ final class ToolCatalogSession implements FrameworkTool {
         Set<String> unique = new LinkedHashSet<>();
         for (String name : names) {
             if (!unique.add(name)) throw new IllegalStateException("duplicate persisted provider tool");
+            if (HarnessDecisionToolCallback.NAME.equals(name)) {
+                if (decisionCallback == null) throw new IllegalStateException("harness decision callback is unavailable");
+                restored.add(decisionCallback);
+                continue;
+            }
             if (NAME.equals(name) && !allowedByToolPolicy(this)) {
                 throw new IllegalStateException("persisted tool catalog is no longer authorized");
             }
@@ -558,6 +731,19 @@ final class ToolCatalogSession implements FrameworkTool {
             if (callback == null) throw new IllegalStateException(
                     "persisted provider tool is no longer authorized: " + name);
             restored.add(callback);
+        }
+        if (!unique.contains(HarnessDecisionToolCallback.NAME)) {
+            throw new IllegalStateException("persisted provider step omitted the harness decision callback");
+        }
+        int businessLimit = request.plan().descriptor().onDemandContextPolicy() == null
+                ? policy.maxTools()
+                : Math.min(policy.maxTools(),
+                        request.plan().descriptor().onDemandContextPolicy().selectedTools());
+        if (restored.size() - 1 > businessLimit
+                || restored.stream().filter(callback -> callback != decisionCallback)
+                        .mapToInt(SpringAiToolCatalog::schemaCharacters).sum()
+                        > policy.maxToolSchemaCharacters()) {
+            throw new IllegalStateException("persisted provider tools exceed model context limits");
         }
         return List.copyOf(restored);
     }
@@ -567,7 +753,7 @@ final class ToolCatalogSession implements FrameworkTool {
     record ToolCandidate(String name, String group, String description,
             String fingerprint, int schemaCharacters) { }
     enum CatalogMode { NONE, OPTIONAL, REQUIRED }
-    private record StartedTool(String name, String action) { }
+    private record StartedTool(String name, String action, boolean trustedContextRead) { }
     private record ScoredTool(ToolCallback callback, int score, int position) { }
 
     private IllegalStateException insufficientToolBudget() {
@@ -577,13 +763,39 @@ final class ToolCatalogSession implements FrameworkTool {
 
     private int addRequired(List<ToolCallback> selected, int characters, ToolCallback callback) {
         int next = SpringAiToolCatalog.schemaCharacters(callback);
-        if (selected.size() >= policy.maxTools()
-                || characters + next > policy.maxToolSchemaCharacters()) {
-            throw new IllegalStateException("activated tool catalog exceeds model context policy: "
-                    + callback.getToolDefinition().name());
+        if (selected.size() >= businessToolLimit()) {
+            throw new IllegalStateException("planned tool count exceeds maxTools="
+                    + policy.maxTools() + " when adding " + callback.getToolDefinition().name());
+        }
+        if ((long) characters + next > businessSchemaLimit()) {
+            throw new ToolSchemaBudgetExceededException((long) characters + next,
+                    policy.maxToolSchemaCharacters(), callback.getToolDefinition().name());
         }
         selected.add(callback);
         return characters + next;
+    }
+
+    private int controlCharacters() {
+        return SpringAiToolCatalog.schemaCharacters(decisionCallback);
+    }
+
+    private int businessToolLimit() { return policy.maxTools(); }
+
+    private int businessSchemaLimit() {
+        return policy.maxToolSchemaCharacters();
+    }
+
+    private ToolCatalogProjection withControl(List<ToolCallback> business,
+            int businessCharacters, int businessAvailable) {
+        if (decisionCallback == null) throw new IllegalStateException("harness decision callback is unavailable");
+        int characters = businessCharacters + controlCharacters();
+        if (business.size() > policy.maxTools()
+                || businessCharacters > policy.maxToolSchemaCharacters()) {
+            throw new IllegalStateException("harness decision callback exceeds model context limits");
+        }
+        List<ToolCallback> selected = new ArrayList<>(business);
+        selected.add(decisionCallback);
+        return new ToolCatalogProjection(selected, characters, businessAvailable + 1);
     }
 
     void validateActual(List<ToolCallback> actual, List<Message> messages) {
@@ -592,8 +804,8 @@ final class ToolCatalogSession implements FrameworkTool {
             throw new IllegalStateException("provider tool catalog differs from the authorized projection");
         }
         int characters = actual.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
-        if (actual.size() > policy.maxTools()
-                || characters > policy.maxToolSchemaCharacters()) {
+        if (actual.size() - 1 > policy.maxTools()
+                || characters - controlCharacters() > policy.maxToolSchemaCharacters()) {
             throw new IllegalStateException("provider tool catalog exceeds model context policy");
         }
     }
@@ -602,7 +814,58 @@ final class ToolCatalogSession implements FrameworkTool {
         return callback instanceof SpringAiToolCatalog.GroupedCallback grouped ? grouped.group() : "";
     }
 
-    private static ObjectNode error(String message) {
-        return JsonNodeFactory.instance.objectNode().put("success", false).put("error", message);
+    static ObjectNode invalidGroupResult(List<ToolCallback> allowed, String group, int maxCharacters) {
+        ObjectNode failure = error("list", "unknown or unauthorized group: " + group,
+                maxCharacters);
+        ArrayNode available = failure.putArray("availableGroups");
+        for (ToolGroupSummary summary : groupDirectory(allowed)) {
+            available.add(summary.name());
+            if (failure.toString().length() > maxCharacters) {
+                available.remove(available.size() - 1);
+                break;
+            }
+        }
+        if (available.isEmpty()) failure.remove("availableGroups");
+        return failure;
+    }
+
+    private ObjectNode error(String message) {
+        return error("", message, policy.maxToolResultCharacters());
+    }
+
+    private ObjectNode error(String action, String message) {
+        return error(action, message, policy.maxToolResultCharacters());
+    }
+
+    private static ObjectNode error(String action, String message, int maxCharacters) {
+        ObjectNode failure = JsonNodeFactory.instance.objectNode();
+        if (!action.isEmpty()) failure.put("action", action);
+        failure.put("success", false);
+        failure.put("error", message);
+        if (failure.toString().length() > maxCharacters) {
+            int lower = 0;
+            int upper = Math.min(message.length(), maxCharacters);
+            while (lower < upper) {
+                int middle = (lower + upper + 1) / 2;
+                failure.put("error", message.substring(0, middle));
+                if (failure.toString().length() <= maxCharacters) lower = middle;
+                else upper = middle - 1;
+            }
+            failure.put("error", message.substring(0, lower));
+        }
+        if (failure.toString().length() > maxCharacters) {
+            throw new IllegalArgumentException("result budget is too small for a catalog error");
+        }
+        return failure;
+    }
+
+    private static void putIfFits(ObjectNode result, String key, String value, int maxCharacters) {
+        result.put(key, value);
+        if (result.toString().length() > maxCharacters) result.remove(key);
+    }
+
+    private static void putIfFits(ObjectNode result, String key, int value, int maxCharacters) {
+        result.put(key, value);
+        if (result.toString().length() > maxCharacters) result.remove(key);
     }
 }

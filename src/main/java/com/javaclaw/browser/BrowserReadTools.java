@@ -18,7 +18,7 @@ import java.util.Map;
 
 /** Page snapshots, screenshots, content extraction and element-state inspection tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
-final class BrowserReadTools {
+final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetProvider {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserReadTools.class);
     private static final DateTimeFormatter TIMESTAMP_FMT =
@@ -37,6 +37,14 @@ final class BrowserReadTools {
         this.snapshotManager = java.util.Objects.requireNonNull(snapshotManager, "snapshotManager");
         this.gate = java.util.Objects.requireNonNull(gate, "gate");
         this.targets = new BrowserTargetResolver(snapshotManager);
+    }
+
+    @Override public String effectTarget() {
+        gate.enter();
+        try {
+            Page page = browserManager.getActivePage();
+            return page == null ? "" : page.url();
+        } finally { gate.exit(); }
     }
 
     @Tool(
@@ -165,7 +173,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_get_text", description = "获取指定元素的文本内容。")
     public String getText(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_get_text({})", target);
@@ -195,7 +203,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_get_html", description = "获取指定元素的 HTML 内容。")
     public String getHtml(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_get_html({})", target);
@@ -234,7 +242,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_get_attribute", description = "获取指定元素的属性值。")
     public String getAttribute(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target,
             @ToolParam( description = "属性名称，如 href、src、class、value 等")
                     String attribute) {
         gate.enter();
@@ -309,7 +317,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_get_value", description = "获取输入框当前的值。")
     public String getValue(
-            @ToolParam( description = "目标输入框：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_get_value({})", target);
@@ -359,7 +367,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_is_visible", description = "检查指定元素是否可见。")
     public String isVisible(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_is_visible({})", target);
@@ -384,7 +392,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_is_enabled", description = "检查指定元素是否启用（非 disabled 状态）。")
     public String isEnabled(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_is_enabled({})", target);
@@ -410,7 +418,7 @@ final class BrowserReadTools {
 
     @Tool(name = "web_is_checked", description = "检查复选框/单选按钮是否被选中。")
     public String isChecked(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_is_checked({})", target);

@@ -3,6 +3,7 @@ package com.javaclaw.framework.core;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.spi.*;
+import com.javaclaw.util.SensitiveDataRedactor;
 
 import java.util.Set;
 
@@ -59,7 +60,13 @@ public final class RunEventModelTaskAuditSink implements ModelTaskAuditSink {
         payload.put("purpose", request.purpose());
         payload.put("tier", request.tier().name());
         payload.put("errorType", failure.getClass().getName());
-        payload.put("message", failure.getMessage() == null ? "" : failure.getMessage());
+        payload.put("message", SensitiveDataRedactor.redactText(failure.getMessage()));
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        payload.put("causeType", cause.getClass().getName());
+        payload.put("causeMessage", SensitiveDataRedactor.redactText(cause.getMessage()));
         append(request, "core.model_task.failed", payload);
     }
 

@@ -15,12 +15,15 @@ import java.sql.SQLException;
  * 会把每次短连接变成临时 TCP server 的启停边界；进程交错或套接字能力变化时，H2 可能
  * 让后续连接看到不一致的数据库生命周期。</p>
  *
- * <p>实例线程安全。连接按调用创建，不在本类缓存，因此关闭责任仍属于调用方或
- * Spring JDBC。诊断工具必须在 JavaClaw 停止后访问数据库文件。</p>
+ * <p>实例线程安全。每次调用仍返回独立连接，由调用方或 Spring JDBC 关闭。本类另持有
+ * 一个不参与业务操作的连接，避免短连接之间触发 H2 关库和压缩；Spring 根上下文关闭时
+ * 才释放它。诊断工具必须在 JavaClaw 停止后访问数据库文件。</p>
  */
-public final class H2DataSource extends AbstractDataSource {
+public final class H2DataSource extends AbstractDataSource implements AutoCloseable {
 
     private final Path databaseBase;
+    private Connection keepAlive;
+    private boolean closed;
 
     public H2DataSource(DataRoot dataRoot) {
         this.databaseBase = dataRoot.path().resolve("javaclaw").toAbsolutePath().normalize();
@@ -40,8 +43,23 @@ public final class H2DataSource extends AbstractDataSource {
         return databaseBase.resolveSibling(databaseBase.getFileName() + ".mv.db");
     }
 
-    private Connection connect(String username, String password) throws SQLException {
+    private synchronized Connection connect(String username, String password) throws SQLException {
+        if (closed) {
+            throw new SQLException("H2 data source is closed");
+        }
+        if (keepAlive == null || keepAlive.isClosed()) {
+            keepAlive = DriverManager.getConnection(jdbcUrl(), username, password);
+        }
         return DriverManager.getConnection(jdbcUrl(), username, password);
+    }
+
+    @Override
+    public synchronized void close() throws SQLException {
+        closed = true;
+        if (keepAlive != null) {
+            keepAlive.close();
+            keepAlive = null;
+        }
     }
 
     private String jdbcUrl() {

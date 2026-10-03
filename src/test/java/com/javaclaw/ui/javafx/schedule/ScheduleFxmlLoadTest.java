@@ -112,7 +112,7 @@ class ScheduleFxmlLoadTest {
                     "", "", null, "scheduler", List.of()), false);
             taskCell.updateItem(task("failed", "daily", "day", "",
                     RuntimeState.PAUSED, false, false, true,
-                    "2026-08-10", "失败", null, "", List.of()), false);
+                    "2026-08-10", "FAILURE", null, "", List.of()), false);
             taskCell.updateItem(null, true);
             assertNull(taskCell.getGraphic());
 
@@ -125,8 +125,8 @@ class ScheduleFxmlLoadTest {
             ScheduleHistoryCell historyCell = new ScheduleHistoryCellFactory().create();
             historyCell.updateItem(service.snapshot().tasks().getFirst().history().getFirst(), false);
             assertNotNull(historyCell.getGraphic());
-            historyCell.updateItem(new History("now", "失败", "2s", "error"), false);
-            historyCell.updateItem(new History("now", "已取消", "1s", "cancelled"), false);
+            historyCell.updateItem(new History("now", "FAILURE", "2s", "error"), false);
+            historyCell.updateItem(new History("now", "CANCELLED", "1s", "cancelled"), false);
             historyCell.updateItem(null, true);
             assertNull(historyCell.getGraphic());
         });
@@ -155,23 +155,23 @@ class ScheduleFxmlLoadTest {
             assertTrue(label("#builtinNote").getText().contains("不可编辑"));
             assertEquals("scheduler", label("#builtinSource").getText());
 
-            List<History> history = List.of(new History("now", "成功", "1s", "done"));
+            List<History> history = List.of(new History("now", "SUCCESS", "1s", "done"));
             details.show(task("once", "once", "minute", "2026-08-12 08:30",
                     RuntimeState.RUNNING, true, false, true,
-                    "2026-08-11", "成功", LocalDateTime.now().plusHours(1), "", history), false);
+                    "2026-08-11", "SUCCESS", LocalDateTime.now().plusHours(1), "", history), false);
             assertEquals("运行中", label("#stateLabel").getText());
             assertEquals("2026-08-12 08:30", details.command().onceDateTime());
             assertTrue(node("#historyList").isVisible());
 
             details.show(task("stopping", "interval", "hour", "",
                     RuntimeState.RUNNING, false, false, true,
-                    "2026-08-11", "已取消", null, "", List.of()), false);
+                    "2026-08-11", "CANCELLED", null, "", List.of()), false);
             assertEquals("正在停止…", label("#stateLabel").getText());
             assertEquals("执行中…", label("#nextStat").getText());
 
             details.show(task("queued", "daily", "day", "",
                     RuntimeState.QUEUED, true, false, true,
-                    "2026-08-11", "失败", null, "", List.of()), false);
+                    "2026-08-11", "FAILURE", null, "", List.of()), false);
             assertEquals("排队中", label("#stateLabel").getText());
 
             details.show(task("waiting", "cron", "minute", "",
@@ -200,11 +200,12 @@ class ScheduleFxmlLoadTest {
             TextField interval = textField("#intervalValueField");
             ComboBox<String> unit = combo("#intervalUnitCombo");
             interval.setText("bad");
-            unit.setValue("小时");
+            unit.setValue("hour");
+            assertEquals("小时", unit.getConverter().toString(unit.getValue()));
             assertEquals(1, details.command().intervalValue());
             assertEquals("hour", details.command().intervalUnit());
             interval.setText("0");
-            unit.setValue("天");
+            unit.setValue("day");
             assertEquals(1, details.command().intervalValue());
             assertEquals("day", details.command().intervalUnit());
             interval.setText("7");
@@ -533,10 +534,10 @@ class ScheduleFxmlLoadTest {
     private static final class FakeService implements ScheduleApplicationService {
         private final Task task = new Task("daily", "每日简报", "", "daily",
                 60, 60, "minute", "09:00", "", "", "生成简报", true, 1,
-                "2026-08-10 09:00:00", "成功", "1.2s", 3, 0, false,
+                "2026-08-10 09:00:00", "SUCCESS", "1.2s", 3, 0, false,
                 "none", false, false, "", "", RuntimeState.ENABLED,
                 java.time.LocalDateTime.now().plusHours(2), true,
-                List.of(new History("2026-08-10 09:00:00", "成功", "1.2s", "完成")));
+                List.of(new History("2026-08-10 09:00:00", "SUCCESS", "1.2s", "完成")));
         private volatile boolean subscriptionClosed;
         private volatile boolean closeSubscriptionThrows;
         private volatile int snapshotCalls;

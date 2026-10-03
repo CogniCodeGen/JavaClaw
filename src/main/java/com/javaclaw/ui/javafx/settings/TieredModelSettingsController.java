@@ -4,6 +4,9 @@ import com.javaclaw.api.interaction.ConfirmDecision;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.DiscoveryRequest;
+import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.Tier;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.TierSettings;
@@ -22,6 +25,8 @@ import com.javaclaw.runtime.WorkspaceContext;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 
@@ -43,7 +48,9 @@ public final class TieredModelSettingsController
     @FXML private Node normalManagedProfileRow;
     @FXML private ComboBox<InferenceSettingsChoice<UUID>> normalManagedProfileCombo;
     @FXML private TextField normalBaseUrlField;
-    @FXML private TextField normalModelNameField;
+    @FXML private ComboBox<String> normalModelNameField;
+    @FXML private Button normalDiscoveryRefreshButton;
+    @FXML private Label normalDiscoveryStatusLabel;
     @FXML private Node normalApiKeyField;
     @FXML private SecretFieldController normalApiKeyFieldController;
     @FXML private ToggleSwitch normalThinkingCheck;
@@ -55,24 +62,35 @@ public final class TieredModelSettingsController
     @FXML private Node lightManagedProfileRow;
     @FXML private ComboBox<InferenceSettingsChoice<UUID>> lightManagedProfileCombo;
     @FXML private TextField lightBaseUrlField;
-    @FXML private TextField lightModelNameField;
+    @FXML private ComboBox<String> lightModelNameField;
+    @FXML private Button lightDiscoveryRefreshButton;
+    @FXML private Label lightDiscoveryStatusLabel;
     @FXML private Node lightApiKeyField;
     @FXML private SecretFieldController lightApiKeyFieldController;
     @FXML private ToggleSwitch lightThinkingCheck;
 
     private final ModelSettingsApplicationService useCases;
+    private final ModelDiscoveryApplicationService modelDiscovery;
     private final DialogService dialogs;
     private final ModelProviderCatalog providers;
     private final InferenceManagementApplicationService inference;
     private final PluginCenterViewFactory plugins;
+    private final ManagedTaskExecutor tasks;
+    private final FxDispatcher fx;
     private final UiAsyncAction<SaveResult> mutation;
     private final UiAsyncAction<ViewData> refresh;
     private final UiAsyncAction<List<InferenceSettingsChoice<UUID>>> profileRefresh;
+    private final TieredModelDiscovery tierDiscovery = new TieredModelDiscovery();
+    private ModelDiscoveryCombo normalChoices;
+    private ModelDiscoveryCombo lightChoices;
+    private String normalProviderId;
+    private String lightProviderId;
     private Consumer<SaveResult> onApplied = ignored -> { };
     private Runnable onRuntimeConfigurationChanged = () -> { };
 
     public TieredModelSettingsController(
             ModelSettingsApplicationService useCases,
+            ModelDiscoveryApplicationService modelDiscovery,
             ModelProviderCatalog providers,
             InferenceManagementApplicationService inference,
             PluginCenterViewFactory plugins,
@@ -81,9 +99,12 @@ public final class TieredModelSettingsController
             ManagedTaskExecutor tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.modelDiscovery = Objects.requireNonNull(modelDiscovery, "modelDiscovery");
         this.providers = Objects.requireNonNull(providers, "providers");
         this.inference = Objects.requireNonNull(inference, "inference");
         this.plugins = Objects.requireNonNull(plugins, "plugins");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
+        this.fx = Objects.requireNonNull(fx, "fx");
         Objects.requireNonNull(workspace, "workspace");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
         mutation = new UiAsyncAction<>(tasks, fx);
@@ -93,6 +114,24 @@ public final class TieredModelSettingsController
 
     @FXML
     private void initialize() {
+        normalChoices = new ModelDiscoveryCombo(normalModelNameField,
+                normalDiscoveryRefreshButton, normalDiscoveryStatusLabel,
+                modelDiscovery, () -> discoveryRequest(false), tasks, fx);
+        lightChoices = new ModelDiscoveryCombo(lightModelNameField,
+                lightDiscoveryRefreshButton, lightDiscoveryStatusLabel,
+                modelDiscovery, () -> discoveryRequest(true), tasks, fx);
+        normalBaseUrlField.textProperty().addListener((ignored, oldValue, newValue) ->
+                baseUrlChanged(false, newValue));
+        normalApiKeyFieldController.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)) rememberDiscoveryCredential(false);
+            normalChoices.scheduleRefresh();
+        });
+        lightBaseUrlField.textProperty().addListener((ignored, oldValue, newValue) ->
+                baseUrlChanged(true, newValue));
+        lightApiKeyFieldController.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)) rememberDiscoveryCredential(true);
+            lightChoices.scheduleRefresh();
+        });
         List<String> chatProviders = providers.providers().stream()
                 .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.CHAT))
                 .map(ModelProviderCatalog.Provider::displayName).toList();
@@ -114,15 +153,18 @@ public final class TieredModelSettingsController
 
     public void reload() {
         refresh.execute(TaskSpec.io("settings-tiered-model-load"), context -> {
-            TierSettings value = useCases.snapshot().tiers();
+            var snapshot = useCases.snapshot();
+            TierSettings value = snapshot.tiers();
             boolean local = localProvider(value.normal().provider())
                     || localProvider(value.light().provider());
-            return new ViewData(value, local ? generationProfiles() : List.of());
+            return new ViewData(value, snapshot.model(),
+                    local ? generationProfiles() : List.of());
         }, this::applySnapshot, ignored -> { });
     }
 
     private void applySnapshot(ViewData data) {
         TierSettings value = data.settings();
+        tierDiscovery.setHighModel(data.highModel());
         SettingsFieldSupport.loading(root, () -> {
             normalManagedProfileCombo.getItems().setAll(data.profiles());
             lightManagedProfileCombo.getItems().setAll(data.profiles());
@@ -141,16 +183,18 @@ public final class TieredModelSettingsController
                 }, failure);
     }
 
-    @FXML private void normalProviderChanged() {
-        if (SettingsFieldSupport.isLoading(root)) return;
-        updateProvider(false, true);
-        if (selectedLocal(normalProviderCombo)) loadManagedProfiles();
-    }
+    @FXML private void normalProviderChanged() { providerChanged(false); }
+    @FXML private void lightProviderChanged() { providerChanged(true); }
 
-    @FXML private void lightProviderChanged() {
+    private void providerChanged(boolean light) {
         if (SettingsFieldSupport.isLoading(root)) return;
-        updateProvider(true, true);
-        if (selectedLocal(lightProviderCombo)) loadManagedProfiles();
+        String providerId = selectedProviderId(light);
+        boolean changed = !providerId.equals(light ? lightProviderId : normalProviderId);
+        if (light) lightProviderId = providerId; else normalProviderId = providerId;
+        if (changed) (light ? lightApiKeyFieldController : normalApiKeyFieldController).setText("");
+        updateProvider(light, changed);
+        if (selectedLocal(light ? lightProviderCombo : normalProviderCombo)) loadManagedProfiles();
+        else (light ? lightChoices : normalChoices).scheduleRefresh();
     }
 
     @FXML private void manageLocalModelsRequested() {
@@ -177,7 +221,7 @@ public final class TieredModelSettingsController
         ToggleSwitch enabled = light ? lightEnabledCheck : normalEnabledCheck;
         ComboBox<String> provider = light ? lightProviderCombo : normalProviderCombo;
         TextField baseUrl = light ? lightBaseUrlField : normalBaseUrlField;
-        TextField model = light ? lightModelNameField : normalModelNameField;
+        ModelDiscoveryCombo choices = light ? lightChoices : normalChoices;
         SecretFieldController secret = light
                 ? lightApiKeyFieldController : normalApiKeyFieldController;
         ToggleSwitch thinking = light ? lightThinkingCheck : normalThinkingCheck;
@@ -185,7 +229,7 @@ public final class TieredModelSettingsController
         provider.setValue(providers.find(value.provider()).map(ModelProviderCatalog.Provider::displayName)
                 .orElse(value.provider()));
         baseUrl.setText(value.baseUrl());
-        model.setText(value.modelName());
+        choices.setText(value.modelName());
         secret.setText(value.apiKey());
         thinking.setSelected(value.thinkingEnabled());
         ComboBox<InferenceSettingsChoice<UUID>> managed = light
@@ -193,42 +237,50 @@ public final class TieredModelSettingsController
         selectManaged(managed, value.managedProfileId());
         updateProvider(light, false);
         if (light) enableLight(value.enabled()); else enableNormal(value.enabled());
+        String providerId = ModelDiscoveryCombo.provider(providers, provider.getValue())
+                .map(ModelProviderCatalog.Provider::id).orElse("");
+        if (light) lightProviderId = providerId; else normalProviderId = providerId;
+        rememberDiscoveryCredential(light);
     }
 
     private Tier form(boolean light) {
         boolean enabled = (light ? lightEnabledCheck : normalEnabledCheck).isSelected();
         ComboBox<String> provider = light ? lightProviderCombo : normalProviderCombo;
         TextField baseUrl = light ? lightBaseUrlField : normalBaseUrlField;
-        TextField model = light ? lightModelNameField : normalModelNameField;
+        ModelDiscoveryCombo choices = light ? lightChoices : normalChoices;
         SecretFieldController secret = light
                 ? lightApiKeyFieldController : normalApiKeyFieldController;
         ToggleSwitch thinking = light ? lightThinkingCheck : normalThinkingCheck;
-        ModelProviderCatalog.Provider selected = providers.find(provider.getValue()).orElseThrow(
-                () -> new IllegalArgumentException("请选择模型提供商"));
+        ModelProviderCatalog.Provider selected = ModelDiscoveryCombo.provider(providers,
+                provider.getValue()).orElse(null);
+        if (selected == null && enabled) throw new IllegalArgumentException("请选择模型提供商");
         ComboBox<InferenceSettingsChoice<UUID>> managed = light
                 ? lightManagedProfileCombo : normalManagedProfileCombo;
         String managedId = managed.getValue() == null ? "" : managed.getValue().value().toString();
-        return new Tier(enabled, selected.id(), SettingsFieldSupport.text(baseUrl),
-                SettingsFieldSupport.text(model), secret.text(), thinking.isSelected(), managedId);
+        return new Tier(enabled, selected == null ? "" : selected.id(), SettingsFieldSupport.text(baseUrl),
+                choices.text(), tierDiscovery.ownKeyFor(light,
+                        selected == null ? "" : selected.id(), SettingsFieldSupport.text(baseUrl),
+                        secret.text()), thinking.isSelected(), managedId);
     }
 
     private void enableNormal(boolean enabled) {
-        setDisabled(!enabled, normalProviderCombo, normalBaseUrlField, normalModelNameField,
-                normalApiKeyField, normalManagedProfileCombo, normalThinkingCheck);
+        SettingsFieldSupport.setDisabled(!enabled, normalProviderCombo, normalBaseUrlField, normalModelNameField,
+                normalApiKeyField, normalManagedProfileCombo, normalThinkingCheck,
+                normalDiscoveryRefreshButton);
+        normalChoices.setActive(enabled && !selectedLocal(normalProviderCombo));
     }
 
     private void enableLight(boolean enabled) {
-        setDisabled(!enabled, lightProviderCombo, lightBaseUrlField, lightModelNameField,
-                lightApiKeyField, lightManagedProfileCombo, lightThinkingCheck);
-    }
-
-    private static void setDisabled(boolean disabled, Node... nodes) {
-        for (Node node : nodes) node.setDisable(disabled);
+        SettingsFieldSupport.setDisabled(!enabled, lightProviderCombo, lightBaseUrlField, lightModelNameField,
+                lightApiKeyField, lightManagedProfileCombo, lightThinkingCheck,
+                lightDiscoveryRefreshButton);
+        lightChoices.setActive(enabled && !selectedLocal(lightProviderCombo));
     }
 
     private void updateProvider(boolean light, boolean applyDefaults) {
         ComboBox<String> providerBox = light ? lightProviderCombo : normalProviderCombo;
-        ModelProviderCatalog.Provider provider = providers.find(providerBox.getValue()).orElse(null);
+        ModelProviderCatalog.Provider provider = ModelDiscoveryCombo.provider(providers,
+                providerBox.getValue()).orElse(null);
         if (provider == null) return;
         visible(light ? lightBaseUrlRow : normalBaseUrlRow, !provider.localManaged());
         visible(light ? lightModelNameRow : normalModelNameRow, !provider.localManaged());
@@ -236,8 +288,12 @@ public final class TieredModelSettingsController
         visible(light ? lightManagedProfileRow : normalManagedProfileRow, provider.localManaged());
         if (applyDefaults && !provider.localManaged()) {
             (light ? lightBaseUrlField : normalBaseUrlField).setText(provider.defaultBaseUrl());
-            (light ? lightModelNameField : normalModelNameField).setText(provider.defaultChatModel());
+            ModelDiscoveryCombo choices = light ? lightChoices : normalChoices;
+            choices.setText(provider.defaultChatModel());
         }
+        (light ? lightChoices : normalChoices).setActive(
+                (light ? lightEnabledCheck : normalEnabledCheck).isSelected()
+                        && !provider.localManaged());
     }
 
     private void loadManagedProfiles() {
@@ -260,8 +316,34 @@ public final class TieredModelSettingsController
     }
 
     private boolean selectedLocal(ComboBox<String> box) {
-        return providers.find(box.getValue()).map(ModelProviderCatalog.Provider::localManaged)
+        return ModelDiscoveryCombo.provider(providers, box.getValue())
+                .map(ModelProviderCatalog.Provider::localManaged)
                 .orElse(false);
+    }
+
+    private DiscoveryRequest discoveryRequest(boolean light) {
+        String providerId = selectedProviderId(light);
+        String url = SettingsFieldSupport.text(light ? lightBaseUrlField : normalBaseUrlField);
+        String key = (light ? lightApiKeyFieldController : normalApiKeyFieldController).text();
+        return tierDiscovery.request(light, providerId, url, key);
+    }
+
+    private String selectedProviderId(boolean light) {
+        ComboBox<String> box = light ? lightProviderCombo : normalProviderCombo;
+        return ModelDiscoveryCombo.provider(providers, box.getValue())
+                .map(ModelProviderCatalog.Provider::id).orElse("");
+    }
+
+    private void baseUrlChanged(boolean light, String value) {
+        if (!SettingsFieldSupport.isLoading(root)
+                && tierDiscovery.requiresNewKey(light, selectedProviderId(light), value))
+            (light ? lightApiKeyFieldController : normalApiKeyFieldController).setText("");
+        (light ? lightChoices : normalChoices).scheduleRefresh();
+    }
+
+    private void rememberDiscoveryCredential(boolean light) {
+        tierDiscovery.capture(light, selectedProviderId(light),
+                SettingsFieldSupport.text(light ? lightBaseUrlField : normalBaseUrlField));
     }
 
     private static void selectManaged(
@@ -272,13 +354,14 @@ public final class TieredModelSettingsController
     }
 
     private static void visible(Node node, boolean value) {
-        node.setVisible(value);
-        node.setManaged(value);
+        node.setVisible(value); node.setManaged(value);
     }
 
     void deactivate() {
         refresh.cancel();
         profileRefresh.cancel();
+        normalChoices.cancel();
+        lightChoices.cancel();
     }
 
     @Override
@@ -288,9 +371,12 @@ public final class TieredModelSettingsController
         mutation.close();
         refresh.close();
         profileRefresh.close();
+        normalChoices.close();
+        lightChoices.close();
     }
 
     private record ViewData(
             TierSettings settings,
+            ModelSettings highModel,
             List<InferenceSettingsChoice<UUID>> profiles) { }
 }

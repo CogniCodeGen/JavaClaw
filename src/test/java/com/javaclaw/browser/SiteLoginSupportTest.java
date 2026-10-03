@@ -18,8 +18,7 @@ class SiteLoginSupportTest {
     void detectsAuthenticationResponseWithoutFormSignals() {
         SiteLoginSupport.LoginAssessment assessment = SiteLoginSupport.assess(
                 new SiteLoginSupport.LoginSignals(
-                        "https://example.com/private", 401,
-                        false, false, false, false));
+                        401, false, false));
 
         assertTrue(assessment.loginRequired());
         assertTrue(assessment.reason().contains("HTTP 401"));
@@ -29,28 +28,53 @@ class SiteLoginSupportTest {
     void detectsLoginPageFromMultipleIndependentSignals() {
         SiteLoginSupport.LoginAssessment assessment = SiteLoginSupport.assess(
                 new SiteLoginSupport.LoginSignals(
-                        "https://example.com/auth/login?next=%2Fdashboard", 200,
-                        true, true, true, false));
+                        200, true, false));
 
         assertTrue(assessment.loginRequired());
-        assertTrue(assessment.score() >= 3);
+        assertTrue(assessment.evidence().contains(SiteLoginSupport.LoginEvidence.CREDENTIAL_FORM));
     }
 
     @Test
     void doesNotInterruptOrdinaryPasswordSettingsPage() {
         SiteLoginSupport.LoginAssessment assessment = SiteLoginSupport.assess(
                 new SiteLoginSupport.LoginSignals(
-                        "https://example.com/settings/security", 200,
-                        true, false, false, true));
+                        200, false, false));
 
         assertFalse(assessment.loginRequired());
     }
 
     @Test
-    void loginUrlDetectionUsesPathAndQueryRatherThanHostname() {
-        assertTrue(SiteLoginSupport.looksLikeLoginUrl("https://example.com/oauth2/authorize?client=x"));
-        assertTrue(SiteLoginSupport.looksLikeLoginUrl("https://example.com/sign-in"));
-        assertFalse(SiteLoginSupport.looksLikeLoginUrl("https://login.example.com/dashboard"));
+    void pageAddressAloneDoesNotRequireLogin() {
+        SiteLoginSupport.LoginAssessment assessment = SiteLoginSupport.assess(
+                new SiteLoginSupport.LoginSignals(200, false, false));
+        assertFalse(assessment.loginRequired());
+        assertFalse(SiteLoginSupport.assess(
+                new SiteLoginSupport.LoginSignals(403, false, false)).loginRequired(),
+                "a bare 403 may be authorization denial after login");
+    }
+
+    @Test
+    void loginVerificationRequiresTargetResponseAndSessionTransition() {
+        var clear = new SiteLoginSupport.LoginSignals(200, false, false);
+        assertEquals(SiteLoginSupport.VerificationStatus.AUTHENTICATED,
+                SiteLoginSupport.verifyLogin(clear, true,
+                        "https://app.example.com/private", "https://app.example.com/private", true));
+        assertEquals(SiteLoginSupport.VerificationStatus.UNVERIFIED,
+                SiteLoginSupport.verifyLogin(clear, true,
+                        "https://app.example.com/public", "https://app.example.com/public", false),
+                "a public page setting a cookie does not prove login");
+        assertEquals(SiteLoginSupport.VerificationStatus.UNVERIFIED,
+                SiteLoginSupport.verifyLogin(clear, false,
+                        "https://app.example.com/private", "https://app.example.com/private", true));
+        assertEquals(SiteLoginSupport.VerificationStatus.UNVERIFIED,
+                SiteLoginSupport.verifyLogin(clear, true,
+                        "https://app.example.com/private", "https://id.example.net/done", true));
+        assertEquals(SiteLoginSupport.VerificationStatus.UNVERIFIED,
+                SiteLoginSupport.verifyLogin(new SiteLoginSupport.LoginSignals(500, false, false), true,
+                        "https://app.example.com/private", "https://app.example.com/private", true));
+        assertEquals(SiteLoginSupport.VerificationStatus.LOGIN_REQUIRED,
+                SiteLoginSupport.verifyLogin(new SiteLoginSupport.LoginSignals(200, true, false), true,
+                        "https://app.example.com/private", "https://app.example.com/private", true));
     }
 
     @Test
@@ -78,10 +102,13 @@ class SiteLoginSupportTest {
                 {
                   "cookies": [
                     {"name":"app","value":"a","domain":".example.com","path":"/"},
+                    {"name":"parentHostOnly","value":"secret","domain":"example.com","path":"/"},
                     {"name":"other","value":"b","domain":"other.test","path":"/"}
                   ],
                   "origins": [
                     {"origin":"https://app.example.com","localStorage":[{"name":"token","value":"a"}]},
+                    {"origin":"https://child.app.example.com","localStorage":[{"name":"child","value":"secret"}]},
+                    {"origin":"http://app.example.com","localStorage":[{"name":"insecure","value":"secret"}]},
                     {"origin":"https://other.test","localStorage":[{"name":"token","value":"b"}]}
                   ]
                 }
@@ -91,5 +118,8 @@ class SiteLoginSupportTest {
         assertTrue(filtered.contains("app.example.com"));
         assertFalse(filtered.contains("\"other\""));
         assertFalse(filtered.contains("other.test"));
+        assertFalse(filtered.contains("parentHostOnly"));
+        assertFalse(filtered.contains("\"child\""));
+        assertFalse(filtered.contains("insecure"));
     }
 }

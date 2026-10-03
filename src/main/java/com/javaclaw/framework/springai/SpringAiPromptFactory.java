@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.api.ResumeCommand;
 import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.TaskContractCompiler;
 import com.javaclaw.framework.spi.ExtensionStateStore;
+import com.javaclaw.prompt.AgentPrompts;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -46,7 +48,29 @@ final class SpringAiPromptFactory {
                 }
             }
         }
-        return prompt.toString();
+        // Project instructions can be persisted from an older release. End with the
+        // current trusted capability policy so a stale AGENTS.md cannot disable
+        // the settings-gated desktop session tools.
+        prompt.append("## Harness decision protocol\n")
+                .append("Before ending a turn, call harness_submit_decision in a tool-call batch "
+                        + "containing no other calls. Set decision to CLAIM_DONE only when you believe "
+                        + "the task is done; the host independently verifies trusted evidence. "
+                        + "Use NEEDS_INPUT when a user answer is required, BLOCKED for a genuine "
+                        + "block, and CONTINUE when work must continue in a later Run or loop round. "
+                        + "Put the user-facing response in userMessage. Include unmetCriterionIds "
+                        + "as a separate array of still-unmet frozen criterion IDs; use an empty "
+                        + "array when there are none. Never encode a control status in userMessage "
+                        + "or rely on status words in ordinary text. "
+                        + "evidenceRefs is optional: copy only exact reference strings from the "
+                        + "host-provided evidenceRefs array in a tool response or control feedback. "
+                        + "Never put tool names, result summaries, or invented IDs in evidenceRefs. "
+                        + "Use an empty array when no suitable references are available, including "
+                        + "NEEDS_INPUT or BLOCKED after a failed tool call. A reference establishes "
+                        + "only its tool receipt's operation and target, not the whole task. "
+                        + "When a control call is rejected, correct its arguments using the feedback; "
+                        + "do not repeat business tools just to repair the control call. "
+                        + "The host ignores your final free-form prose for control decisions.\n\n");
+        return AgentPrompts.withMandatoryGlobalRules(prompt.toString());
     }
 
     List<Message> messages(ReasoningRequest request) {
@@ -146,7 +170,17 @@ final class SpringAiPromptFactory {
     }
 
     static UserMessage originalTaskMessage(ReasoningRequest request) {
-        StringBuilder text = new StringBuilder(inputText(request));
+        String current = inputText(request);
+        String effective = effectiveTaskText(request);
+        StringBuilder text = new StringBuilder(effective);
+        if (!effective.equals(current) && !current.isBlank()) {
+            text.append("\n\nLatest human input (takes precedence for new goals, cancellation "
+                    + "and restrictions):\n").append(current)
+                    .append("\nThe effective task above is conversation intent, not proof of current "
+                            + "permissions or application state. Recheck relevant live tools when "
+                            + "continuing after a changed setting; do not infer a current block from "
+                            + "an assistant's earlier failure report.");
+        }
         List<Media> media = new ArrayList<>();
         for (InputBlock block : request.runRequest().inputs()) {
             if (!block.type().equals("core.file") && !block.type().equals("core.image")) continue;
@@ -156,6 +190,15 @@ final class SpringAiPromptFactory {
                 .metadata(Map.of(ORIGINAL_TASK_METADATA, true));
         if (!media.isEmpty()) builder.media(media);
         return builder.build();
+    }
+
+    static String effectiveTaskText(ReasoningRequest request) {
+        for (String attribute : List.of(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE,
+                TaskContractCompiler.RESOLVED_REQUEST_ATTRIBUTE)) {
+            JsonNode value = request.runRequest().attributes().get(attribute);
+            if (value != null && value.isTextual() && !value.asText().isBlank()) return value.asText();
+        }
+        return inputText(request);
     }
 
     static UserMessage resumeCommandMessage(ReasoningRequest request) {

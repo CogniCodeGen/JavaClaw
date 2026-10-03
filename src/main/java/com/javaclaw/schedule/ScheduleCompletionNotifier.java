@@ -33,9 +33,15 @@ final class ScheduleCompletionNotifier {
             String title = "定时任务「" + task.getName() + "」" + (success ? "执行完成" : "执行失败");
             String body = (success ? "✅ " : "⚠️ ") + title + "\n"
                     + (detail == null || detail.isBlank() ? "" : detail);
-            String result = new NotificationTools(ToolCallOrigin.SCHEDULED, notifications, email)
-                    .sendByChannel(channel, title, body);
-            taskLog.info("[{}] 完成通知（{}）: {}", task.getName(), channel, result);
+            NotificationTools.DeliveryResult result = new NotificationTools(
+                    ToolCallOrigin.SCHEDULED, notifications, email)
+                    .sendByChannelResult(channel, title, body);
+            if (result.status() == NotificationTools.DeliveryStatus.ACCEPTED) {
+                taskLog.info("[{}] 完成通知（{}）: {}", task.getName(), channel, result.message());
+            } else {
+                taskLog.warn("[{}] 完成通知（{}）未获传输接受，状态={}：{}",
+                        task.getName(), channel, result.status(), result.message());
+            }
         } catch (Exception failure) {
             log.warn("定时任务完成通知发送失败: {}", task.getName(), failure);
         }

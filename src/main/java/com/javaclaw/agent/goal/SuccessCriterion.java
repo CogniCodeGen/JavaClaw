@@ -12,7 +12,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * <ul>
  *   <li>{@code artifact_exists} — 产物存在性，{@code predicate} 为路径或描述</li>
  *   <li>{@code command_exit_zero} — 命令成功退出，{@code predicate} 为命令文本</li>
- *   <li>{@code output_contains} — 输出包含关键词，{@code predicate} 为字面关键词（子串匹配，不按正则解释）</li>
+ *   <li>{@code output_contains} — 仅供宿主接受用户显式结构化条件时使用；
+ *       模型生成的该类型必须被入口策略过滤，{@code predicate} 为字面关键词</li>
  *   <li>{@code external_check} — 外部检查（URL 200、邮件送达等），{@code predicate} 为可读描述</li>
  *   <li>{@code freeform} — 难以结构化的描述性标准，{@code predicate} 即为标准文本</li>
  * </ul>

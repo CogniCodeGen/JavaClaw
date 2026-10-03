@@ -84,6 +84,12 @@ class DistillerBehaviorTest {
             assertEquals(1, fixture.gateway.calls,
                     "显式纠错必须越过普通蒸馏长度门槛");
             assertEquals(owner, fixture.gateway.requests.getFirst().ownerRunId());
+
+            Episode shortUserTurn = new Episode("s", "我喜欢茶", "");
+            shortUserTurn.habitEvidence = true;
+            fixture.distiller.distillNow(owner, shortUserTurn);
+            assertEquals(2, fixture.gateway.calls,
+                    "有来源的短用户 Turn 即使助手输出为空也要进入结构化偏好抽取");
         }
     }
 
@@ -228,6 +234,7 @@ class DistillerBehaviorTest {
         ObjectNode result = JsonNodeFactory.instance.objectNode();
         result.putArray("facts");
         result.putArray("entities");
+        result.putArray("preferenceClaims");
         return result;
     }
 

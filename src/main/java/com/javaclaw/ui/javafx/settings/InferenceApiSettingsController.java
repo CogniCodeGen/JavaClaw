@@ -5,6 +5,7 @@ import com.javaclaw.application.inference.InferenceApiServerControlPort;
 import com.javaclaw.application.inference.InferenceManagementApplicationService;
 import com.javaclaw.application.inference.InferenceRuntimePort;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.State;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.inference.api.InferenceModelProfile;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
@@ -57,7 +58,7 @@ public final class InferenceApiSettingsController implements AutoCloseable {
     @FXML private SplitPane serviceModelSplit;
     @FXML private VBox settingsDrawer, runtimeSettingsHost;
     @FXML private Region settingsScrim;
-    @FXML private ComboBox<String> logFilterCombo;
+    @FXML private ComboBox<InferenceModelPresentation.LogFilter> logFilterCombo;
     @FXML private ComboBox<InferenceSettingsChoice<UUID>> publishedProfileCombo;
     @FXML private ListView<InferenceSettingsChoice<String>> publishedList;
     @FXML private ListView<String> keyAliasList;
@@ -72,7 +73,7 @@ public final class InferenceApiSettingsController implements AutoCloseable {
     private Consumer<UUID> editModel = ignored -> { };
     private PluginPresentation presentation = new PluginPresentation(State.STOPPED, Map.of());
     private InferenceServiceModelConsole modelConsole;
-    private List<String> serviceLogs = List.of();
+    private List<ServicePluginLogEntry> serviceLogs = List.of();
     private boolean applying;
     private InferenceServiceConsoleChrome chrome;
 
@@ -105,8 +106,8 @@ public final class InferenceApiSettingsController implements AutoCloseable {
         invocationLoggingSwitch.selectedProperty().addListener((ignored, before, enabled) -> {
             if (!applying && before != enabled) invocationLoggingRequested();
         });
-        logFilterCombo.getItems().setAll("全部日志", "调用日志", "运行日志");
-        logFilterCombo.setValue("全部日志");
+        logFilterCombo.getItems().setAll(InferenceModelPresentation.LogFilter.values());
+        logFilterCombo.setValue(InferenceModelPresentation.LogFilter.ALL);
         logFilterCombo.valueProperty().addListener((ignored, previous, selected) -> renderLogs());
     }
 
@@ -196,7 +197,7 @@ public final class InferenceApiSettingsController implements AutoCloseable {
                 + "POST /v1/chat/completions\nPOST /v1/embeddings\n"
                 + "GET  /openapi.json\nPOST /v1/chat/completions  (stream=true, SSE)");
         modelConsole.apply(value, statuses, endpoint);
-        serviceLogs = service.recentLogs();
+        serviceLogs = service.recentLogEntries();
         renderLogs();
     }
 
@@ -325,14 +326,17 @@ public final class InferenceApiSettingsController implements AutoCloseable {
     private void refreshServiceLogs() {
         if (snapshot == null) return;
         var service = useCases.modelServiceSnapshot();
-        serviceLogs = service.recentLogs().isEmpty()
-                ? presentation.recentLogs() : service.recentLogs();
+        serviceLogs = service.recentLogEntries().isEmpty()
+                ? presentation.recentLogs().stream().map(line -> new ServicePluginLogEntry(
+                        ServicePluginLogEntry.Kind.RUNTIME, line)).toList()
+                : service.recentLogEntries();
         renderLogs();
     }
 
     private void renderLogs() {
         if (serviceLogsArea == null) return;
-        String filter = logFilterCombo == null ? "全部日志" : logFilterCombo.getValue();
+        InferenceModelPresentation.LogFilter filter = logFilterCombo == null
+                ? InferenceModelPresentation.LogFilter.ALL : logFilterCombo.getValue();
         serviceLogsArea.setText(InferenceModelPresentation.filterLogs(serviceLogs, filter));
     }
 

@@ -8,16 +8,24 @@ import com.javaclaw.framework.api.AgentDefinitionDraft;
 import com.javaclaw.framework.api.BudgetExceededException;
 import com.javaclaw.framework.api.AgentDefinitionRef;
 import com.javaclaw.framework.api.CancelReason;
+import com.javaclaw.framework.api.CapabilityMetadata;
 import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.api.InvocationSource;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.api.ResumeCommand;
 import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunHandle;
+import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.api.RunProfileDraft;
 import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.api.RunRequest;
 import com.javaclaw.framework.api.RunScope;
 import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.api.RunLinkage;
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.TaskContractV3;
+import com.javaclaw.framework.api.TaskCriterionV3;
+import com.javaclaw.framework.api.TaskOutcome;
 import com.javaclaw.framework.extension.ExtensionArtifact;
 import com.javaclaw.framework.extension.ExtensionManager;
 import com.javaclaw.framework.spi.AgentFrameworkExtension;
@@ -29,6 +37,12 @@ import com.javaclaw.framework.spi.ExtensionRegistrar;
 import com.javaclaw.framework.spi.ExtensionScope;
 import com.javaclaw.framework.spi.HotUpdateCompatibility;
 import com.javaclaw.framework.spi.SemanticVersion;
+import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.RunEventDraft;
+import com.javaclaw.framework.spi.EffectReconciliationV1;
+import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.framework.spi.ToolEffectPolicy;
+import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.framework.store.JdbcAgentDefinitionStore;
 import com.javaclaw.framework.store.JdbcExecutionPlanStore;
 import com.javaclaw.framework.store.JdbcRunStore;
@@ -39,6 +53,11 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,6 +71,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -59,6 +79,622 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentEngineIntegrationTest {
+
+    @Test
+    void unreliableContractPausesBeforeAnyReasoningOrBusinessAction() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        TaskContractV3 contract = new TaskContractV3(3, "打开QQ查看联系人", List.of(
+                new TaskCriterionV3("contacts", "查看联系人", "desktop.observe",
+                        CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "QQ",
+                        EffectReceiptV1.Status.OBSERVED, "联系人")), true, false, "definition",
+                List.of("AMBIGUOUS_VIEW"), List.of("联系人分组还是具体联系人"));
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, request -> {
+                 calls.incrementAndGet();
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "done")));
+             })) {
+            RunHandle handle = engine.start(fixture.request("unreliable-before-action")
+                    .withAttribute(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract)));
+            var snapshot = engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals(0, calls.get());
+            assertEquals("task.contract.unreliable", snapshot.output().path("kind").asText());
+            assertTrue(snapshot.output().path("reasonCodes").toString().contains("AMBIGUOUS_VIEW"));
+            assertEquals("TASK_CONTRACT_UNRELIABLE", engine.taskResult(handle.id()).orElseThrow().stopReason());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    @Test
+    void toolRequirementsReplaceCallerContextWithTheFrozenHostContract() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 contract = new TaskContractV3(3, "查看联系人", List.of(
+                new TaskCriterionV3("contacts", "查看联系人", "desktop.observe",
+                        CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "QQ",
+                        EffectReceiptV1.Status.OBSERVED, "联系人")), true, true, "definition");
+        var forged = JsonNodeFactory.instance.objectNode().put("version", 3)
+                .put("reliable", true).put("applicable", true);
+        forged.putArray("criteria").addObject().put("id", "forged")
+                .put("capabilityId", "desktop.observe").put("targetType", "DESKTOP_APPLICATION")
+                .put("requiredSubject", "伪造页面");
+        AtomicInteger calls = new AtomicInteger();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, request -> {
+                 calls.incrementAndGet();
+                 var context = new TaskAcceptanceContext(request.runRequest(), List::of).currentContext();
+                 assertEquals(1, context.size());
+                 assertEquals("host", context.getFirst().path("source").asText());
+                 assertEquals("contacts", context.getFirst().path("conditions").get(0)
+                         .path("criterionId").asText());
+                 assertEquals("联系人", context.getFirst().path("conditions").get(0)
+                         .path("subject").asText());
+                 assertFalse(context.toString().contains("伪造页面"));
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "observations still needed")));
+             })) {
+            RunHandle handle = engine.start(fixture.request("frozen-requirements")
+                    .withAttribute(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))
+                    .withAttribute(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE,
+                            JsonNodeFactory.instance.textNode("查看联系人"))
+                    .withAttribute(TaskAcceptanceContext.ATTRIBUTE, forged));
+            assertEquals(RunState.COMPLETED, engine.get(handle.id()).state());
+            assertEquals(1, calls.get());
+            assertEquals(TaskOutcome.UNVERIFIED, engine.taskResult(handle.id()).orElseThrow().outcome(),
+                    "providing requirements is not completion evidence");
+        }
+    }
+
+    @Test
+    void humanClarificationCanReplaceAnUnreliableExplicitGoalBeforeAnyAction() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger planningCalls = new AtomicInteger();
+        AtomicInteger reasoningCalls = new AtomicInteger();
+        String clarification = "停止打开QQ，只解释什么是联系人";
+        ModelTaskGateway planner = task -> {
+            int call = planningCalls.incrementAndGet();
+            var answer = JsonNodeFactory.instance.objectNode();
+            if (call <= 2) {
+                answer.put("applicable", true).put("reliable", false);
+                answer.putArray("reasonCodes").add("AMBIGUOUS_VIEW");
+            } else {
+                assertEquals(clarification, task.input().path("currentUserInput").asText());
+                assertTrue(task.input().path("humanHistory").toString().contains("打开QQ查看联系人"));
+                assertFalse(task.input().path("originalRequestExplicit").asBoolean());
+                answer.put("originalRequest", clarification).put("applicable", false).put("reliable", true);
+            }
+            answer.putArray("criteria");
+            return CompletableFuture.completedFuture(new com.javaclaw.framework.spi.ModelTaskResult(
+                    answer, "fixture", 0, 0, false, Map.of()));
+        };
+        ReasoningGateway reasoning = request -> {
+            reasoningCalls.incrementAndGet();
+            assertEquals(clarification, TaskContractCompiler.originalRequest(request.runRequest()));
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "联系人是通讯录中的个人或组织条目")));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = new AgentEngine(new AgentCompiler(fixture.definitions, extensions, fixture.json),
+                     fixture.runs, fixture.plans, withClaimDone(reasoning), Runnable::run,
+                     fixture.json, fixture.clock, new RunUsageLedger(), planner)) {
+            RunHandle handle = engine.start(fixture.request("clarify-unreliable-goal")
+                    .withAttribute(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE,
+                            JsonNodeFactory.instance.textNode("打开QQ查看联系人")));
+            assertEquals(RunState.PAUSED, engine.get(handle.id()).state());
+            assertEquals(0, reasoningCalls.get());
+            engine.resume(handle.id(), new ResumeCommand("user.input",
+                    JsonNodeFactory.instance.objectNode().put("text", clarification)));
+            assertEquals(RunState.COMPLETED, engine.get(handle.id()).state());
+            assertEquals(3, planningCalls.get());
+            assertEquals(1, reasoningCalls.get());
+            assertEquals(TaskOutcome.DELIVERED, engine.taskResult(handle.id()).orElseThrow().outcome());
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.task.contract_revised")).count());
+        }
+    }
+
+    @Test
+    void pausedUnverifiedResultIsReplacedAfterAResumedDelivery() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 question = new TaskContractV3(3, "answer later", List.of(),
+                false, true, "definition");
+        ReasoningGateway reasoning = request -> CompletableFuture.completedFuture(
+                request.resumeCommand() == null
+                        ? new ReasoningResult(RunState.PAUSED,
+                                JsonNodeFactory.instance.objectNode().put("text", "more work needed"),
+                                "TASK_UNVERIFIED")
+                        : ReasoningResult.completed(
+                                JsonNodeFactory.instance.objectNode().put("text", "answer")));
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, reasoning)) {
+            RunRequest input = fixture.request("answer later").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(question));
+            RunHandle handle = engine.start(input);
+            assertEquals(RunState.PAUSED, engine.get(handle.id()).state());
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    engine.taskResult(handle.id()).orElseThrow().outcome());
+
+            RunHandle resumed = engine.resume(handle.id(), new ResumeCommand("user.input",
+                    JsonNodeFactory.instance.objectNode().put("answer", "continue")));
+            assertEquals(RunState.COMPLETED,
+                    resumed.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            assertEquals(TaskOutcome.DELIVERED,
+                    engine.taskResult(handle.id()).orElseThrow().outcome());
+            assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.task.outcome")).count());
+        }
+    }
+
+    @Test
+    void internalContextAndCatalogReadsKeepQuestionContract() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 question = new TaskContractV3(3, "what is this?", List.of(),
+                false, true, "definition");
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, request -> {
+                 for (String tool : List.of("framework_context_search_abc",
+                         "framework_context_fetch_abc", "framework_context_fixed_abc",
+                         "framework_tool_catalog")) {
+                     request.events().emit("core.tool.started", 1, "framework.core",
+                             fixture.json.createObjectNode().put("tool", tool)
+                                     .put("fingerprint", tool)
+                                     .put("trustedContextRead",
+                                             !tool.equals("framework_tool_catalog"))
+                                     .put("trustedToolCatalog",
+                                             tool.equals("framework_tool_catalog")));
+                 }
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "answer")));
+             })) {
+            var handle = engine.start(fixture.request("question-with-context").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(question)));
+            handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertTrue(events.stream().noneMatch(event ->
+                    event.type().equals("core.task.contract_revised")));
+            assertEquals(TaskOutcome.DELIVERED,
+                    TaskResultEvaluator.latestOutcome(events, fixture.json).orElseThrow().outcome());
+            assertEquals("answer", engine.get(handle.id()).output().path("text").asText());
+        }
+    }
+
+    @Test
+    void businessToolStillRevisesQuestionContract() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 question = new TaskContractV3(3, "what is this?", List.of(),
+                false, true, "definition");
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, request -> {
+                 request.events().emit("core.tool.started", 1, "framework.core",
+                         fixture.json.createObjectNode().put("tool", "web_content")
+                                 .put("fingerprint", "web-content"));
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "answer")));
+             })) {
+            var handle = engine.start(fixture.request("question-with-business-tool").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(question)));
+            handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event ->
+                    event.type().equals("core.task.contract_revised")).count());
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    TaskResultEvaluator.latestOutcome(events, fixture.json).orElseThrow().outcome());
+        }
+    }
+
+    @Test
+    void taskHarnessPersistsContractAndOutcomeBeforeTechnicalCompletion() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 contract = new TaskContractV3(3, "write result", List.of(
+                new TaskCriterionV3("write", "result exists", "file.write",
+                        CapabilityMetadata.TargetKind.FILE, "result.txt",
+                        EffectReceiptV1.Status.VERIFIED, "")),
+                true, true, "definition");
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, request -> {
+                 request.events().emit("core.tool.receipt", 1, "framework.core",
+                         fixture.json.createObjectNode().put("invocationId", "write-1")
+                                 .put("tool", "sys_file_write").put("operation", "write")
+                                 .put("target", ProjectAccessPolicy.projectRoot().resolve("result.txt").toString())
+                                 .put("status", "VERIFIED")
+                                 .put("observedAt", "2026-01-01T00:00:00Z")
+                                 .put("evidenceRef", "file:result.txt"));
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "done")));
+             })) {
+            RunRequest input = fixture.request("task-result").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract));
+            var handle = engine.start(input);
+            assertEquals(RunState.COMPLETED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertTrue(events.getFirst().payload().path("taskHarnessV3").asBoolean());
+            assertEquals(3, events.stream().filter(event -> event.type().equals("core.task.contract"))
+                    .findFirst().orElseThrow().schemaVersion());
+            assertEquals(3, events.stream().filter(event -> event.type().equals("core.task.outcome"))
+                    .findFirst().orElseThrow().schemaVersion());
+            assertTrue(TaskResultEvaluator.latestContract(events, fixture.json).isEmpty());
+            assertTrue(TaskResultEvaluator.latestContractV3(events, fixture.json).isPresent());
+            List<String> types = events.stream().map(event -> event.type()).toList();
+            assertTrue(types.indexOf("core.task.contract") < types.indexOf("core.tool.receipt"));
+            assertTrue(types.indexOf("core.tool.receipt") < types.indexOf("core.task.outcome"));
+            assertTrue(types.indexOf("core.task.outcome") < types.indexOf("core.run.completed"));
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE, TaskResultEvaluator.latestOutcome(
+                    events, fixture.json).orElseThrow().outcome());
+            assertEquals("VERIFIED_COMPLETE", events.getLast().payload()
+                    .path("taskResult").path("outcome").asText());
+        }
+    }
+
+    @Test
+    void v3UnknownClickIsReconciledAfterVerifiedOutcomeBeforeRunCompletion() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        String actionFrame = UUID.randomUUID().toString();
+        String evidenceFrame = UUID.randomUUID().toString();
+        TaskContractV3 contract = new TaskContractV3(3, "打开系统设置查看网络", List.of(
+                new TaskCriterionV3("open", "打开系统设置", "desktop.open",
+                        CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "系统设置",
+                        EffectReceiptV1.Status.ACCEPTED, ""),
+                new TaskCriterionV3("click", "点击网络", "desktop.click",
+                        CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "系统设置",
+                        EffectReceiptV1.Status.ACCEPTED, ""),
+                new TaskCriterionV3("view", "网络视图可见", "desktop.observe",
+                        CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "系统设置",
+                        EffectReceiptV1.Status.OBSERVED, "network")),
+                true, true, "definition");
+        AtomicReference<RunId> activeId = new AtomicReference<>();
+        AtomicReference<TaskResultEvaluator.VerifiedActionEvidence> delivered = new AtomicReference<>();
+        AtomicInteger callbacks = new AtomicInteger();
+        ReasoningGateway reasoning = request -> {
+            activeId.set(request.runId());
+            ObjectNode open = desktopReceipt("open-1", "open", "ACCEPTED", "open:settings",
+                    "2026-01-01T00:00:00Z");
+            open.putObject("metadata").put("targetId", "window-1")
+                    .put("sessionId", "session-1");
+            request.events().emit("core.tool.receipt", 1, "framework.core", open);
+
+            ObjectNode beforeClick = desktopReceipt("observe-before-click", "observe",
+                    "OBSERVED", "frame:overview", "2026-01-01T00:00:00.500Z");
+            beforeClick.put("subject", "overview");
+            beforeClick.putObject("metadata").put("targetId", "window-1")
+                    .put("sessionId", "session-1").put("observationId", actionFrame)
+                    .put("windowGeneration", "4").put("contentRevision", "1")
+                    .put("capturedAtMillis", "1767225600500")
+                    .put("viewEvidence", "heading:1,2,10,10|content:2,20,20,20");
+            request.events().emit("core.tool.receipt", 1, "framework.core", beforeClick);
+
+            ObjectNode started = JsonNodeFactory.instance.objectNode()
+                    .put("tool", "desktop_session_click").put("invocationId", "click-1")
+                    .put("fingerprint", "click-one").put("effectKey", "click-one")
+                    .put("effectPolicy", "OBSERVATION_GATED")
+                    .put("resourceKey", "desktop:window-1").put("idempotent", false);
+            request.control().restoreEffectStart("click-1", "click-one", "click-one",
+                    false, ToolEffectPolicy.OBSERVATION_GATED, "desktop:window-1");
+            request.events().toolStarted(StepEvents.startedPayload(
+                    com.javaclaw.framework.api.StepId.tool(request.runId(), "click-1"),
+                    com.javaclaw.framework.api.AgentStep.Kind.TOOL, started, null), started);
+            ObjectNode click = desktopReceipt("click-1", "click", "UNKNOWN", "click:settings",
+                    "2026-01-01T00:00:01Z");
+            click.putObject("metadata").put("targetId", "window-1")
+                    .put("sessionId", "session-1")
+                    .put("observationId", actionFrame).put("windowGeneration", "4")
+                    .put("dispatchAttempted", "true").put("delivery", "MAYBE_SENT");
+            request.events().emit("core.tool.receipt", 1, "framework.core", click);
+            request.control().restoreEffectReceipt("click-1", EffectReceiptV1.Status.UNKNOWN,
+                    "MAYBE_SENT");
+            assertThrows(ToolPermissionDeniedException.class, () ->
+                    request.control().assertRepairRetryAllowed("click-two", "click-two", false,
+                            ToolEffectPolicy.OBSERVATION_GATED, "desktop:window-1"));
+
+            ObjectNode observed = desktopReceipt("observe-1", "observe", "OBSERVED",
+                    "frame:network", "2026-01-01T00:00:03Z");
+            observed.put("subject", "network");
+            observed.putObject("metadata").put("targetId", "window-1")
+                    .put("sessionId", "session-1").put("observationId", evidenceFrame)
+                    .put("windowGeneration", "4").put("contentRevision", "2")
+                    .put("capturedAtMillis", "1767225603000")
+                    .put("viewEvidence", "heading:1,2,10,10|content:2,20,20,20");
+            request.events().emit("core.tool.receipt", 1, "framework.core", observed);
+            var durable = TaskEvidenceCollector.collect(fixture.runs, request.runId());
+            var frozen = TaskResultEvaluator.latestContractV3(durable, fixture.json).orElseThrow();
+            var catalog = TrustedCapabilityRegistry.builtins();
+            var desktop = TaskResultEvaluator.desktopContract(frozen, catalog);
+            assertEquals(1, TaskResultEvaluator.verifiedCheckpointEvidence(desktop, durable).size(),
+                    "the linked before/action/after frames must create one checkpoint candidate");
+            int clickAt = java.util.stream.IntStream.range(0, durable.size())
+                    .filter(index -> durable.get(index).type().equals("core.tool.receipt")
+                            && durable.get(index).payload().path("invocationId").asText("")
+                                    .equals("click-1"))
+                    .findFirst().orElseThrow();
+            TaskContractV3 prefix = new TaskContractV3(3, frozen.originalRequest(),
+                    frozen.criteria().subList(0, 1), true, true, frozen.source());
+            var prefixResult = TaskResultEvaluator.evaluateV3(prefix,
+                    durable.subList(0, clickAt), "", catalog);
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE, prefixResult.outcome(),
+                    "the preceding V3 open criterion must be proven: " + prefixResult);
+            assertTrue(durable.stream().anyMatch(event ->
+                    event.type().equals("core.task.checkpoint_verified")),
+                    "the V3 criterion prefix and frozen contract must authorize the checkpoint");
+            request.control().assertRepairRetryAllowed("click-two", "click-two", false,
+                    ToolEffectPolicy.OBSERVATION_GATED, "desktop:window-1");
+            assertThrows(ToolPermissionDeniedException.class, () ->
+                    request.control().assertRepairRetryAllowed("click-one", "click-one", false,
+                            ToolEffectPolicy.OBSERVATION_GATED, "desktop:window-1"));
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "网络视图已显示")));
+        };
+        ModelTaskGateway planner = task -> CompletableFuture.failedFuture(
+                new AssertionError("structured contract must not call a model planner"));
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = new AgentEngine(
+                     new AgentCompiler(fixture.definitions, extensions, fixture.json),
+                     fixture.runs, fixture.plans, withClaimDone(reasoning), Runnable::run,
+                     fixture.json, fixture.clock, new RunUsageLedger(), planner,
+                     (request, proof) -> {
+                         callbacks.incrementAndGet();
+                         delivered.set(proof);
+                         RunId runId = activeId.get();
+                         assertNotNull(runId);
+                         var committed = fixture.runs.eventsAfter(runId, 0);
+                         assertTrue(committed.stream().anyMatch(event ->
+                                 event.type().equals("core.effect.reconciled")
+                                         && event.payload().path("actionInvocationId")
+                                                 .asText("").equals(proof.invocationId())
+                                         && event.payload().path("evidenceObservationId")
+                                                 .asText("").equals(proof.evidenceObservationId())),
+                                 "callback may only receive a durably reconciled action");
+                         assertTrue(committed.stream().noneMatch(event ->
+                                 event.type().equals("core.run.completed")),
+                                 "callback runs before technical completion");
+                     })) {
+            RunRequest input = fixture.request("v3-unknown-click").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract));
+            var handle = engine.start(input);
+            var completion = handle.completion().toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS);
+            assertEquals(RunState.COMPLETED, completion.state(), completion.error());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            List<String> types = events.stream().map(event -> event.type()).toList();
+            int outcomeAt = types.indexOf("core.task.outcome");
+            int checkpointAt = types.indexOf("core.task.checkpoint_verified");
+            int reconciledAt = types.indexOf("core.effect.reconciled");
+            int completedAt = types.indexOf("core.run.completed");
+            assertTrue(checkpointAt >= 0 && checkpointAt < reconciledAt
+                    && reconciledAt < outcomeAt && outcomeAt < completedAt,
+                    "a verified intermediate view releases the gate before final task completion");
+            assertEquals("VERIFIED_COMPLETE", events.get(outcomeAt).payload()
+                    .path("outcome").asText());
+            assertEquals("SATISFIED", events.get(reconciledAt).payload()
+                    .path("outcome").asText());
+            assertEquals(1, callbacks.get());
+            assertEquals(new TaskResultEvaluator.VerifiedActionEvidence("click-1",
+                    "session-1", "window-1", actionFrame, evidenceFrame), delivered.get());
+        }
+    }
+
+    private static ObjectNode desktopReceipt(String invocationId, String operation,
+            String status, String evidenceRef, String observedAt) {
+        return JsonNodeFactory.instance.objectNode().put("invocationId", invocationId)
+                .put("tool", "desktop_session_" + operation).put("operation", operation)
+                .put("target", "系统设置").put("status", status)
+                .put("observedAt", observedAt).put("evidenceRef", evidenceRef);
+    }
+
+    @Test
+    void taskContractReplaysAfterRestartAndLegacyRunIsNotBackfilled() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 contract = new TaskContractV3(3, "what is this?", List.of(),
+                false, true, "definition");
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            ReasoningGateway resumable = request -> CompletableFuture.completedFuture(
+                    request.resumeCommand() == null
+                            ? ReasoningResult.waitingForInput(JsonNodeFactory.instance.objectNode(), "wait")
+                            : ReasoningResult.completed(JsonNodeFactory.instance.objectNode().put("text", "answer")));
+            RunRequest input = fixture.request("replay-contract").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract));
+            RunId runId;
+            try (AgentEngine first = fixture.harnessEngine(extensions, resumable)) {
+                runId = first.start(input).id();
+                assertEquals(RunState.WAITING_INPUT, fixture.runs.find(runId).orElseThrow().snapshot().state());
+            }
+            try (AgentEngine restored = fixture.harnessEngine(extensions, resumable)) {
+                var resumed = restored.resume(runId,
+                        new ResumeCommand("user.input", JsonNodeFactory.instance.objectNode()));
+                assertEquals(RunState.COMPLETED,
+                        resumed.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                var events = fixture.runs.eventsAfter(runId, 0);
+                assertEquals(1, events.stream().filter(event -> event.type().equals("core.task.contract")).count());
+                assertEquals(TaskOutcome.DELIVERED,
+                        TaskResultEvaluator.latestOutcome(events, fixture.json).orElseThrow().outcome());
+            }
+            try (AgentEngine legacy = fixture.engine(extensions,
+                    request -> CompletableFuture.completedFuture(ReasoningResult.completed(
+                            JsonNodeFactory.instance.objectNode().put("text", "legacy"))))) {
+                var handle = legacy.start(fixture.request("legacy-no-harness"));
+                handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+                assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .noneMatch(event -> event.type().startsWith("core.task.")));
+            }
+        }
+    }
+
+    @Test
+    void parentTaskAcceptsTrustedReceiptFromCompletedDescendantRun() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 contract = new TaskContractV3(3, "write child result and inspect it", List.of(
+                new TaskCriterionV3("write", "child result exists", "file.write",
+                        CapabilityMetadata.TargetKind.FILE, "child.txt",
+                        EffectReceiptV1.Status.VERIFIED, ""),
+                new TaskCriterionV3("inspect", "parent inspects child result", "file.read",
+                        CapabilityMetadata.TargetKind.FILE, "child.txt",
+                        EffectReceiptV1.Status.OBSERVED, "")),
+                true, true, "definition");
+        TaskContractV3 childContract = new TaskContractV3(3, "write child.txt", List.of(
+                new TaskCriterionV3("write", "child result exists", "file.write",
+                        CapabilityMetadata.TargetKind.FILE, "child.txt",
+                        EffectReceiptV1.Status.VERIFIED, "")), true, true, "definition");
+        AtomicReference<AgentEngine> engineRef = new AtomicReference<>();
+        ReasoningGateway reasoning = request -> {
+            if (request.runRequest().scope().sessionId().equals("grandchild-session")) {
+                request.events().emit("core.tool.receipt", 1, "framework.core",
+                        fixture.json.createObjectNode().put("invocationId", "grandchild-write")
+                                .put("tool", "sys_file_write").put("operation", "write")
+                                .put("target", ProjectAccessPolicy.projectRoot().resolve("child.txt").toString())
+                                .put("status", "VERIFIED")
+                                .put("observedAt", "2026-01-01T00:00:00Z")
+                                .put("evidenceRef", "file:child.txt"));
+            } else if (request.runRequest().source().kind().equals("subagent")) {
+                RunRequest grandchild = RunRequest.builder()
+                        .agent(AgentDefinitionRef.latest("test.agent"))
+                        .profile(RunProfileRef.latest("test.profile"))
+                        .source(InvocationSource.subAgent(request.runId().value()))
+                        .scope(new RunScope("workspace", "user", "grandchild-session"))
+                        .input(InputBlock.text("write child.txt"))
+                        .attributes(Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(childContract)))
+                        .linkage(new RunLinkage(request.runId(), null, null))
+                        .permissionCeiling(PermissionSet.UNRESTRICTED).build();
+                try { engineRef.get().start(grandchild).completion().toCompletableFuture()
+                        .get(2, TimeUnit.SECONDS); }
+                catch (Exception failure) { return CompletableFuture.failedFuture(failure); }
+            } else {
+                RunRequest child = RunRequest.builder()
+                        .agent(AgentDefinitionRef.latest("test.agent"))
+                        .profile(RunProfileRef.latest("test.profile"))
+                        .source(InvocationSource.subAgent(request.runId().value()))
+                        .scope(new RunScope("workspace", "user", "child-session"))
+                        .input(InputBlock.text("write child.txt"))
+                        .attributes(Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(childContract)))
+                        .linkage(new RunLinkage(request.runId(), null, null))
+                        .permissionCeiling(PermissionSet.UNRESTRICTED).build();
+                try { engineRef.get().start(child).completion().toCompletableFuture().get(2, TimeUnit.SECONDS); }
+                catch (Exception failure) { return CompletableFuture.failedFuture(failure); }
+                request.events().emit("core.tool.receipt", 1, "framework.core",
+                        fixture.json.createObjectNode().put("invocationId", "parent-inspect")
+                                .put("tool", "sys_file_read").put("operation", "read")
+                                .put("target", ProjectAccessPolicy.projectRoot()
+                                        .resolve("child.txt").toString()).put("status", "OBSERVED")
+                                .put("observedAt", "2026-01-01T00:00:01Z")
+                                .put("evidenceRef", "file:parent-inspect"));
+            }
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "done")));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, reasoning)) {
+            engineRef.set(engine);
+            RunRequest parent = fixture.request("parent-child").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract));
+            var handle = engine.start(parent);
+            handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            var result = TaskResultEvaluator.latestOutcome(
+                    fixture.runs.eventsAfter(handle.id(), 0), fixture.json).orElseThrow();
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE, result.outcome());
+            assertEquals(List.of("file:child.txt", "file:parent-inspect"), result.evidenceRefs());
+        }
+    }
+
+    @Test
+    void parentClaimDoneCannotDeliverWhileAChildRunIsNotTerminal() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 question = new TaskContractV3(3, "answer after child", List.of(),
+                false, true, "definition");
+        AtomicReference<RunId> childId = new AtomicReference<>();
+        ReasoningGateway reasoning = request -> {
+            RunRequest child = RunRequest.builder()
+                    .agent(AgentDefinitionRef.latest("test.agent"))
+                    .profile(RunProfileRef.latest("test.profile"))
+                    .source(InvocationSource.subAgent(request.runId().value()))
+                    .scope(new RunScope("workspace", "user", "child-session"))
+                    .input(InputBlock.text("continue the task"))
+                    .linkage(new RunLinkage(request.runId(), null, null))
+                    .permissionCeiling(PermissionSet.UNRESTRICTED).build();
+            RunId id = RunId.random();
+            childId.set(id);
+            fixture.runs.create(id, child, "test-plan", new RunEventDraft(
+                    "core.run.created", 1, "framework.core", null, null,
+                    JsonNodeFactory.instance.objectNode()));
+            fixture.runs.append(id, Set.of(RunState.CREATED), RunState.RUNNING,
+                    new RunEventDraft("core.run.started", 1, "framework.core", null, null,
+                            JsonNodeFactory.instance.objectNode()), null, null).orElseThrow();
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "answer")));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.harnessEngine(extensions, reasoning)) {
+            RunRequest parent = fixture.request("parent-with-active-child").withAttribute(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(question));
+            RunHandle handle = engine.start(parent);
+            handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    engine.taskResult(handle.id()).orElseThrow().outcome());
+            assertEquals("DESCENDANT_RUN_IN_PROGRESS",
+                    engine.taskResult(handle.id()).orElseThrow().stopReason());
+            assertEquals(RunState.CANCELLED, fixture.runs.find(childId.get())
+                    .orElseThrow().snapshot().state());
+        }
+    }
+
+    @Test
+    void restartRestoresNonIdempotentEffectKeyAndRepairBoundary() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        TaskContractV3 emailContract = new TaskContractV3(3, "send email", List.of(
+                new TaskCriterionV3("send", "email submitted", "email.send",
+                        CapabilityMetadata.TargetKind.EMAIL_ADDRESS, "alice@example.com",
+                        EffectReceiptV1.Status.ACCEPTED, "")), true, true, "definition");
+        AtomicReference<Boolean> retryBlocked = new AtomicReference<>(false);
+        ReasoningGateway reasoning = request -> {
+            if (request.resumeCommand() == null) {
+                request.events().emit("core.tool.started", 1, "framework.core",
+                        fixture.json.createObjectNode().put("fingerprint", "first-call")
+                                .put("effectKey", "same-email-effect").put("idempotent", false));
+                request.events().emit("core.tool.receipt", 1, "framework.core",
+                        fixture.json.createObjectNode().put("fingerprint", "first-call")
+                                .put("invocationId", "first-call").put("tool", "email_send")
+                                .put("operation", "send").put("target", "alice@example.com")
+                                .put("status", "UNKNOWN").put("observedAt", "2026-01-01T00:00:00Z")
+                                .put("evidenceRef", "mail:unknown"));
+                request.events().emit("core.task.repair_requested", 1, "framework.springai",
+                        fixture.json.createObjectNode().put("reason", "MISSING_TRUSTED_RECEIPT"));
+                return CompletableFuture.completedFuture(ReasoningResult.waitingForInput(
+                        JsonNodeFactory.instance.objectNode(), "wait"));
+            }
+            try {
+                request.control().assertRepairRetryAllowed("second-call", "same-email-effect", false);
+            } catch (ToolPermissionDeniedException expected) {
+                retryBlocked.set(true);
+            }
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "effect requires observation")));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            RunId id;
+            try (AgentEngine first = fixture.harnessEngine(extensions, reasoning)) {
+                id = first.start(fixture.request("effect-replay").withAttribute(
+                        TaskContractCompiler.ATTRIBUTE,
+                        fixture.json.valueToTree(emailContract))).id();
+            }
+            try (AgentEngine restored = fixture.harnessEngine(extensions, reasoning)) {
+                restored.resume(id, new ResumeCommand("user.input", JsonNodeFactory.instance.objectNode()))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+                assertTrue(retryBlocked.get());
+            }
+        }
+    }
 
     @Test
     void runEventsOutboxIdempotencyAndTerminalArbitrationShareOneStateMachine()
@@ -96,6 +732,188 @@ class AgentEngineIntegrationTest {
     }
 
     @Test
+    void jdbcToolStartBatchIsAtomicAndRejectsUncertainInputOnTheSameWindow() {
+        Fixture fixture = new Fixture();
+        RunId id = RunId.random();
+        RunRequest request = fixture.request(null);
+        fixture.runs.create(id, request, "test-plan", new RunEventDraft(
+                "core.run.created", 1, "framework.core", null, null,
+                JsonNodeFactory.instance.objectNode()));
+        fixture.runs.append(id, Set.of(RunState.CREATED), RunState.RUNNING,
+                new RunEventDraft("core.run.started", 1, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode()), null, null).orElseThrow();
+
+        var first = fixture.runs.appendBatch(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                toolStartBatch("first", "desktop:exact-window"));
+        assertEquals(2, first.orElseThrow().size());
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.tool.receipt", 1, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode().put("invocationId", "first")
+                                .put("status", "UNKNOWN").putObject("metadata")
+                                .put("delivery", "MAYBE_SENT")), null, null).orElseThrow();
+        int before = fixture.runs.eventsAfter(id, 0).size();
+        assertThrows(ToolPermissionDeniedException.class,
+                () -> fixture.runs.appendBatch(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                        toolStartBatch("second", "desktop:exact-window")));
+        assertEquals(before, fixture.runs.eventsAfter(id, 0).size(),
+                "a rejected reservation must not leave half a tool step in the journal");
+        assertEquals(before, fixture.jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_run_outbox WHERE run_id=?", Integer.class, id.value()));
+        assertEquals(2, fixture.runs.appendBatch(id, Set.of(RunState.RUNNING),
+                RunState.RUNNING, toolStartBatch("other", "desktop:another-window"))
+                .orElseThrow().size());
+    }
+
+    @Test
+    void onlyMatchedLaterFrameCanDurablyReconcileUnknownDesktopInput() {
+        Fixture fixture = new Fixture();
+        RunId id = RunId.random();
+        fixture.runs.create(id, fixture.request(null), "test-plan", new RunEventDraft(
+                "core.run.created", 1, "framework.core", null, null,
+                JsonNodeFactory.instance.objectNode()));
+        fixture.runs.append(id, Set.of(RunState.CREATED), RunState.RUNNING,
+                new RunEventDraft("core.run.started", 1, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode()), null, null).orElseThrow();
+        String actionFrame = UUID.randomUUID().toString();
+        var beforeClick = JsonNodeFactory.instance.objectNode()
+                .put("invocationId", "observe-before-click")
+                .put("tool", "desktop_session_observe").put("target", "系统设置")
+                .put("operation", "observe").put("status", "OBSERVED")
+                .put("evidenceRef", "frame:before")
+                .put("observedAt", "2025-12-31T23:59:59Z");
+        beforeClick.putObject("metadata").put("targetId", "exact-window")
+                .put("sessionId", "session-1").put("observationId", actionFrame)
+                .put("windowGeneration", "4").put("contentRevision", "1")
+                .put("capturedAtMillis", "1767225599000");
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.tool.receipt", 1, "framework.core", null, null,
+                        beforeClick), null, null).orElseThrow();
+        fixture.runs.appendBatch(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                toolStartBatch("uncertain-click", "desktop:exact-window")).orElseThrow();
+        String evidenceId = UUID.randomUUID().toString();
+        EffectReconciliationV1 proof = new EffectReconciliationV1("uncertain-click",
+                "session-1", "exact-window", actionFrame, evidenceId);
+        assertTrue(fixture.runs.reconcileEffect(id, proof).isEmpty(),
+                "a start alone cannot release an uncertain input");
+        var action = JsonNodeFactory.instance.objectNode()
+                .put("invocationId", "uncertain-click").put("operation", "click")
+                .put("tool", "desktop_session_click").put("target", "系统设置")
+                .put("status", "UNKNOWN")
+                .put("observedAt", "2026-01-01T00:00:00Z");
+        action.putObject("metadata").put("delivery", "MAYBE_SENT")
+                .put("targetId", "exact-window").put("sessionId", "session-1")
+                .put("observationId", actionFrame).put("windowGeneration", "4");
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.tool.receipt", 1, "framework.core", null, null,
+                        action), null, null).orElseThrow();
+        var observed = JsonNodeFactory.instance.objectNode()
+                .put("invocationId", "observe-1").put("operation", "observe")
+                .put("tool", "desktop_session_observe").put("target", "系统设置")
+                .put("status", "OBSERVED")
+                .put("evidenceRef", "frame:network")
+                .put("observedAt", "2026-01-01T00:00:01Z");
+        observed.putObject("metadata").put("targetId", "exact-window")
+                .put("sessionId", "session-1").put("observationId", evidenceId)
+                .put("windowGeneration", "4").put("capturedAtMillis", "1767225601000")
+                .put("viewEvidence", "heading:1,2,10,10|content:2,20,20,20");
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.tool.receipt", 1, "framework.core", null, null,
+                        observed), null, null).orElseThrow();
+        assertTrue(fixture.runs.reconcileEffect(id,
+                new EffectReconciliationV1("uncertain-click", "session-1",
+                        "other-window", actionFrame, evidenceId)).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> fixture.runs.append(id,
+                Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.effect.reconciled", 1, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode()), null, null));
+        assertTrue(fixture.runs.reconcileEffect(id, proof).isEmpty(),
+                "a later frame alone does not prove the task-specific action postcondition");
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.task.outcome", 2, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode().put("outcome", "VERIFIED_COMPLETE")
+                                .set("evidenceRefs", JsonNodeFactory.instance.arrayNode()
+                                        .add("frame:unrelated"))),
+                null, null).orElseThrow();
+        assertTrue(fixture.runs.reconcileEffect(id, proof).isEmpty(),
+                "an unrelated verified outcome cannot reconcile this action");
+        fixture.runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.task.outcome", 2, "framework.core", null, null,
+                        JsonNodeFactory.instance.objectNode().put("outcome", "VERIFIED_COMPLETE")
+                                .set("evidenceRefs", JsonNodeFactory.instance.arrayNode()
+                                        .add("frame:network"))),
+                null, null).orElseThrow();
+        assertTrue(fixture.runs.reconcileEffect(id,
+                new EffectReconciliationV1("uncertain-click", "session-1",
+                        "exact-window", UUID.randomUUID().toString(), evidenceId)).isEmpty(),
+                "an action cannot be reconciled without its exact earlier trusted frame");
+        int before = fixture.runs.eventsAfter(id, 0).size();
+        var reconciled = fixture.runs.reconcileEffect(id, proof).orElseThrow();
+        assertEquals("core.effect.reconciled", reconciled.type());
+        assertEquals("SATISFIED", reconciled.payload().path("outcome").asText());
+        assertTrue(fixture.runs.reconcileEffect(id, proof).isEmpty(),
+                "one action is reconciled at most once");
+        assertEquals(before + 1, fixture.runs.eventsAfter(id, 0).size());
+        assertEquals(2, fixture.runs.appendBatch(id, Set.of(RunState.RUNNING),
+                RunState.RUNNING, toolStartBatch("fresh-action", "desktop:exact-window"))
+                .orElseThrow().size());
+    }
+
+    private static List<RunEventDraft> toolStartBatch(String invocationId, String resourceKey) {
+        var step = JsonNodeFactory.instance.objectNode()
+                .put("stepId", "tool/" + invocationId).put("kind", "TOOL")
+                .set("input", JsonNodeFactory.instance.objectNode()
+                        .put("invocationId", invocationId));
+        var started = JsonNodeFactory.instance.objectNode()
+                .put("tool", "desktop_session_click")
+                .put("invocationId", invocationId).put("fingerprint", invocationId)
+                .put("effectKey", invocationId).put("effectPolicy", "OBSERVATION_GATED")
+                .put("resourceKey", resourceKey).put("idempotent", false);
+        return List.of(new RunEventDraft("core.step.started", 1, "framework.core",
+                        null, null, step),
+                new RunEventDraft("core.tool.started", 1, "framework.core",
+                        null, null, started));
+    }
+
+    private static ReasoningResult approvalResponse(
+            com.javaclaw.framework.api.ToolApprovalChallenge challenge, String reason) {
+        var output = JsonNodeFactory.instance.objectNode();
+        output.set("approval", challenge.toJson());
+        return ReasoningResult.waitingForApproval(output, reason);
+    }
+
+    /** Fake reasoning gateways still submit the same separate control event as the real model. */
+    private static ReasoningGateway withClaimDone(ReasoningGateway delegate) {
+        return request -> delegate.execute(request).thenApply(result -> {
+            if (result.nextState() != RunState.COMPLETED) return result;
+            var model = com.javaclaw.framework.api.StepId.random();
+            StepEvents.started(request.events(), model,
+                    com.javaclaw.framework.api.AgentStep.Kind.MODEL,
+                    JsonNodeFactory.instance.objectNode(), null);
+            StepEvents.completed(request.events(), model,
+                    JsonNodeFactory.instance.objectNode(), null);
+            String invocation = "fixture-decision-" + UUID.randomUUID();
+            var control = com.javaclaw.framework.api.StepId.tool(request.runId(), invocation);
+            var input = JsonNodeFactory.instance.objectNode().put("phase", "harness.decision")
+                    .put("modelStepId", model.value()).put("invocationId", invocation);
+            StepEvents.started(request.events(), control,
+                    com.javaclaw.framework.api.AgentStep.Kind.ORCHESTRATION,
+                    input, model.value());
+            String message = result.output() == null ? "done"
+                    : result.output().path("text").asText("done");
+            var decision = new ModelDecisionV1(ModelDecisionV1.Decision.CLAIM_DONE,
+                    message, List.of());
+            var submitted = JsonNodeFactory.instance.objectNode()
+                    .put("modelStepId", model.value()).put("invocationId", invocation);
+            submitted.set("value", decision.toJson());
+            request.events().emit("core.harness.decision_submitted", 1,
+                    "framework.springai", submitted);
+            StepEvents.completed(request.events(), control,
+                    JsonNodeFactory.instance.objectNode(), null);
+            return result;
+        });
+    }
+
+    @Test
     void pausedRunRestoresItsPersistedPlanAndResumesAfterKernelRestart() throws Exception {
         Fixture fixture = new Fixture();
         fixture.publishDefinition(Map.of());
@@ -127,6 +945,363 @@ class AgentEngineIntegrationTest {
     }
 
     @Test
+    void expiredPausedRunReturnsTerminalHandleWithoutResumingReasoning() throws Exception {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request -> {
+                 calls.incrementAndGet();
+                 return CompletableFuture.completedFuture(new ReasoningResult(
+                         RunState.PAUSED, null, "MODEL_BLOCKED"));
+             })) {
+            RunHandle handle = engine.start(fixture.request(null, timedBudget()));
+            Instant originalDeadline = engine.deadline(handle.id()).orElseThrow();
+            assertEquals(clock.instant().plus(Duration.ofMinutes(30)), originalDeadline);
+            clock.advance(Duration.ofMinutes(30));
+            assertTrue(engine.expired(handle.id()));
+
+            RunHandle expired = engine.resume(handle.id(), new ResumeCommand("user.input",
+                    JsonNodeFactory.instance.objectNode().put("text", "继续")));
+
+            assertEquals(RunState.CANCELLED,
+                    expired.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            assertEquals(1, calls.get());
+            assertEquals(0, engine.activeRunCount());
+            assertEquals(originalDeadline, engine.deadline(handle.id()).orElseThrow());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.run.resumed")));
+            var cancellation = fixture.runs.eventsAfter(handle.id(), 0).getLast();
+            assertEquals("core.run.cancelled", cancellation.type());
+            assertEquals("RUN_TIMEOUT", cancellation.payload().path("code").asText());
+            assertEquals(originalDeadline.toString(), cancellation.payload().path("deadline").asText());
+            assertFalse(cancellation.payload().path("userInitiated").asBoolean());
+        }
+    }
+
+    @Test
+    void expiredRunIsTerminalAfterRestartAndPreservesUncertainEffectJournal() throws Exception {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ReasoningGateway reasoning = request -> {
+            if (calls.incrementAndGet() > 1) {
+                AtomicInteger dispatched = new AtomicInteger();
+                assertEquals(0, request.control().toolCallCount());
+                assertEquals(timedBudget().maxToolCalls(), request.control().remainingToolCalls());
+                assertThrows(ToolPermissionDeniedException.class, () -> request.control().reserveEffect(
+                        "new-click", "new-fingerprint", "new-effect", false,
+                        ToolEffectPolicy.OBSERVATION_GATED, "desktop:exact-window", dispatched::incrementAndGet));
+                assertEquals(0, dispatched.get(), "terminal expiry does not prove old input was not sent");
+                assertDoesNotThrow(() -> request.control().assertRepairRetryAllowed("different-app-click",
+                        "different-app-effect", false, ToolEffectPolicy.OBSERVATION_GATED,
+                        "desktop:another-window"));
+                return CompletableFuture.completedFuture(ReasoningResult.completed(
+                        JsonNodeFactory.instance.objectNode().put("text", "new task")));
+            }
+            var modelStep = com.javaclaw.framework.api.StepId.random();
+            StepEvents.started(request.events(), modelStep, com.javaclaw.framework.api.AgentStep.Kind.MODEL,
+                    JsonNodeFactory.instance.objectNode(), null);
+            StepEvents.completed(request.events(), modelStep, JsonNodeFactory.instance.objectNode(),
+                    JsonNodeFactory.instance.objectNode().put("inputTokens", 3).put("outputTokens", 2)
+                            .put("estimatedCostCny", new BigDecimal("0.15")));
+            List<RunEventDraft> started = toolStartBatch("uncertain-click", "desktop:exact-window");
+            request.control().recordToolCall("uncertain-click");
+            request.control().reserveEffect("uncertain-click", "uncertain-click", "uncertain-click",
+                    false, ToolEffectPolicy.OBSERVATION_GATED, "desktop:exact-window", () ->
+                            request.events().toolStarted(started.get(0).payload(), started.get(1).payload()));
+            var receipt = JsonNodeFactory.instance.objectNode().put("invocationId", "uncertain-click")
+                    .put("fingerprint", "uncertain-click").put("tool", "desktop_session_click")
+                    .put("operation", "click").put("status", "UNKNOWN");
+            receipt.putObject("metadata").put("delivery", "MAYBE_SENT");
+            request.events().emit("core.tool.receipt", 1, "framework.core", receipt);
+            return CompletableFuture.completedFuture(new ReasoningResult(
+                    RunState.PAUSED, null, "MODEL_BLOCKED"));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            AgentEngine first = fixture.engine(extensions, reasoning);
+            RunHandle handle = first.start(fixture.request(null, timedBudget()));
+            Instant originalDeadline = first.deadline(handle.id()).orElseThrow();
+            String planId = first.get(handle.id()).executionPlanId();
+            JsonNode originalPlan = fixture.plans.find(planId).orElseThrow().deepCopy();
+            first.close();
+            var journalBeforeRecovery = fixture.runs.eventsAfter(handle.id(), 0);
+            clock.advance(Duration.ofDays(2));
+
+            try (AgentEngine restored = fixture.engine(extensions, reasoning)) {
+                assertEquals(RunState.CANCELLED, restored.get(handle.id()).state());
+                assertEquals(0, restored.activeRunCount());
+                assertTrue(restored.activeTurn(fixture.request(null).scope()).isEmpty());
+                assertEquals(1, calls.get(), "expired recovery must not call a model or business tool");
+                assertEquals(originalDeadline, restored.deadline(handle.id()).orElseThrow());
+                assertEquals(originalPlan, fixture.plans.find(planId).orElseThrow());
+                var recoveredJournal = fixture.runs.eventsAfter(handle.id(), 0);
+                assertEquals(journalBeforeRecovery, recoveredJournal.subList(0, journalBeforeRecovery.size()));
+                assertEquals(new RunUsageLedger.UsageSnapshot(3, 2, new BigDecimal("0.15")),
+                        RunUsageRecovery.totals(recoveredJournal));
+                assertTrue(recoveredJournal.stream().noneMatch(event ->
+                        event.type().equals("core.effect.reconciled") || event.type().equals("core.run.resumed")));
+                assertEquals("RUN_TIMEOUT", recoveredJournal.getLast().payload().path("code").asText());
+                assertEquals(RunState.CANCELLED, restored.resume(handle.id(),
+                        new ResumeCommand("user.input", JsonNodeFactory.instance.objectNode()))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+
+                RunHandle fresh = restored.start(fixture.request(null, timedBudget()));
+                assertFalse(fresh.id().equals(handle.id()));
+                assertEquals(RunState.COMPLETED,
+                        fresh.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                assertEquals(2, calls.get());
+            }
+        }
+    }
+
+    @Test
+    void historicalDeadlineUsesOriginalCreationTimeAndLockedBudget() {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            AgentEngine first = fixture.engine(extensions, request -> CompletableFuture.completedFuture(
+                    new ReasoningResult(RunState.PAUSED, null, "MODEL_BLOCKED")));
+            RunHandle handle = first.start(fixture.request(null, timedBudget()));
+            Instant historicalDeadline = first.get(handle.id()).createdAt().plus(timedBudget().timeout());
+            first.close();
+            var created = (ObjectNode) fixture.runs.eventsAfter(handle.id(), 0).getFirst().payload().deepCopy();
+            created.remove("deadline");
+            fixture.jdbc.update("UPDATE agent_run_events SET payload_json=? WHERE run_id=? AND type='core.run.created'",
+                    created.toString(), handle.id().value());
+            clock.advance(Duration.ofMinutes(31));
+
+            try (AgentEngine restored = fixture.engine(extensions, request ->
+                    CompletableFuture.failedFuture(new AssertionError("expired run executed")))) {
+                assertEquals(RunState.CANCELLED, restored.get(handle.id()).state());
+                assertEquals(historicalDeadline, restored.deadline(handle.id()).orElseThrow());
+                assertEquals("RUN_TIMEOUT", fixture.runs.eventsAfter(handle.id(), 0)
+                        .getLast().payload().path("code").asText());
+            }
+        }
+    }
+
+    @Test
+    void expiredRunDoesNotRequireMissingLockedExtensionToReleaseItsThread() {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of("test.recovery", "1.0.0"));
+        RunId id;
+        try (ExtensionManager installed = fixture.extensionManager()) {
+            installed.publish(List.of(ExtensionArtifact.builtin(new RecoveryExtension())));
+            try (AgentEngine first = fixture.engine(installed, request -> CompletableFuture.completedFuture(
+                    new ReasoningResult(RunState.PAUSED, null, "MODEL_BLOCKED")))) {
+                id = first.start(fixture.request(null, timedBudget())).id();
+            }
+        }
+        clock.advance(Duration.ofMinutes(31));
+        try (ExtensionManager empty = fixture.extensionManager();
+             AgentEngine restored = fixture.engine(empty, request ->
+                     CompletableFuture.failedFuture(new AssertionError("expired run executed")))) {
+            assertEquals(RunState.CANCELLED, restored.get(id).state());
+            assertTrue(restored.activeTurn(fixture.request(null).scope()).isEmpty());
+            assertEquals("RUN_TIMEOUT", fixture.runs.eventsAfter(id, 0)
+                    .getLast().payload().path("code").asText());
+        }
+    }
+
+    @Test
+    void deadlineReachedDuringReasoningPublishesTimeoutInsteadOfGenericCancellation() throws Exception {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        CompletableFuture<ReasoningResult> pending = new CompletableFuture<>();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request -> pending)) {
+            RunHandle handle = engine.start(fixture.request(null, timedBudget()));
+            clock.advance(Duration.ofMinutes(30));
+            pending.complete(ReasoningResult.completed(JsonNodeFactory.instance.objectNode().put("text", "late")));
+
+            assertEquals(RunState.CANCELLED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            assertEquals("RUN_TIMEOUT", fixture.runs.eventsAfter(handle.id(), 0)
+                    .getLast().payload().path("code").asText());
+            assertNull(engine.get(handle.id()).output());
+        }
+    }
+
+    @Test
+    void explicitStopReasonSurvivesSynchronousProviderCancellationAndClockExpiry() throws Exception {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        CompletableFuture<ReasoningResult> pending = new CompletableFuture<>();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request -> {
+                 request.control().onCancel(() -> pending.completeExceptionally(
+                         new com.javaclaw.framework.spi.RunCancelledException()));
+                 return pending;
+             })) {
+            RunHandle handle = engine.start(fixture.request(null, timedBudget()));
+            clock.advance(Duration.ofMinutes(30));
+
+            assertTrue(engine.cancel(handle.id(), CancelReason.requestedByUser()));
+
+            assertEquals(RunState.CANCELLED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            var cancellations = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.run.cancelled")).toList();
+            assertEquals(1, cancellations.size());
+            assertEquals("USER_REQUEST", cancellations.getFirst().payload().path("code").asText());
+            assertTrue(cancellations.getFirst().payload().path("userInitiated").asBoolean());
+        }
+    }
+
+    private static RunBudget timedBudget() {
+        return new RunBudget(Duration.ofMinutes(30), 100, 100, 4, BigDecimal.valueOf(5));
+    }
+
+    @Test
+    void recoveringNewPausedTurnRestoresTerminalPredecessorsUnresolvedEffects() throws Exception {
+        MutableClock clock = new MutableClock();
+        Fixture fixture = new Fixture(clock);
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ReasoningGateway reasoning = request -> {
+            int call = calls.incrementAndGet();
+            if (call == 1) {
+                emitDesktopEffect(request, "old-action", "desktop:old-window", "UNKNOWN", "MAYBE_SENT");
+                return CompletableFuture.completedFuture(ReasoningResult.completed(null));
+            }
+            assertEquals(0, request.control().toolCallCount(), "old effects must not spend the new Run's calls");
+            assertThrows(ToolPermissionDeniedException.class, () -> request.control().assertRepairRetryAllowed(
+                    "fresh-action", "fresh-effect", false, ToolEffectPolicy.OBSERVATION_GATED,
+                    "desktop:old-window"));
+            return CompletableFuture.completedFuture(request.resumeCommand() == null
+                    ? new ReasoningResult(RunState.PAUSED, null, "MODEL_BLOCKED")
+                    : ReasoningResult.completed(null));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            RunId newTurn;
+            Instant deadline;
+            try (AgentEngine first = fixture.engine(extensions, reasoning)) {
+                RunHandle predecessor = first.start(fixture.request(null, timedBudget()));
+                assertEquals(RunState.COMPLETED, first.get(predecessor.id()).state());
+                clock.advance(Duration.ofHours(1));
+                RunHandle next = first.start(fixture.request(null, timedBudget()));
+                newTurn = next.id();
+                deadline = first.deadline(newTurn).orElseThrow();
+                assertEquals(RunState.PAUSED, first.get(newTurn).state());
+            }
+            clock.advance(Duration.ofMinutes(5));
+            try (AgentEngine restored = fixture.engine(extensions, reasoning)) {
+                assertEquals(deadline, restored.deadline(newTurn).orElseThrow());
+                assertEquals(RunState.COMPLETED, restored.resume(newTurn, new ResumeCommand("user.input",
+                        JsonNodeFactory.instance.objectNode().put("text", "继续")))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                assertEquals(3, calls.get());
+            }
+        }
+    }
+
+    @Test
+    void provenPreviousEffectDoesNotFenceNewTurnAfterRestart() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ReasoningGateway reasoning = request -> {
+            if (calls.incrementAndGet() == 1)
+                emitDesktopEffect(request, "old-action", "desktop:exact-window", "VERIFIED", "SENT");
+            else {
+                assertEquals(0, request.control().toolCallCount());
+                assertDoesNotThrow(() -> request.control().assertRepairRetryAllowed("new-action",
+                        "new-observation", false, ToolEffectPolicy.OBSERVATION_GATED, "desktop:exact-window"));
+                assertThrows(ToolPermissionDeniedException.class,
+                        () -> request.control().assertRepairRetryAllowed("old-action", "old-action",
+                                false, ToolEffectPolicy.OBSERVATION_GATED, "desktop:exact-window"));
+            }
+            return CompletableFuture.completedFuture(ReasoningResult.completed(null));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            try (AgentEngine first = fixture.engine(extensions, reasoning)) {
+                assertEquals(RunState.COMPLETED, first.start(fixture.request(null))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            }
+            try (AgentEngine restored = fixture.engine(extensions, reasoning)) {
+                assertEquals(RunState.COMPLETED, restored.start(fixture.request(null))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            }
+            assertEquals(2, calls.get());
+        }
+    }
+
+    @Test
+    void newRootInheritsAttachedDescendantsButExcludesUnrelatedDetachedAndDeletedThreads() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicReference<RunId> parent = new AtomicReference<>();
+        ReasoningGateway reasoning = request -> {
+            String role = request.runRequest().attributes().getOrDefault("test.role",
+                    JsonNodeFactory.instance.textNode("new-root")).asText();
+            if (role.equals("old-root")) {
+                parent.set(request.runId());
+                return CompletableFuture.completedFuture(new ReasoningResult(RunState.PAUSED, null, "MODEL_BLOCKED"));
+            } else if (!role.equals("new-root")) {
+                emitDesktopEffect(request, "same-call-id", "desktop:" + role, "UNKNOWN", "MAYBE_SENT");
+            } else {
+                assertThrows(ToolPermissionDeniedException.class, () -> request.control().assertRepairRetryAllowed(
+                        "fresh-action", "fresh-effect", false, ToolEffectPolicy.OBSERVATION_GATED,
+                        "desktop:attached"));
+                for (String excluded : List.of("unrelated", "detached", "deleted"))
+                    assertDoesNotThrow(() -> request.control().assertRepairRetryAllowed("new-" + excluded,
+                            "effect-" + excluded, false, ToolEffectPolicy.OBSERVATION_GATED,
+                            "desktop:" + excluded));
+                assertEquals(0, request.control().toolCallCount());
+            }
+            return CompletableFuture.completedFuture(ReasoningResult.completed(null));
+        };
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            try (AgentEngine first = fixture.engine(extensions, reasoning)) {
+                first.start(fixture.request(null).withAttribute("test.role",
+                        JsonNodeFactory.instance.textNode("old-root")));
+                for (String role : List.of("attached", "unrelated", "detached", "deleted")) {
+                    RunRequest template = fixture.request(null);
+                    RunRequest child = RunRequest.builder().agent(template.agent()).profile(template.profile())
+                            .source(role.equals("unrelated") ? InvocationSource.chat()
+                                    : InvocationSource.subAgent(parent.get().value()))
+                            .scope(new RunScope("workspace", "user", role + "-thread"))
+                            .input(InputBlock.text(role)).permissionCeiling(PermissionSet.UNRESTRICTED)
+                            .linkage(role.equals("unrelated") ? null : new RunLinkage(parent.get(), null, null))
+                            .attributes(Map.of("test.role", JsonNodeFactory.instance.textNode(role),
+                                    "framework.detached", JsonNodeFactory.instance.booleanNode(role.equals("detached"))))
+                            .build();
+                    assertEquals(RunState.COMPLETED, first.start(child)
+                            .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                }
+                fixture.jdbc.update("UPDATE agent_threads SET status='DELETED' WHERE workspace_id=? AND user_id=? AND thread_id=?",
+                        "workspace", "user", "deleted-thread");
+                assertTrue(first.cancel(parent.get(), new CancelReason("TASK_SUPERSEDED", "new goal")));
+            }
+            try (AgentEngine restored = fixture.engine(extensions, reasoning)) {
+                assertEquals(RunState.COMPLETED, restored.start(fixture.request(null))
+                        .completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            }
+        }
+    }
+
+    private static void emitDesktopEffect(ReasoningRequest request, String invocation, String resource,
+                                           String status, String delivery) {
+        List<RunEventDraft> started = toolStartBatch(invocation, resource);
+        request.control().recordToolCall(invocation);
+        request.control().reserveEffect(invocation, invocation, invocation, false,
+                ToolEffectPolicy.OBSERVATION_GATED, resource, () ->
+                        request.events().toolStarted(started.get(0).payload(), started.get(1).payload()));
+        var receipt = JsonNodeFactory.instance.objectNode().put("invocationId", invocation)
+                .put("fingerprint", invocation).put("tool", "desktop_session_click")
+                .put("operation", "click").put("status", status);
+        receipt.putObject("metadata").put("delivery", delivery);
+        request.events().emit("core.tool.receipt", 1, "framework.core", receipt);
+    }
+
+    @Test
     void approvalEventsUseCanonicalContractAndFingerprintControlsResume() throws Exception {
         Fixture fixture = new Fixture();
         fixture.publishDefinition(Map.of());
@@ -137,8 +1312,7 @@ class AgentEngineIntegrationTest {
         try (ExtensionManager extensions = fixture.extensionManager();
              AgentEngine engine = fixture.engine(extensions, request ->
                      CompletableFuture.completedFuture(request.resumeCommand() == null
-                             ? ReasoningResult.waitingForApproval(
-                             challenge.toJson(), "approval required")
+                             ? approvalResponse(challenge, "approval required")
                              : ReasoningResult.completed(
                              JsonNodeFactory.instance.objectNode().put("text", "approved"))))) {
             var handle = engine.start(fixture.request(null));
@@ -172,8 +1346,7 @@ class AgentEngineIntegrationTest {
         try (ExtensionManager extensions = fixture.extensionManager();
              AgentEngine engine = fixture.engine(extensions, request ->
                      CompletableFuture.completedFuture(
-                             ReasoningResult.waitingForApproval(
-                                     challenge.toJson(), "approval required")))) {
+                             approvalResponse(challenge, "approval required")))) {
             var handle = engine.start(fixture.request(null));
             ObjectNode command = JsonNodeFactory.instance.objectNode();
             command.put("approved", false);
@@ -200,7 +1373,7 @@ class AgentEngineIntegrationTest {
         ReasoningGateway reasoning = request -> {
             if (request.resumeCommand() == null) {
                 return CompletableFuture.completedFuture(
-                        ReasoningResult.waitingForApproval(challenge.toJson(), "approval"));
+                        approvalResponse(challenge, "approval"));
             }
             if (resumedTurns.getAndIncrement() == 0) {
                 assertNotNull(request.approvedToolInvocation());
@@ -248,7 +1421,7 @@ class AgentEngineIntegrationTest {
         CompletableFuture<ReasoningResult> interruptedTurn = new CompletableFuture<>();
         ReasoningGateway firstReasoning = request -> request.resumeCommand() == null
                 ? CompletableFuture.completedFuture(
-                        ReasoningResult.waitingForApproval(challenge.toJson(), "approval"))
+                        approvalResponse(challenge, "approval"))
                 : interruptedTurn;
 
         try (ExtensionManager extensions = fixture.extensionManager()) {
@@ -288,8 +1461,7 @@ class AgentEngineIntegrationTest {
                 "fingerprint", "CONFIRM", "send email");
         try (ExtensionManager extensions = fixture.extensionManager();
              AgentEngine engine = fixture.engine(extensions, request ->
-                     CompletableFuture.completedFuture(ReasoningResult.waitingForApproval(
-                             challenge.toJson(), "approval")))) {
+                     CompletableFuture.completedFuture(approvalResponse(challenge, "approval")))) {
             var handle = engine.start(fixture.request(null));
             assertThrows(IllegalArgumentException.class, () -> engine.resume(
                     handle.id(), new ResumeCommand("user.input",
@@ -330,8 +1502,7 @@ class AgentEngineIntegrationTest {
                         }
                     });
             try {
-                firstTurn.complete(ReasoningResult.waitingForApproval(
-                        challenge.toJson(), "approval"));
+                firstTurn.complete(approvalResponse(challenge, "approval"));
 
                 assertEquals(RunState.COMPLETED,
                         handle.completion().toCompletableFuture()
@@ -470,7 +1641,7 @@ class AgentEngineIntegrationTest {
 
     private static final class Fixture {
         private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
-        private final Clock clock = Clock.systemUTC();
+        private final Clock clock;
         private final JdbcTemplate jdbc;
         private final DataSourceTransactionManager transactions;
         private final JdbcAgentDefinitionStore definitions;
@@ -478,6 +1649,11 @@ class AgentEngineIntegrationTest {
         private final JdbcExecutionPlanStore plans;
 
         private Fixture() {
+            this(Clock.systemUTC());
+        }
+
+        private Fixture(Clock clock) {
+            this.clock = clock;
             DriverManagerDataSource dataSource = new DriverManagerDataSource(
                     "jdbc:h2:mem:engine-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
             new SchemaInitializer(dataSource).initialize();
@@ -511,6 +1687,10 @@ class AgentEngineIntegrationTest {
         }
 
         private RunRequest request(String idempotencyKey) {
+            return request(idempotencyKey, RunBudget.UNBOUNDED);
+        }
+
+        private RunRequest request(String idempotencyKey, RunBudget budget) {
             return RunRequest.builder()
                     .agent(AgentDefinitionRef.latest("test.agent"))
                     .profile(RunProfileRef.latest("test.profile"))
@@ -518,7 +1698,7 @@ class AgentEngineIntegrationTest {
                     .scope(new RunScope("workspace", "user", "session"))
                     .input(InputBlock.text("hello"))
                     .permissionCeiling(PermissionSet.UNRESTRICTED)
-                    .budget(RunBudget.UNBOUNDED)
+                    .budget(budget)
                     .idempotencyKey(idempotencyKey)
                     .build();
         }
@@ -532,6 +1712,22 @@ class AgentEngineIntegrationTest {
             return new AgentEngine(new AgentCompiler(definitions, extensions, json), runs, plans,
                     reasoning, executor, json, clock, new RunUsageLedger());
         }
+
+        private AgentEngine harnessEngine(ExtensionManager extensions, ReasoningGateway reasoning) {
+            ModelTaskGateway planner = task -> CompletableFuture.failedFuture(
+                    new AssertionError("structured task should not call model planner"));
+            return new AgentEngine(new AgentCompiler(definitions, extensions, json), runs, plans,
+                    withClaimDone(reasoning), Runnable::run, json, clock, new RunUsageLedger(), planner);
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-09-30T10:00:00Z"));
+
+        private void advance(Duration duration) { now.updateAndGet(value -> value.plus(duration)); }
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(ZoneId zone) { return Clock.fixed(instant(), zone); }
+        @Override public Instant instant() { return now.get(); }
     }
 
     private static final class RecoveryExtension implements AgentFrameworkExtension {

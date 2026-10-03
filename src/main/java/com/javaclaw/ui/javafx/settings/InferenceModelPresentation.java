@@ -6,6 +6,7 @@ import com.javaclaw.application.inference.InferenceManagementApplicationService;
 import com.javaclaw.application.inference.InferenceRuntimePort;
 import com.javaclaw.application.inference.InferenceSystemProfilePort;
 import com.javaclaw.application.inference.LocalInferenceQuickSetupApplicationService.SupportedModelType;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.inference.api.InferenceModelAsset;
 import com.javaclaw.inference.api.InferenceModelProfile;
 
@@ -165,13 +166,25 @@ final class InferenceModelPresentation {
                 + bytes(value.safeModelBudgetBytes());
     }
 
-    static String filterLogs(List<String> logs, String filter) {
-        return logs.stream().filter(line -> {
-            boolean invocation = line.contains("[INFERENCE_CALL]");
-            if ("调用日志".equals(filter)) return invocation;
-            if ("运行日志".equals(filter)) return !invocation;
-            return true;
-        }).collect(java.util.stream.Collectors.joining("\n"));
+    enum LogFilter {
+        ALL("全部日志"), INVOCATION("调用日志"), RUNTIME("运行日志");
+
+        private final String label;
+        LogFilter(String label) { this.label = label; }
+        @Override public String toString() { return label; }
+    }
+
+    static String filterLogs(List<ServicePluginLogEntry> logs, LogFilter filter) {
+        LogFilter selected = filter == null ? LogFilter.ALL : filter;
+        return logs.stream().filter(entry -> {
+            boolean invocation = entry.kind() == ServicePluginLogEntry.Kind.INFERENCE_INVOCATION;
+            return switch (selected) {
+                case ALL -> true;
+                case INVOCATION -> invocation;
+                case RUNTIME -> !invocation;
+            };
+        }).map(ServicePluginLogEntry::text)
+                .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     static String bytes(long value) {

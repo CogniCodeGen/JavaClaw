@@ -503,7 +503,8 @@ public final class DeliveranceServicePluginGateway implements
                 processes.list().stream().filter(value -> value.id().equals(PLUGIN_ID)).findFirst();
         return plugin.map(value -> new InferenceApiServerControlPort.ServiceSnapshot(
                 status(), value.state().name(), value.pid(), value.activeRequests(),
-                value.recentLogs(), supportsInvocationLogging())).orElseGet(() ->
+                value.recentLogs(), supportsInvocationLogging(),
+                processes.recentLogEntries(PLUGIN_ID, 200))).orElseGet(() ->
                 new InferenceApiServerControlPort.ServiceSnapshot(status(), "STOPPED", 0, 0,
                         List.of(), supportsInvocationLogging()));
     }

@@ -20,6 +20,7 @@ import com.javaclaw.framework.api.RunOutcome;
 import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.api.RunRequest;
 import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
@@ -140,7 +141,6 @@ public final class AgentNodeExecutor implements NodeExecutor {
             JsonNode output = outcome.output();
             String text = output == null ? "" : output.path("text").asText("");
             if (text.isBlank() && output != null) text = output.path("value").asText("");
-            text = com.javaclaw.util.ChineseOutputGuard.enforceUserVisibleReply(text);
             String outputKey = config.path("outputKey").asText("agent.output");
             return NodeResult.output(StatePatch.builder().set(outputKey, text).build(), text);
         } catch (TimeoutException timeout) {
@@ -174,16 +174,32 @@ public final class AgentNodeExecutor implements NodeExecutor {
         switch (event.type()) {
             case "core.model.started" -> callbacks.onEvent(new ConversationEvent.Hint(
                     "工作流 Agent 正在推理…"));
-            case "core.tool.started" -> callbacks.onEvent(new ConversationEvent.Hint(
-                    "工作流 Agent 调用工具：" + event.payload().path("tool").asText("unknown")));
+            case "core.tool.started" -> callbacks.onEvent(new ConversationEvent.ToolStarted(
+                    event.payload().path("tool").asText("unknown"),
+                    event.payload().path("invocationId").asText(""),
+                    event.payload().path("arguments").toString()));
             case "core.tool.completed" -> callbacks.onEvent(new ConversationEvent.ToolResult(
                     event.payload().path("tool").asText("unknown"),
-                    event.payload().path("output").toString()));
+                    event.payload().path("output").toString(),
+                    event.payload().path("invocationId").asText(""),
+                    event.payload().path("output"), executionStatus(event.payload())));
+            case "core.tool.failed" -> callbacks.onEvent(new ConversationEvent.ToolFailed(
+                    event.payload().path("tool").asText("unknown"),
+                    event.payload().path("invocationId").asText(""),
+                    event.payload().path("message").asText("工具调用失败")));
             default -> {
                 if (!event.type().startsWith("core.run.")) {
                     callbacks.onEvent(new ConversationEvent.Custom(event.type(), event.payload()));
                 }
             }
+        }
+    }
+
+    private static ToolExecutionStatus executionStatus(JsonNode payload) {
+        try {
+            return ToolExecutionStatus.valueOf(payload.path("status").asText("UNKNOWN"));
+        } catch (IllegalArgumentException invalid) {
+            return ToolExecutionStatus.UNKNOWN;
         }
     }
 }

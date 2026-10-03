@@ -26,7 +26,12 @@ public interface ChatHistoryApplicationService {
 
     void delete(String workspaceId, String sessionId);
 
-    record SessionSnapshot(String id, String title, LocalDateTime createdAt) {
+    record SessionSnapshot(String id, String title, LocalDateTime createdAt,
+                           boolean autoTitlePending) {
+        public SessionSnapshot(String id, String title, LocalDateTime createdAt) {
+            this(id, title, createdAt, false);
+        }
+
         public SessionSnapshot {
             if (id == null || id.isBlank()) throw new IllegalArgumentException("会话 id 不能为空");
             title = title == null || title.isBlank() ? "新的对话" : title;

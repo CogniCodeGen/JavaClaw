@@ -39,10 +39,12 @@ final class AgentConfigPersistence {
         }
     }
 
-    void save(Properties properties) {
-        if (store.save(CONFIG_NAMESPACE, properties)) {
+    boolean save(Properties properties) {
+        boolean persisted = store.save(CONFIG_NAMESPACE, properties);
+        if (persisted) {
             log.info("智能体配置已保存到 H2: {}", databaseDescription);
         }
+        return persisted;
     }
 
     void savePropertyAsync(Executor executor, String key, String value) {

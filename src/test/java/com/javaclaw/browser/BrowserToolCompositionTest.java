@@ -98,12 +98,25 @@ class BrowserToolCompositionTest {
     }
 
     @Test
-    void bareHtmlElementsAreResolvedAsCssSelectors() {
-        assertTrue(BrowserTargetResolver.looksLikeSelector("body"));
-        assertTrue(BrowserTargetResolver.looksLikeSelector("pre"));
-        assertTrue(BrowserTargetResolver.looksLikeSelector("my-weather-card"));
-        assertTrue(BrowserTargetResolver.looksLikeSelector("#forecast"));
-        assertFalse(BrowserTargetResolver.looksLikeSelector("上海天气"));
+    void targetKindIsExplicitAndPlainValuesAreOnlyText() {
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.TEXT, "body"),
+                BrowserTargetResolver.parse("body"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.CSS, "body"),
+                BrowserTargetResolver.parse("css:body"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.CSS, "#forecast"),
+                BrowserTargetResolver.parse("css:#forecast"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.SNAPSHOT, "@e1"),
+                BrowserTargetResolver.parse("@e1"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.TEXT, "#forecast"),
+                BrowserTargetResolver.parse("#forecast"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.XPATH, "//button"),
+                BrowserTargetResolver.parse("xpath://button"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.LABEL, "Email"),
+                BrowserTargetResolver.parse("label:Email"));
+        assertEquals(new BrowserTargetResolver.TargetRef(BrowserTargetResolver.Kind.TEXT, "#forecast"),
+                BrowserTargetResolver.parse("text:#forecast"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> BrowserTargetResolver.parse("css:"));
     }
 
     @Test

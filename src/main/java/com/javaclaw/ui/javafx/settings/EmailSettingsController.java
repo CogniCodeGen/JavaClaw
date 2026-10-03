@@ -3,8 +3,10 @@ package com.javaclaw.ui.javafx.settings;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.EmailProbeResult;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.EmailSettings;
+import com.javaclaw.application.settings.CommunicationSettingsApplicationService.Encryption;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.SaveResult;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.Snapshot;
+import com.javaclaw.ui.javafx.settings.EmailSettingsViewModel.Preset;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -15,21 +17,23 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.util.StringConverter;
 
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** 邮件设置 Controller；网络探测与持久化均通过应用服务在托管 I/O 任务中执行。 */
 public final class EmailSettingsController implements AutoCloseable {
 
     @FXML private ScrollPane root;
-    @FXML private ComboBox<String> presetCombo;
+    @FXML private ComboBox<Preset> presetCombo;
     @FXML private TextField smtpHostField;
     @FXML private TextField smtpPortField;
     @FXML private TextField imapHostField;
     @FXML private TextField imapPortField;
-    @FXML private ComboBox<String> encryptionCombo;
+    @FXML private ComboBox<Encryption> encryptionCombo;
     @FXML private TextField usernameField;
     @FXML private SecretFieldController passwordFieldController;
     @FXML private TextField fromAddressField;
@@ -54,9 +58,12 @@ public final class EmailSettingsController implements AutoCloseable {
 
     @FXML
     private void initialize() {
-        presetCombo.getItems().setAll(
-                List.of("QQ 邮箱", "163 邮箱", "Gmail", "Outlook", "自定义"));
-        encryptionCombo.getItems().setAll(List.of("SSL", "STARTTLS", "无"));
+        presetCombo.getItems().setAll(List.of(Preset.QQ, Preset.NETEASE_163,
+                Preset.GMAIL, Preset.OUTLOOK, Preset.CUSTOM));
+        presetCombo.setConverter(displayOnly(EmailSettingsController::presetLabel));
+        encryptionCombo.getItems().setAll(List.of(Encryption.SSL,
+                Encryption.STARTTLS, Encryption.NONE));
+        encryptionCombo.setConverter(displayOnly(EmailSettingsController::encryptionLabel));
         bind();
         SettingsFieldSupport.validateInteger(smtpPortField, 1, 65535);
         SettingsFieldSupport.validateInteger(imapPortField, 1, 65535);
@@ -132,6 +139,38 @@ public final class EmailSettingsController implements AutoCloseable {
     private void failed(Throwable thrown, Consumer<Throwable> failure) {
         viewModel.errorProperty().set(SettingsFieldSupport.failureMessage(thrown));
         failure.accept(thrown);
+    }
+
+    private static <T> StringConverter<T> displayOnly(Function<T, String> label) {
+        return new StringConverter<>() {
+            @Override
+            public String toString(T value) {
+                return value == null ? "" : label.apply(value);
+            }
+
+            @Override
+            public T fromString(String text) {
+                return null;
+            }
+        };
+    }
+
+    static String presetLabel(Preset preset) {
+        return switch (preset) {
+            case QQ -> "QQ 邮箱";
+            case NETEASE_163 -> "163 邮箱";
+            case GMAIL -> "Gmail";
+            case OUTLOOK -> "Outlook";
+            case CUSTOM -> "自定义";
+        };
+    }
+
+    static String encryptionLabel(Encryption encryption) {
+        return switch (encryption) {
+            case SSL -> "SSL";
+            case STARTTLS -> "STARTTLS";
+            case NONE -> "无";
+        };
     }
 
     void deactivate() { refresh.cancel(); }

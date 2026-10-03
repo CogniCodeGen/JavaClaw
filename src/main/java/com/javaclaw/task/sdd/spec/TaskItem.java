@@ -3,12 +3,10 @@ package com.javaclaw.task.sdd.spec;
 import java.util.List;
 
 /**
- * {@code tasks.md} 中的一个可勾选实现项 —— 步骤状态的<b>真相载体</b>。
+ * 结构化任务快照中的一个实现项。
  *
- * <p>对应 markdown 行：{@code - [ ] N. 动作（涉及文件）— 判据：xxx}。复选框
- * {@code [ ]}/{@code [x]} 就是步骤进度，没有独立的状态字段；执行循环取首个未勾项推进、
- * 谓词成立后把 {@code [ ]} 改写为 {@code [x]} 落盘。本 record 是从 markdown 折叠出的
- * 派生只读视图，写回一律经 {@code SpecStore} 改 markdown。</p>
+ * <p>{@code tasks.json} 的 {@code done} 是进度状态；{@code tasks.md} 仅为可读投影。
+ * 执行循环取首个未完成项推进，状态写回统一由 {@code SpecStore} 完成。</p>
  *
  * @param index     序号（从 1 起，与 markdown 行内编号一致）
  * @param action    动作描述

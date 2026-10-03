@@ -239,6 +239,7 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
             epoch = epochSequence.incrementAndGet();
             runEpochs.put(id, epoch);
             // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
+            task.taskResult = null;
             setState(task, SddTaskState.RUNNING, null);
             submission = new DriverSubmission(id, new java.util.concurrent.CompletableFuture<>());
             driverSubmissions.put(epoch, submission);
@@ -460,6 +461,7 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
         refreshProgress(task);
         // 真正终结（非 NEEDS_HUMAN 可续跑态）时清掉任务级"同意全部"授权
         if (st != SddTaskState.NEEDS_HUMAN) ToolConfirmationManager.clearTaskAllowlist(task.id);
+        task.taskResult = outcome.taskResult();
         setState(task, st, outcome.message());
         log.info("[SDD] 任务 {} 终态: {} — {}", task.id, st, outcome.message());
         // 任务成功完成 = "复杂任务成功"的最强学习信号：异步蒸馏可沉淀的工作流经验（失败静默）
@@ -501,7 +503,8 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
     private void refreshProgress(SddManagedTask task) {
         try {
             SpecStore store = new SpecStore(task.workDir, jdbc, workspaceId,
-                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, task.id, workflowService != null));
+                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, task.id, workflowService != null),
+                    json.mapper());
             String slug = SpecPaths.makeSlug(task.id, task.title);
             OpenSpecChange ch = store.readChange(slug, task.id, task.title);
             task.progress = ch.progressPercent();
@@ -525,7 +528,8 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
                     task.totalInputTokens + task.totalOutputTokens, task.tokenBudget);
             notifyLog(task.id, task.title, "⚠ token 预算已耗尽（已用 "
                     + (task.totalInputTokens + task.totalOutputTokens) + " / 预算 "
-                    + task.tokenBudget + "），将在当前步骤结束后停为待人工");
+                    + task.tokenBudget + "），将在当前步骤结束后停为待人工",
+                    SddProgress.LogKind.WARN);
         }
         notifyTaskChanged(task);
     }
@@ -580,7 +584,8 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
         if (t == null) return Optional.empty();
         try {
             SpecStore store = new SpecStore(t.workDir, jdbc, workspaceId,
-                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, t.id, workflowService != null));
+                    com.javaclaw.task.sdd.SddThreadGuard.coordinator(workspaceId, t.id, workflowService != null),
+                    json.mapper());
             return Optional.of(store.readChange(SpecPaths.makeSlug(t.id, t.title), t.id, t.title));
         } catch (Exception e) {
             return Optional.empty();
@@ -595,10 +600,14 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
         ProgressAdapter(SddManagedTask task) { this.task = task; }
 
         @Override public void phase(String phaseName) {
-            notifyLog(task.id, task.title, "[阶段] " + phaseName);
+            notifyLog(task.id, task.title, "[阶段] " + phaseName,
+                    SddProgress.LogKind.INFO);
         }
         @Override public void log(String message) {
-            notifyLog(task.id, task.title, message);
+            notifyLog(task.id, task.title, message, SddProgress.LogKind.DEFAULT);
+        }
+        @Override public void log(SddProgress.LogKind kind, String message) {
+            notifyLog(task.id, task.title, message, kind);
         }
         @Override public void progress(int percent) {
             task.progress = percent;
@@ -617,11 +626,12 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
         }
     }
 
-    private void notifyLog(String taskId, String taskTitle, String message) {
+    private void notifyLog(String taskId, String taskTitle, String message,
+                           SddProgress.LogKind kind) {
         if (get(taskId) == null) return;
         for (SddTaskListener listener : listeners) {
             try {
-                listener.onLog(taskId, taskTitle, message);
+                listener.onLog(taskId, taskTitle, message, kind);
             } catch (RuntimeException failure) {
                 log.debug("[SDD] 日志监听回调失败: {}", failure.getMessage());
             }

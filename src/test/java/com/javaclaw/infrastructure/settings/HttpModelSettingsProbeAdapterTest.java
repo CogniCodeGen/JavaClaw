@@ -32,6 +32,7 @@ class HttpModelSettingsProbeAdapterTest {
     private HttpModelSettingsProbeAdapter adapter;
     private AtomicReference<String> embeddingBody;
     private AtomicReference<String> embeddingAuthorization;
+    private AtomicReference<URI> embeddingUri;
     private AtomicReference<String> modelAuthorization;
     private AtomicReference<String> modelMethod;
     private AtomicReference<URI> modelUri;
@@ -43,6 +44,7 @@ class HttpModelSettingsProbeAdapterTest {
     void setUp() {
         embeddingBody = new AtomicReference<>();
         embeddingAuthorization = new AtomicReference<>();
+        embeddingUri = new AtomicReference<>();
         modelAuthorization = new AtomicReference<>();
         modelMethod = new AtomicReference<>();
         modelUri = new AtomicReference<>();
@@ -71,6 +73,24 @@ class HttpModelSettingsProbeAdapterTest {
         assertEquals("GET", modelMethod.get());
         assertEquals("Bearer model-key", modelAuthorization.get());
         assertEquals(URI.create(baseUrl() + "/models"), modelUri.get());
+    }
+
+    @Test
+    void modelProbeAcceptsOfficialDashscopeSuccessWithNullCode() throws Exception {
+        modelResponse = """
+                {"code":null,"message":null,"success":true,
+                 "output":{"total":1,"models":[{"model":"qwen-turbo"}]}}
+                """;
+        var settings = new ModelSettings("dashscope",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-turbo", "model-key",
+                false, 4096, "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2);
+
+        var result = adapter.probeModel(settings);
+
+        assertTrue(result.succeeded());
+        assertTrue(result.message().contains("模型列表接口可达"));
+        assertEquals(URI.create("https://dashscope.aliyuncs.com/api/v1/models?page_no=1&page_size=100"),
+                modelUri.get());
     }
 
     @Test
@@ -148,6 +168,7 @@ class HttpModelSettingsProbeAdapterTest {
 
         assertTrue(result.succeeded());
         assertNull(modelAuthorization.get());
+        assertEquals(URI.create("https://example.test/api/tags"), modelUri.get());
     }
 
     @Test
@@ -167,6 +188,23 @@ class HttpModelSettingsProbeAdapterTest {
         assertEquals(1, embeddingRequests.get());
         assertEquals("Bearer new-key", embeddingAuthorization.get());
         assertTrue(embeddingBody.get().contains("\"model\":\"embedding-model\""));
+    }
+
+    @Test
+    void ollamaEmbeddingProbeUsesRuntimeCompatibleV1Endpoint() throws Exception {
+        EmbeddingSettings persisted = embedding("persisted-key", 3);
+        for (String base : new String[] {"http://127.0.0.1:11434",
+                "http://127.0.0.1:11434/v1"}) {
+            var form = new EmbeddingSettings(true, "ollama", base, "not-needed",
+                    "nomic-embed-text", 3, 5, 0.35);
+
+            var result = adapter.probeEmbedding(form, persisted);
+
+            assertTrue(result.succeeded());
+            assertEquals(URI.create("http://127.0.0.1:11434/v1/embeddings"),
+                    embeddingUri.get());
+            assertNull(embeddingAuthorization.get());
+        }
     }
 
     @Test
@@ -212,13 +250,15 @@ class HttpModelSettingsProbeAdapterTest {
     }
 
     private HttpResult send(HttpRequest request) throws java.io.IOException {
-        if (request.uri().getPath().endsWith("/models")) {
+        if (request.uri().getPath().endsWith("/models")
+                || request.uri().getPath().endsWith("/api/tags")) {
             modelMethod.set(request.method());
             modelUri.set(request.uri());
             modelAuthorization.set(request.headers().firstValue("Authorization").orElse(null));
             return response(request.uri(), modelStatus, modelResponse);
         }
         embeddingRequests.incrementAndGet();
+        embeddingUri.set(request.uri());
         embeddingAuthorization.set(
                 request.headers().firstValue("Authorization").orElse(null));
         var subscriber = HttpRequest.BodyPublishers.ofString("");

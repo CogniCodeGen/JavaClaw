@@ -10,10 +10,12 @@ import com.sun.net.httpserver.HttpServer;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.io.IOException;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Real HTTP acceptance for the OpenAI-compatible chat and embedding adapters. */
@@ -100,6 +103,82 @@ class SpringAiModelFactoryLocalFixtureTest {
                 () -> assertTrue(chatBody.get().contains("E2E local model prompt"), chatBody.get()),
                 () -> assertTrue(embeddingBody.get().contains("E2E local embedding input"),
                         embeddingBody.get()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "/v1", "/v1/"})
+    void ollamaEmbeddingUsesTheOpenAiCompatibleV1Endpoint(String basePath) throws Exception {
+        AgentConfig config = context.getBean(AgentConfig.class);
+        config.setRagEmbeddingProvider("ollama");
+        config.setRagEmbeddingBaseUrl("http://127.0.0.1:"
+                + server.getAddress().getPort() + basePath);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP,
+                null, null, null, null);
+
+        double[] embedding = factory.createEmbeddingProvider()
+                .embed("Ollama embedding input", Duration.ofSeconds(5));
+
+        assertArrayEquals(new double[] {0.1, 0.2, 0.3}, embedding, 0.000_001);
+        assertEquals(1, embeddingRequests.get());
+    }
+
+    @Test
+    void localQwen35LightSendsReasoningNoneWithoutChangingHigh() throws Exception {
+        AgentConfig config = context.getBean(AgentConfig.class);
+        configureTier(config, "http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+        config.setModelName("qwen3.5-9b-uncensored-hauhaucs-aggressive");
+        config.setLightModelName("qwen3.5-9b-uncensored-hauhaucs-aggressive");
+        config.setThinkingEnabled(true);
+        config.setLightThinkingEnabled(false);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP,
+                null, null, null, null);
+        SpringAiModelRegistry registry = new SpringAiModelRegistry();
+        factory.install("fixture-workspace", registry);
+
+        registry.require("fixture-workspace", ModelTier.LIGHT)
+                .call(new Prompt("select a context"));
+        var lightRequest = context.getBean(ObjectMapper.class).readTree(chatBody.get());
+        registry.require("fixture-workspace", ModelTier.HIGH)
+                .call(new Prompt("answer the user"));
+        var highRequest = context.getBean(ObjectMapper.class).readTree(chatBody.get());
+
+        assertEquals("none", lightRequest.path("reasoning_effort").asText());
+        assertEquals("medium", highRequest.path("reasoning_effort").asText());
+        assertEquals(2, chatRequests.get());
+    }
+
+    @Test
+    void explicitLightThinkingStillSendsMedium() throws Exception {
+        AgentConfig config = context.getBean(AgentConfig.class);
+        configureTier(config, "http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+        config.setLightModelName("qwen3.5-9b-uncensored-hauhaucs-aggressive");
+        config.setLightThinkingEnabled(true);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP,
+                null, null, null, null);
+        SpringAiModelRegistry registry = new SpringAiModelRegistry();
+        factory.install("fixture-workspace", registry);
+
+        registry.require("fixture-workspace", ModelTier.LIGHT)
+                .call(new Prompt("reasoning requested"));
+        var request = context.getBean(ObjectMapper.class).readTree(chatBody.get());
+
+        assertEquals("medium", request.path("reasoning_effort").asText());
+    }
+
+    @Test
+    void remoteQwen35LightDoesNotReceiveLocalCompatibilityOption() {
+        AgentConfig config = context.getBean(AgentConfig.class);
+        configureTier(config, "https://example.test/v1");
+        config.setLightModelName("qwen3.5-9b-uncensored-hauhaucs-aggressive");
+        config.setLightThinkingEnabled(false);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP,
+                null, null, null, null);
+        SpringAiModelRegistry registry = new SpringAiModelRegistry();
+        factory.install("fixture-workspace", registry);
+
+        var light = (OpenAiChatModel) registry.require("fixture-workspace", ModelTier.LIGHT);
+
+        assertNull(light.getOptions().getReasoningEffort());
     }
 
     private static void configureTier(AgentConfig config, String baseUrl) {

@@ -27,7 +27,8 @@ class SddThreadDeletionTest {
         index.replaceAll(List.of(task, sibling));
         String owner = SddThreadGuard.coordinator("workspace", task.id, true);
         String slug = SpecPaths.makeSlug(task.id, task.title);
-        var specs = new SpecStore(directory.toString(), db.jdbc(), "workspace", owner);
+        var specs = new SpecStore(directory.toString(), db.jdbc(), "workspace", owner,
+                db.json().mapper());
         assertTrue(specs.writeDesign(slug, "private design"));
         var cache = VerifyCache.load(directory.toString(), slug, db.jdbc(), db.json(), "workspace", owner);
         cache.recordPass("scenario", "verified"); cache.save();
@@ -53,7 +54,7 @@ class SddThreadDeletionTest {
         var task = task("cold");
         index(db).replaceAll(List.of(task));
         String slug = SpecPaths.makeSlug(task.id, task.title);
-        assertTrue(new SpecStore(directory.toString(), db.jdbc(), "workspace")
+        assertTrue(new SpecStore(directory.toString(), db.jdbc(), "workspace", db.json().mapper())
                 .writeDesign(slug, "legacy design"));
         tombstone(db, SddThreadGuard.coordinator("workspace", task.id, false), "DELETED");
         assertTrue(index(db).loadAll().isEmpty());
@@ -68,7 +69,8 @@ class SddThreadDeletionTest {
         var task = task("cold-client"); var retained = task("retained");
         index(db).replaceAll(List.of(task, retained));
         String slug = SpecPaths.makeSlug(task.id, task.title);
-        new SpecStore(directory.toString(), db.jdbc(), "workspace").writeDesign(slug, "private design");
+        new SpecStore(directory.toString(), db.jdbc(), "workspace", db.json().mapper())
+                .writeDesign(slug, "private design");
         var cache = VerifyCache.load(directory.toString(), slug, db.jdbc(), db.json(), "workspace");
         cache.recordPass("scenario", "passed"); cache.save();
         var runs = new com.javaclaw.framework.store.JdbcRunStore(db.jdbc(), db.transactions(),
@@ -94,7 +96,8 @@ class SddThreadDeletionTest {
         var db = new SddTestDatabase(directory.resolve("race-db"));
         String owner = SddThreadGuard.coordinator("workspace", "race", true);
         tombstone(db, owner, "ACTIVE");
-        var specs = new SpecStore(directory.toString(), db.jdbc(), "workspace", owner);
+        var specs = new SpecStore(directory.toString(), db.jdbc(), "workspace", owner,
+                db.json().mapper());
         CompletableFuture<Boolean> writer;
         try (var connection = db.access().open()) {
             connection.setAutoCommit(false);

@@ -2,6 +2,7 @@ package com.javaclaw.ui.javafx.workflow;
 
 import com.javaclaw.workflow.model.NodeType;
 import com.javaclaw.workflow.model.RunStatus;
+import com.javaclaw.workflow.runtime.GraphRun;
 
 /** 工作流展示文案与稳定 CSS 映射。 */
 final class WorkflowLabels {
@@ -45,7 +46,7 @@ final class WorkflowLabels {
             case PAUSED -> "已暂停";
             case RECOVERY_REQUIRED -> "待恢复";
             case RECOVERY_BLOCKED_MISSING_EXTENSION -> "缺少扩展";
-            case COMPLETED -> "已完成";
+            case COMPLETED -> "运行结束 · 未验证";
             case FAILED -> "失败";
             case CANCELLED -> "已取消";
         };
@@ -56,9 +57,29 @@ final class WorkflowLabels {
             case RUNNING -> "jc-badge-running";
             case WAITING_INPUT, RECOVERY_REQUIRED, RECOVERY_BLOCKED_MISSING_EXTENSION ->
                     "jc-badge-amber";
-            case COMPLETED -> "jc-badge-ok";
+            case COMPLETED -> "jc-badge-stopped";
             case FAILED -> "jc-badge-failed";
             default -> "jc-badge-stopped";
         };
+    }
+
+    static String runStatus(GraphRun run) {
+        if (run.status() != RunStatus.COMPLETED) return runStatus(run.status());
+        var result = run.taskResult();
+        if (result == null) return "运行结束 · 历史未核验";
+        return switch (result.outcome()) {
+            case VERIFIED_COMPLETE -> "任务已完成";
+            case DELIVERED -> "答复已交付";
+            case PARTIAL -> "运行结束 · 部分完成";
+            case BLOCKED -> "运行结束 · 任务受阻";
+            case UNVERIFIED -> "运行结束 · 未验证";
+            case NOT_APPLICABLE -> "运行结束 · 无需验收";
+        };
+    }
+
+    static String runStyle(GraphRun run) {
+        return run.status() == RunStatus.COMPLETED && run.taskResult() != null
+                && run.taskResult().outcome() == com.javaclaw.framework.api.TaskOutcome.VERIFIED_COMPLETE
+                ? "jc-badge-ok" : runStyle(run.status());
     }
 }

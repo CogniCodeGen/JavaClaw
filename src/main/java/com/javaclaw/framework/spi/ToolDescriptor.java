@@ -11,7 +11,8 @@ public record ToolDescriptor(
         JsonNode inputSchema,
         String group,
         PermissionSet requiredPermissions,
-        boolean idempotent) {
+        boolean idempotent,
+        ToolEffectPolicy effectPolicy) {
     private static final JsonSchemaValidator SCHEMAS = new JsonSchemaValidator();
 
     public ToolDescriptor {
@@ -20,9 +21,16 @@ public record ToolDescriptor(
         inputSchema = Objects.requireNonNull(inputSchema, "inputSchema").deepCopy();
         group = Objects.requireNonNull(group, "group").trim();
         requiredPermissions = requiredPermissions == null ? PermissionSet.NONE : requiredPermissions;
+        effectPolicy = effectPolicy == null ? ToolEffectPolicy.LEGACY : effectPolicy;
         if (name.isEmpty()) throw new IllegalArgumentException("tool name must not be blank");
         if (group.isEmpty()) throw new IllegalArgumentException("tool group must not be blank");
         SCHEMAS.requireValidSchema(inputSchema, "tool " + name);
+    }
+
+    public ToolDescriptor(String name, String description, JsonNode inputSchema, String group,
+                          PermissionSet requiredPermissions, boolean idempotent) {
+        this(name, description, inputSchema, group, requiredPermissions,
+                idempotent, ToolEffectPolicy.LEGACY);
     }
 
     @Override public JsonNode inputSchema() { return inputSchema.deepCopy(); }

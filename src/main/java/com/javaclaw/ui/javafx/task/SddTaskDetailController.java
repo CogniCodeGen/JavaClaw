@@ -128,7 +128,7 @@ public final class SddTaskDetailController {
     public void show(Task task, OpenSpecChange change) {
         titleLabel.setText(task.title());
         descriptionLabel.setText(text(task.description()) + "　·　工作目录 " + text(task.workDir()));
-        stateBadge.setText(SddTaskFormat.badgeLabel(task.state()));
+        stateBadge.setText(SddTaskFormat.badgeLabel(task.state(), task.taskResult()));
         stateBadge.getStyleClass().setAll("jc-badge", SddTaskFormat.badgeStyle(task.state()));
         donutPercent.setText(String.valueOf(task.progress()));
         donutArc.setLength(-360.0 * task.progress() / 100.0);
@@ -155,14 +155,15 @@ public final class SddTaskDetailController {
     public void clearLogs() { logs.clear(); }
 
     public void appendLog(String message) {
+        appendLog(message, SddLogEntry.Kind.DEFAULT);
+    }
+
+    public void appendLog(String message, SddLogEntry.Kind kind) {
         Matcher matcher = LOG_LINE.matcher(message == null ? "" : message);
         String time = matcher.matches() ? matcher.group(1) : "";
         String text = matcher.matches() ? matcher.group(2) : message;
-        SddLogEntry.Kind kind = text != null && text.contains("✓") ? SddLogEntry.Kind.OK
-                : text != null && text.contains("⚠") ? SddLogEntry.Kind.WARN
-                : text != null && text.contains("⚙") ? SddLogEntry.Kind.INFO
-                : SddLogEntry.Kind.DEFAULT;
-        logs.add(new SddLogEntry(time, text == null ? "" : text, kind));
+        logs.add(new SddLogEntry(time, text == null ? "" : text,
+                kind == null ? SddLogEntry.Kind.DEFAULT : kind));
         if (logs.size() > MAX_LOG_ROWS) logs.remove(0, logs.size() - MAX_LOG_ROWS);
         logList.scrollTo(logs.size() - 1);
     }
@@ -182,7 +183,10 @@ public final class SddTaskDetailController {
 
     private void renderStats(Task task, OpenSpecChange change, int stage) {
         stageValue.setText(task.state() == SddTaskState.COMPLETED
-                ? "已完成" : STAGES[Math.min(stage, STAGES.length - 1)]);
+                ? task.taskResult() != null && task.taskResult().outcome()
+                        == com.javaclaw.framework.api.TaskOutcome.VERIFIED_COMPLETE
+                        ? "任务已完成" : "编排结束"
+                : STAGES[Math.min(stage, STAGES.length - 1)]);
         stageValue.getStyleClass().removeAll(
                 "sdd-stat-value-brand", "sdd-stat-value-amber", "sdd-stat-value-danger");
         if (task.state() == SddTaskState.RUNNING || task.state() == SddTaskState.COMPLETED) {
@@ -249,8 +253,16 @@ public final class SddTaskDetailController {
         }
         if (hasResult) {
             resultTitle.setText(failed ? "任务失败"
-                    : task.state() == SddTaskState.COMPLETED ? "任务结果" : "等待人工处理");
-            resultContent.setText(task.result());
+                    : task.state() == SddTaskState.COMPLETED ? "任务验收" : "等待人工处理");
+            resultContent.setText(com.javaclaw.util.SensitiveDataRedactor.redactText(
+                    task.result() + (task.taskResult() == null ? "\n任务结果：历史记录未核验"
+                    : "\n任务结果：" + SddTaskFormat.taskOutcomeLabel(task.taskResult())
+                    + (task.taskResult().satisfiedCriteria().isEmpty() ? ""
+                            : "\n已做：" + String.join("；", task.taskResult().satisfiedCriteria()))
+                    + (task.taskResult().unmetCriteria().isEmpty() ? ""
+                            : "\n未满足：" + String.join("；", task.taskResult().unmetCriteria()))
+                    + (task.taskResult().stopReason().isBlank() ? ""
+                            : "\n待确认：" + task.taskResult().stopReason()))));
         }
         Proposal proposal = change == null ? null : change.proposal();
         visible(proposalPanel, proposal != null);

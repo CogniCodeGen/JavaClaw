@@ -170,6 +170,8 @@ class AgentTurnQueueIntegrationTest {
                 assertEquals(RunState.RUNNING, engine.get(detached.id()).state());
                 assertNotNull(maintenance.get());
                 assertEquals(RunState.RUNNING, engine.get(maintenance.get().id()).state());
+                assertThrows(IllegalStateException.class,
+                        () -> engine.start(fixture.child(parent.id(), "too-late", false)));
                 List.copyOf(pending.values()).forEach(value -> value.complete(completed()));
             }
         }
@@ -207,6 +209,8 @@ class AgentTurnQueueIntegrationTest {
             }
             RunUsageLedger recovered = new RunUsageLedger();
             try (AgentEngine engine = fixture.engine(request -> { throw new AssertionError(); }, Runnable::run, recovered)) {
+                new RunUsageRecovery(fixture.runs, fixture.plans, fixture.json, recovered)
+                        .restore(maintenanceId);
                 assertEquals(0, recovered.snapshot(parentId).inputTokens());
                 assertEquals(6, recovered.snapshot(childId).inputTokens());
                 assertEquals(9, recovered.snapshot(maintenanceId).inputTokens());
@@ -306,8 +310,10 @@ class AgentTurnQueueIntegrationTest {
         }
         RunRequest child(RunId parent, String name, boolean detached) {
             RunRequest request = request(name, new RunScope("workspace", "user", name));
-            return new RunRequest(request.agent(), request.profile(), new InvocationSource(name.equals("maintenance")
-                    ? "maintenance" : "subagent", name), request.scope(), request.inputs(), new RunLinkage(parent, null, name),
+            boolean maintenance = name.equals("maintenance");
+            return new RunRequest(request.agent(), request.profile(), new InvocationSource(maintenance
+                    ? "maintenance" : "subagent", name), request.scope(), request.inputs(),
+                    new RunLinkage(maintenance ? null : parent, null, name),
                     request.permissionCeiling(), request.budget(), request.idempotencyKey(),
                     Map.of("framework.detached", JSON.booleanNode(detached)));
         }

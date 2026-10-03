@@ -1,5 +1,6 @@
 package com.javaclaw.chat;
 
+import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.loop.model.LoopStatus;
 import org.slf4j.Logger;
@@ -111,30 +112,30 @@ final class ChatStreamRenderer {
         }
     }
 
+    void appendToolCall(String toolName, String invocationId, String input) {
+        activeToolName = toolName;
+        thinking.appendToolCall(toolName, invocationId, input,
+                ThinkingContentRenderer.ToolState.RUNNING);
+    }
+
+    void appendToolResult(ConversationEvent.ToolResult result) {
+        if (assistantMessage == null) return;
+        thinking.appendToolResult(result.toolName(), result.invocationId(),
+                result.result(), result.output(), result.status(), inlineImages);
+        thinking.completeSubAgentIfPresent(displayName(result.toolName()), result.status());
+        if (Objects.equals(result.toolName(), activeToolName)) activeToolName = null;
+    }
+
+    void appendToolFailure(String toolName, String invocationId, String message) {
+        if (assistantMessage == null) return;
+        thinking.appendToolFailure(toolName, invocationId, message);
+        thinking.completeSubAgentIfPresent(displayName(toolName),
+                com.javaclaw.framework.api.ToolExecutionStatus.FAILED);
+        if (Objects.equals(toolName, activeToolName)) activeToolName = null;
+    }
+
     void appendPlanHint(String hint) {
-        if (hint == null) return;
-        if (hint.startsWith("正在执行工具：")) {
-            activeToolName = hint.substring("正在执行工具：".length()).trim();
-            thinking.appendToolCall(activeToolName, "", "running");
-            return;
-        }
-        if (hint.startsWith("工具等待授权：")) {
-            activeToolName = hint.substring("工具等待授权：".length()).trim();
-            thinking.appendToolCall(activeToolName, "", "waiting");
-            return;
-        }
-        if (hint.startsWith("工具执行失败：")) {
-            thinking.appendToolFailure(activeToolName,
-                    hint.substring("工具执行失败：".length()).trim());
-            activeToolName = null;
-            return;
-        }
-        if (hint.contains("正在推理")) {
-            thinking.setStatus("thinking", "思考中...");
-            thinking.recordPipelineProgress("model-response", "模型响应", "running", hint);
-            return;
-        }
-        thinking.updatePlan(hint);
+        if (hint != null) thinking.updatePlan(hint);
     }
 
     void startPlanAgent(String agentName) {
@@ -154,7 +155,7 @@ final class ChatStreamRenderer {
         if (planAgentName == null || chunk == null) {
             return;
         }
-        String displayChunk = chunk.replace("[PLAN_COMPLETE]", "");
+        String displayChunk = chunk;
         if (displayChunk.isEmpty()) {
             return;
         }
@@ -199,7 +200,8 @@ final class ChatStreamRenderer {
         if (assistantMessage == null) return;
         if (!replyBuffer.isEmpty()) replyBuffer.append("\n\n");
         replyBuffer.append("[循环中断] ").append(warning);
-        thinking.recordPipelineProgress("loop-warning", "循环检测", "error", "已中断循环");
+        thinking.recordPipelineProgress("loop-warning", "循环检测",
+                ThinkingContentRenderer.StageState.ERROR, "已中断循环");
     }
 
     void showFinalReply(String text) {

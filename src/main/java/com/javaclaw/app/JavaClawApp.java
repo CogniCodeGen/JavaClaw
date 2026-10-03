@@ -60,9 +60,9 @@ public class JavaClawApp extends Application {
     private ViewHandle<BorderPane> chatViewHandle;
 
     /** 应用组合根：统一拥有浏览器、工作区运行时及依赖它们的全局管理器。 */
-    private ApplicationKernel applicationKernel;
+    private volatile ApplicationKernel applicationKernel;
     /** 进程级 Spring 组合根；必须晚于所有工作区 Context 关闭。 */
-    private AnnotationConfigApplicationContext springContext;
+    private volatile AnnotationConfigApplicationContext springContext;
     private FxDispatcher fxDispatcher;
     /** 工作流中心为工作区级单实例，避免多窗口草稿互相覆盖。 */
     private volatile WorkflowView workflowCenterView;
@@ -84,20 +84,28 @@ public class JavaClawApp extends Application {
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** 分离并排序 JavaFX 与后台资源清理；worker 和 stop() 共用幂等状态。 */
-    private ApplicationShutdownCoordinator shutdownCoordinator;
+    private volatile ApplicationShutdownCoordinator shutdownCoordinator;
+
+    /** SIGINT/SIGTERM must close Spring (and H2) even when JavaFX never calls stop(). */
+    private volatile Thread jvmShutdownHook;
 
     /** 在 JavaFX 场景创建前建立数据、Spring 与工作区基础设施。 */
     @Override
     public void init() throws Exception {
         DataRoot dataRoot = DataRoot.resolve().prepare();
-        springContext = ApplicationContexts.createRoot(dataRoot);
+        AnnotationConfigApplicationContext rootContext = ApplicationContexts.createRoot(dataRoot);
+        springContext = rootContext;
+        Thread hook = new Thread(this::shutdownForJvmTermination, "javaclaw-shutdown-hook");
         try {
-            ApplicationContexts.registerDesktopInfrastructure(springContext);
-            fxDispatcher = springContext.getBean(FxDispatcher.class);
+            Runtime.getRuntime().addShutdownHook(hook);
+            jvmShutdownHook = hook;
+            ApplicationContexts.registerDesktopInfrastructure(rootContext);
+            fxDispatcher = rootContext.getBean(FxDispatcher.class);
             shutdownCoordinator = new ApplicationShutdownCoordinator(fxDispatcher);
             trayCloseCoordinator = new TrayCloseCoordinator(fxDispatcher);
         } catch (Exception | Error failure) {
-            springContext.close();
+            removeJvmShutdownHook();
+            rootContext.close();
             springContext = null;
             throw failure;
         }
@@ -382,13 +390,13 @@ public class JavaClawApp extends Application {
     /**
      * 真正退出应用。
      *
-     * <p>不走 {@code Platform.exit()} → {@link #stop()} 路径，而是后台线程清理后直接
+     * <p>后台线程先完成清理；已安装 AWT 托盘时才在清理完成后
      * {@link Runtime#halt(int)}，原因有二：</p>
      * <ul>
      *   <li>规避 macOS 上 AWT 托盘与 JavaFX 同时关闭时争用原生主线程导致的死锁
-     *       （表现为点退出后卡住，直到看门狗强杀）；</li>
+     *       （表现为点退出后卡住）；</li>
      *   <li>{@code halt} 跳过 JVM 关闭钩子（如 Playwright 驱动进程的清理钩子可能阻塞数秒），
-     *       而 {@code System.exit} 会同步等待这些钩子。</li>
+     *       而 {@code System.exit} 会同步等待这些钩子。应用自己的资源已在此前关闭。</li>
      * </ul>
      */
     private void requestFullExit() {
@@ -403,77 +411,57 @@ public class JavaClawApp extends Application {
                 // remove() 自身排入 AWT EDT，并先禁止可用性监听器触发重装。
                 tray.remove();
             } catch (Throwable trayFailure) {
-                log.debug("提交托盘移除任务失败，退出看门狗将负责终止进程", trayFailure);
+                log.debug("提交托盘移除任务失败，后台清理仍会继续", trayFailure);
             }
         }
-
-        // 看门狗兜底：无论哪条路径卡住，宽限期后强制终止 JVM。
-        startExitWatchdog(5000);
 
         // 视图句柄会销毁 ContextMenu 等 JavaFX 控件，必须在启动后台 worker 之前
-        // 于 FX Application Thread 完成。非 FX 调用方会被有界地切回 FX 线程。
-        if (!shutdownUiResources()) {
-            log.warn("JavaFX 视图未能在宽限时间内清理，等待退出看门狗终止进程");
-            return;
-        }
+        // 于 FX Application Thread 完成。无法调度 UI 时仍要关闭 Spring 与数据库。
+        boolean uiClosed = shutdownUiResources(2000);
+        if (!uiClosed) log.warn("JavaFX 视图未及时清理，继续关闭后台资源和数据库");
 
-        if (awtActive) {
-            // 托盘(AWT)已激活：后台线程清理后直接 halt，规避 macOS 上 AWT 与 JavaFX
-            // 同时关闭争用原生主线程导致的死锁，并跳过可能阻塞的 JVM 关闭钩子。
-            Thread worker = new Thread(() -> {
-                shutdownBackendResources();
-                log.info("资源清理完成，退出进程");
-                Runtime.getRuntime().halt(0);
-            }, "exit-worker");
-            worker.setDaemon(true);
-            worker.start();
-        } else {
-            // 无托盘：沿用 JavaFX 优雅退出（stop() 完成清理后进程自然结束）。
-            Platform.exit();
-        }
-    }
-
-    /**
-     * 启动退出看门狗：守护线程在宽限期后调用 {@link Runtime#halt(int)} 强制终止 JVM。
-     *
-     * <p>是清理逻辑卡死时的最终保障。正常情况下清理 worker 会先 {@code halt} 在看门狗触发前退出。</p>
-     */
-    private void startExitWatchdog(long graceMs) {
-        Thread watchdog = new Thread(() -> {
+        Thread worker = new Thread(() -> {
             try {
-                Thread.sleep(graceMs);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
+                shutdownBackendResources(!uiClosed);
+            } catch (Throwable failure) {
+                log.error("关闭后台资源失败，进程保持运行以便诊断", failure);
                 return;
             }
-            log.warn("退出清理超过 {}ms 未完成，强制终止 JVM", graceMs);
-            Runtime.getRuntime().halt(0);
-        }, "exit-watchdog");
-        watchdog.setDaemon(true);
-        watchdog.start();
+            log.info("资源清理完成，退出进程");
+            if (awtActive) {
+                // macOS 上退出 JavaFX 与 AWT 会争用原生主线程；此时数据库已关闭。
+                Runtime.getRuntime().halt(0);
+            } else {
+                Platform.exit();
+            }
+        }, "exit-worker");
+        // The window may close before this thread finishes; keep the JVM alive until H2 closes.
+        worker.setDaemon(false);
+        worker.start();
     }
 
     /**
-     * JavaFX 生命周期关闭回调。仅在非托盘路径或外部触发 {@code Platform.exit()} 时进入；
-     * 托盘「退出」走 {@link #requestFullExit()} 的 worker 路径，不经此处。与之共用幂等清理。
+     * JavaFX 生命周期关闭回调。与退出 worker 和 JVM 关闭钩子共用幂等清理。
      */
     @Override
     public void stop() {
+        exitInitiated.set(true);
         SystemTrayManager tray = trayManager;
         trayManager = null;
         if (tray != null) tray.remove();
-        if (shutdownUiResources()) shutdownBackendResources();
+        boolean uiClosed = shutdownUiResources(2000);
+        shutdownBackendResources(!uiClosed);
     }
 
     /**
      * 在 FX Application Thread 释放所有视图（幂等）。非 FX 调用会有界等待调度完成，
-     * 超时后不再启动后台清理，交由退出看门狗处理，避免两阶段并发销毁同一对象图。
+     * 但超时不会阻止后续数据库关闭。
      */
-    private boolean shutdownUiResources() {
+    private boolean shutdownUiResources(long timeoutMillis) {
         ApplicationShutdownCoordinator coordinator = shutdownCoordinator;
         if (coordinator == null) return false;
         try {
-            coordinator.closeUi(this::releaseUiResources).get(2000, TimeUnit.MILLISECONDS);
+            coordinator.closeUi(this::releaseUiResources).get(timeoutMillis, TimeUnit.MILLISECONDS);
             return true;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
@@ -496,25 +484,67 @@ public class JavaClawApp extends Application {
         if (mainView != null) safeShutdown("主界面", mainView::close);
     }
 
-    /** 在 UI 清理完成后释放后台基础设施（幂等）。 */
-    private void shutdownBackendResources() {
+    /** SIGINT/SIGTERM does not reliably call JavaFX stop(); prioritize releasing the database. */
+    private void shutdownForJvmTermination() {
+        exitInitiated.set(true);
+        log.info("JVM 收到终止信号，开始关闭应用资源...");
+        // JavaFX may already be stopped. Give queued UI cleanup a short chance, then continue.
+        shutdownUiResources(250);
+        try {
+            shutdownBackendResources(true);
+        } catch (Throwable failure) {
+            log.error("JVM 终止期间关闭后台资源失败", failure);
+        }
+    }
+
+    /** 释放后台基础设施（幂等）；进程退出时可越过失效的 JavaFX 清理。 */
+    private void shutdownBackendResources(boolean allowUnavailableUi) {
         ApplicationShutdownCoordinator coordinator = shutdownCoordinator;
-        if (coordinator == null) return;
-        coordinator.closeBackend(() -> {
-            log.info("JavaClaw 应用正在关闭后台资源...");
+        if (coordinator == null) {
+            closeBackendResources();
+        } else if (allowUnavailableUi) {
+            coordinator.closeBackendForProcessExit(this::closeBackendResources);
+        } else {
+            coordinator.closeBackend(this::closeBackendResources);
+        }
+    }
 
-            // 工作区 Context 按依赖反序关闭；持久化器会在任务作用域之前 flush。
-            ApplicationKernel kernel = applicationKernel;
-            applicationKernel = null;
-            if (kernel != null) safeShutdown("应用内核", kernel::close);
+    private void closeBackendResources() {
+        log.info("JavaClaw 应用正在关闭后台资源...");
 
-            AnnotationConfigApplicationContext rootContext = springContext;
-            springContext = null;
-            if (rootContext != null) safeShutdown("Spring 根 Context", rootContext::close);
+        // 工作区 Context 按依赖反序关闭；持久化器会在任务作用域之前 flush。
+        ApplicationKernel kernel = applicationKernel;
+        applicationKernel = null;
+        if (kernel != null) safeShutdown("应用内核", kernel::close);
+
+        AnnotationConfigApplicationContext rootContext = springContext;
+        try {
+            if (rootContext != null) {
+                long start = System.currentTimeMillis();
+                rootContext.close();
+                springContext = null;
+                long cost = System.currentTimeMillis() - start;
+                if (cost > 200) log.info("关闭 Spring 根 Context 耗时 {}ms", cost);
+            }
+        } finally {
             safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);
+        }
 
-            log.info("JavaClaw 应用已关闭");
-        });
+        // A failed root close must prevent the caller from using Runtime.halt().
+        removeJvmShutdownHook();
+
+        log.info("JavaClaw 应用已关闭");
+    }
+
+    private void removeJvmShutdownHook() {
+        Thread hook = jvmShutdownHook;
+        jvmShutdownHook = null;
+        if (hook == null) return;
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException shuttingDown) {
+            // A shutdown hook cannot be removed once JVM shutdown has begun.
+        }
     }
 
     /** 执行单个清理步骤：吞异常 + 计时，单步 >200ms 记日志（定位退出慢的步骤）。 */
@@ -523,7 +553,7 @@ public class JavaClawApp extends Application {
         try {
             action.run();
         } catch (Throwable t) {
-            log.warn("关闭 {} 时出错（忽略，继续退出）: {}", name, t.getMessage());
+            log.warn("关闭 {} 时出错（忽略，继续退出）", name, t);
         } finally {
             long cost = System.currentTimeMillis() - t0;
             if (cost > 200) log.info("关闭 {} 耗时 {}ms", name, cost);

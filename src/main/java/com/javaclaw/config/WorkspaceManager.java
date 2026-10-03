@@ -47,6 +47,7 @@ public class WorkspaceManager {
             "inference_workspace_bindings");
 
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
+    private final DataRoot managedData;
     private final Path globalDataPath;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
@@ -59,7 +60,8 @@ public class WorkspaceManager {
             DataRoot dataRoot,
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager) {
-        globalDataPath = Objects.requireNonNull(dataRoot, "dataRoot").path();
+        managedData = Objects.requireNonNull(dataRoot, "dataRoot");
+        globalDataPath = managedData.path();
         this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         transactions = new TransactionTemplate(
                 Objects.requireNonNull(transactionManager, "transactionManager"));
@@ -113,7 +115,14 @@ public class WorkspaceManager {
             log.warn("工作区状态持久化失败，已取消切换: {}", workspaceId);
             return false;
         }
-        updateLogDirProperty();
+        try {
+            updateLogDirProperty();
+        } catch (RuntimeException invalidPath) {
+            currentWorkspaceId = previousWorkspaceId;
+            saveCurrentWorkspace();
+            log.warn("工作区日志目录无效，已取消切换: {}", workspaceId, invalidPath);
+            return false;
+        }
 
         log.info("已切换到工作区: {} ({})", target.getName(), workspaceId);
         if (onWorkspaceSwitched != null) {
@@ -161,11 +170,11 @@ public class WorkspaceManager {
     }
 
     public Path getCurrentBrowserDir() {
-        return getGlobalDataPath().resolve("browser").resolve(currentWorkspaceId);
+        return requireManaged(getGlobalDataPath().resolve("browser").resolve(currentWorkspaceId));
     }
 
     public Path getCurrentLogDir() {
-        return getGlobalDataPath().resolve("logs").resolve(currentWorkspaceId);
+        return requireManaged(getGlobalDataPath().resolve("logs").resolve(currentWorkspaceId));
     }
 
     public Workspace getCurrentWorkspace() {
@@ -195,9 +204,9 @@ public class WorkspaceManager {
 
     private void updateLogDirProperty() {
         try {
-            Files.createDirectories(getCurrentLogDir());
+            managedData.requireDirectory(getCurrentLogDir());
         } catch (IOException e) {
-            log.warn("创建日志目录失败: {}", e.getMessage());
+            throw new IllegalStateException("创建应用内日志目录失败", e);
         }
         String logDir = getCurrentLogDir().toString();
         System.setProperty("workspace.log.dir", logDir);
@@ -337,12 +346,20 @@ public class WorkspaceManager {
                 dataRoot.resolve("logs")
         );
         for (Path bucket : buckets) {
-            Path normalizedBucket = bucket.toAbsolutePath().normalize();
-            Path target = normalizedBucket.resolve(workspaceId).normalize();
+            Path normalizedBucket = managedData.requireManaged(bucket);
+            Path target = managedData.requireManaged(normalizedBucket.resolve(workspaceId));
             if (!normalizedBucket.equals(target.getParent())) {
                 throw new IOException("非法工作区文件路径: " + workspaceId);
             }
             deleteDirectoryTree(target);
+        }
+    }
+
+    private Path requireManaged(Path candidate) {
+        try {
+            return managedData.requireManaged(candidate);
+        } catch (IOException failure) {
+            throw new IllegalStateException("应用内工作区路径无效", failure);
         }
     }
 

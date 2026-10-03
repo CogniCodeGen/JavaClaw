@@ -16,6 +16,12 @@ public enum StopReason {
     WALLCLOCK_TIMEOUT("超过整体时间上限"),
     /** 连续多轮执行失败。 */
     CONSECUTIVE_FAILURE("连续多轮执行失败"),
+    /** 当前子任务缺少有效的 Harness 决策或任务结果。 */
+    PROTOCOL_VIOLATION("当前子任务缺少有效的结构化决策或任务结果"),
+    /** 模型通过独立控制通道表明无法继续。 */
+    HARNESS_BLOCKED("执行体通过结构化决策报告受阻"),
+    /** 模型通过独立控制通道请求用户输入。 */
+    HARNESS_NEEDS_INPUT("执行体通过结构化决策请求用户输入"),
     /** 连续多轮无进展，判定收敛不了。 */
     NO_PROGRESS("连续多轮无进展，判定收敛不了"),
     /** 循环执行过程中抛出异常。 */

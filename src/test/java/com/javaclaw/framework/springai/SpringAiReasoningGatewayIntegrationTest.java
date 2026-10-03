@@ -1,5 +1,6 @@
 package com.javaclaw.framework.springai;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -14,12 +15,19 @@ import com.javaclaw.framework.spi.*;
 import com.javaclaw.framework.store.JdbcAgentDefinitionStore;
 import com.javaclaw.framework.store.JdbcExecutionPlanStore;
 import com.javaclaw.framework.store.JdbcRunStore;
+import com.javaclaw.desktop.agent.DesktopSessionTools;
+import com.javaclaw.desktop.api.*;
+import com.javaclaw.agent.vision.VisionPreprocessor;
 import com.javaclaw.platform.data.SchemaInitializer;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationHandler;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
@@ -35,6 +43,9 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.math.BigDecimal;
+import java.lang.reflect.Proxy;
+import java.nio.file.Path;
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -42,6 +53,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,8 +70,717 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class SpringAiReasoningGatewayIntegrationTest {
+
+    @Test
+    void pendingEffectControlSignalPausesWithoutRetryingProviderOrDispatchingTools() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            providerCalls.incrementAndGet();
+            throw new PendingEffectObservationRequiredException("previous-run", "prior-click",
+                    "desktop:window", EffectReceiptV1.Status.UNKNOWN, "MAYBE_SENT",
+                    PendingEffectObservationRequiredException.Reason.DELIVERY_UNCERTAIN);
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3), toolCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("continue"));
+            var snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals("tool.effect_observation_required", snapshot.output().path("kind").asText());
+            assertEquals("previous-run", snapshot.output().path("sourceRunId").asText());
+            assertEquals("prior-click", snapshot.output().path("invocationId").asText());
+            assertEquals("MAYBE_SENT", snapshot.output().path("delivery").asText());
+            assertFalse(snapshot.output().path("dispatchAttempted").asBoolean(true));
+            assertEquals(1, providerCalls.get());
+            assertEquals(0, toolCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .anyMatch(event -> event.type().equals("core.effect.observation_required")));
+        }
+    }
+
+    @Test
+    void continueIsADurableDecisionWithoutClaimingCompletion() throws Exception {
+        ChatModel model = prompt -> namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                "{\"decision\":\"CONTINUE\",\"userMessage\":\"work remains\","
+                        + "\"unmetCriterionIds\":[]}", 2, 1);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(2), new AtomicInteger(),
+                new FixtureConfig().harness())) {
+            TaskContractV3 contract = new TaskContractV3(3, "work remains",
+                    List.of(), false, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("work remains",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals("CONTINUE", outcome.output().path("modelDecision").asText());
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+            assertEquals(ModelDecisionV1.Decision.CONTINUE,
+                    TaskResultEvaluator.latestModelDecision(
+                            fixture.runs.eventsAfter(handle.id(), 0)).orElseThrow());
+        }
+    }
+
+    @Test
+    void missingDecisionGetsOneProtocolCorrectionThenPauses() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return rawTextResponse("完成\nharness_submit_decision "
+                    + "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\"}", 2, 1);
+        }, toolCallBudget(3), new AtomicInteger())) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer"));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals(2, providerCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event ->
+                    event.type().equals("core.harness.protocol_repair_requested")).count());
+            assertTrue(events.stream().anyMatch(event ->
+                    event.type().equals("core.harness.protocol_violation")
+                            && event.payload().path("code").asText().equals("PROTOCOL_ERROR")));
+            assertTrue(events.stream().noneMatch(event ->
+                    event.type().equals("core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void invalidDecisionArgumentsGetBoundedDurableRejectionsWithoutSubmission() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME), allToolNames(prompt));
+            return namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                    "{\"decision\":\"FINISHED\",\"userMessage\":\"完成\","
+                            + "\"unmetCriterionIds\":[]}", 2, 1);
+        }, toolCallBudget(0), new AtomicInteger())) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer", Map.of(
+                    "framework.disableTools", JsonNodeFactory.instance.booleanNode(true))));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals(2, providerCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event ->
+                    event.type().equals("core.harness.protocol_repair_requested")).count());
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.input().path("phase").asText()
+                                    .equals("harness.decision_invalid"))
+                    .count());
+            assertEquals("PROTOCOL_ERROR",
+                    fixture.engine.get(handle.id()).output().path("code").asText());
+            assertTrue(events.stream().noneMatch(event ->
+                    event.type().equals("core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void inventedEvidenceReferenceGetsOneCorrectionWithoutSubmission() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            providerCalls.incrementAndGet();
+            return namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                    "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\","
+                            + "\"evidenceRefs\":[\"invented-receipt\"],"
+                            + "\"unmetCriterionIds\":[]}", 2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(0), new AtomicInteger())) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer", Map.of(
+                    "framework.disableTools", JsonNodeFactory.instance.booleanNode(true))));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals("PROTOCOL_ERROR",
+                    fixture.engine.get(handle.id()).output().path("code").asText());
+            assertEquals("UNKNOWN_EVIDENCE_REFERENCE", fixture.engine.get(handle.id())
+                    .output().path("decisionErrorCode").asText());
+            assertFalse(fixture.engine.get(handle.id()).output()
+                    .path("decisionErrorDetail").asText().isBlank());
+            assertEquals(2, providerCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.protocol_repair_requested")).count());
+            for (var event : events.stream().filter(event -> Set.of(
+                    "core.harness.protocol_repair_requested", "core.harness.protocol_violation")
+                    .contains(event.type())).toList()) {
+                assertEquals("UNKNOWN_EVIDENCE_REFERENCE",
+                        event.payload().path("decisionErrorCode").asText());
+                assertFalse(event.payload().path("decisionErrorDetail").asText().isBlank());
+            }
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.input().path("phase").asText()
+                                    .equals("harness.decision_invalid"))
+                    .count());
+            assertTrue(events.stream().noneMatch(event -> event.type()
+                    .equals("core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void blockedDesktopLaunchCanCorrectEvidenceAndRequestInputWithoutRetryingLaunch() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launchCalls = new AtomicInteger();
+        FixtureConfig config = new FixtureConfig().harness()
+                .simulatedDesktopAccessDisabled(launchCalls);
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> namedToolCallResponse("desktop_session_launch_application",
+                    "{\"application\":\"QQ\"}", 2, 1);
+            case 2 -> {
+                var result = toolEnvelope(prompt);
+                assertTrue(result.toString().contains("请先在设置中开启电脑应用访问"));
+                assertTrue(result.path("evidenceRefs").isArray());
+                assertEquals(List.of(), jsonStrings(result.path("evidenceRefs")));
+                yield namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                        "{\"decision\":\"NEEDS_INPUT\","
+                                + "\"userMessage\":\"请开启电脑应用访问后继续查看联系人\","
+                                + "\"evidenceRefs\":[\"desktop_session_launch_application(QQ): "
+                                + "失败 - 请先在设置中开启电脑应用访问\"],"
+                                + "\"unmetCriterionIds\":[\"view\"]}", 2, 1);
+            }
+            case 3 -> {
+                var feedback = toolEnvelope(prompt);
+                assertFalse(feedback.path("accepted").asBoolean(true));
+                assertEquals("INVALID_DECISION_ARGUMENTS", feedback.path("errorCode").asText());
+                assertEquals("UNKNOWN_EVIDENCE_REFERENCE", feedback.path("reasonCode").asText());
+                assertFalse(feedback.path("message").asText().isBlank());
+                assertTrue(feedback.path("availableEvidenceRefs").isArray());
+                assertEquals(List.of(), jsonStrings(feedback.path("availableEvidenceRefs")));
+                assertEquals(List.of("view"), jsonStrings(feedback.path("availableCriterionIds")));
+                assertTrue(prompt.getInstructions().stream().anyMatch(TaskRepairContext::isRepair));
+                assertTrue(TaskRepairContext.latest(prompt.getInstructions()).getText()
+                        .contains("UNKNOWN_EVIDENCE_REFERENCE"));
+                yield namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                        "{\"decision\":\"NEEDS_INPUT\","
+                                + "\"userMessage\":\"请开启电脑应用访问后继续查看联系人\","
+                                + "\"evidenceRefs\":[],\"unmetCriterionIds\":[\"view\"]}", 2, 1);
+            }
+            default -> throw new AssertionError("A corrected input request must end this turn");
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(4), new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "打开QQ查看联系人", List.of(
+                    new TaskCriterionV3("view", "观察QQ联系人", "desktop.observe",
+                            CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "QQ",
+                            EffectReceiptV1.Status.OBSERVED, "")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("打开QQ查看联系人",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+
+            var snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.WAITING_INPUT, snapshot.state(), snapshot.error());
+            assertEquals("harness.needs_input", snapshot.output().path("kind").asText());
+            assertTrue(snapshot.output().path("text").asText().contains("开启电脑应用访问"));
+            assertEquals(3, providerCalls.get());
+            assertEquals(1, launchCalls.get());
+            assertEquals(0, config.simulatedObserveCalls.get());
+            assertEquals(0, config.simulatedClickCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.protocol_repair_requested")).count());
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.decision_submitted")).count());
+            assertTrue(events.stream().noneMatch(event -> event.type()
+                    .equals("core.harness.protocol_violation")));
+            assertEquals(ModelDecisionV1.Decision.NEEDS_INPUT,
+                    TaskResultEvaluator.latestModelDecision(events).orElseThrow());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ModelDecisionV1.Decision.class,
+            names = {"NEEDS_INPUT", "BLOCKED", "CLAIM_DONE"})
+    void trustedFileReadEvidenceIsVisibleAcceptedAndPreservedAcrossRestart(
+            ModelDecisionV1.Decision decision) throws Exception {
+        Path file = Files.createTempFile(Path.of("target"), "harness-evidence-", ".txt")
+                .toAbsolutePath().normalize();
+        Files.writeString(file, "The requested file was observed.");
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<Fixture> activeFixture = new AtomicReference<>();
+        AtomicReference<List<String>> deliveredRefs = new AtomicReference<>();
+        ChatModel model = prompt -> {
+            int call = modelCalls.incrementAndGet();
+            if (call == 1) {
+                return namedToolCallResponse("sys_file_read", JsonNodeFactory.instance.objectNode()
+                        .put("path", file.toString()).toString(), 2, 1);
+            }
+            assertTrue(call <= 3, "Only a user resume may require another provider decision");
+            var response = prompt.getInstructions().stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .flatMap(message -> message.getResponses().stream())
+                    .filter(item -> item.name().equals("sys_file_read"))
+                    .findFirst().orElseThrow();
+            var envelope = toolEnvelope(response);
+            assertEquals("SUCCEEDED", envelope.path("status").asText());
+            assertTrue(envelope.path("evidenceRefs").isArray());
+            List<String> refs = jsonStrings(envelope.path("evidenceRefs"));
+            assertEquals(1, refs.size());
+            Fixture fixture = activeFixture.get();
+            var run = fixture.runs.nonTerminalRuns().getFirst();
+            var receipts = fixture.runs.eventsAfter(run.snapshot().id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.receipt")
+                            && event.producer().equals("framework.core")
+                            && event.payload().path("tool").asText().equals("sys_file_read"))
+                    .toList();
+            assertEquals(1, receipts.size());
+            assertEquals("OBSERVED", receipts.getFirst().payload().path("status").asText());
+            assertEquals(file.toString(), receipts.getFirst().payload().path("target").asText());
+            assertEquals(refs.getFirst(), receipts.getFirst().payload().path("evidenceRef").asText());
+            if (call == 2) deliveredRefs.set(refs);
+            else {
+                assertEquals(deliveredRefs.get(), refs, "Recovery must retain the host evidence IDs");
+                assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                        message instanceof UserMessage && message.getText().contains("确认文件已读取")));
+            }
+            var arguments = JsonNodeFactory.instance.objectNode()
+                    .put("decision", call == 3 ? "CLAIM_DONE" : decision.name())
+                    .put("userMessage", call == 2 && decision == ModelDecisionV1.Decision.NEEDS_INPUT
+                            ? "文件已读取，请确认下一步" : "文件内容已读取");
+            refs.forEach(arguments.putArray("evidenceRefs")::add);
+            arguments.putArray("unmetCriterionIds");
+            return namedToolCallResponse(HarnessDecisionToolCallback.NAME, arguments.toString(), 2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3), new AtomicInteger(),
+                new FixtureConfig().harness().systemFileRead())) {
+            activeFixture.set(fixture);
+            var contract = new TaskContractV3(3, "读取文本文件", List.of(new TaskCriterionV3(
+                    "read", "读取目标文件", "file.read", CapabilityMetadata.TargetKind.FILE,
+                    file.toString(), EffectReceiptV1.Status.OBSERVED, "")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("读取文本文件", Map.of(
+                    TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            assertEquals(decision == ModelDecisionV1.Decision.NEEDS_INPUT
+                    ? RunState.WAITING_INPUT : RunState.COMPLETED,
+                    fixture.engine.get(handle.id()).state(), fixture.engine.get(handle.id()).error());
+            assertEquals(2, modelCalls.get());
+            if (decision == ModelDecisionV1.Decision.NEEDS_INPUT) {
+                fixture.restart();
+                RunHandle resumed = fixture.engine.resume(handle.id(), new ResumeCommand(
+                        "input", JsonNodeFactory.instance.objectNode().put("text", "确认文件已读取")));
+                RunOutcome outcome = awaitCompletion(fixture, resumed);
+                assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+                assertEquals(3, modelCalls.get());
+            }
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertTrue(events.stream().noneMatch(event -> Set.of(
+                    "core.harness.protocol_repair_requested", "core.harness.protocol_violation")
+                    .contains(event.type())));
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.TOOL
+                            && step.input().path("tool").asText().equals("sys_file_read"))
+                    .count(), "A resume must replay the read result instead of executing it again");
+            if (decision != ModelDecisionV1.Decision.BLOCKED) {
+                assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                        fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void protocolRepairGuidanceKeepsCompleteIdsAndParsableJsonWithinItsBound() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        ObjectNode rejection = json.createObjectNode().put("accepted", false)
+                .put("errorCode", "INVALID_DECISION_ARGUMENTS")
+                .put("message", "Use an exact ID supplied by the host.");
+        List<String> criterionIds = new ArrayList<>();
+        for (int index = 0; index < 32; index++) {
+            String prefix = "condition-%02d-".formatted(index);
+            criterionIds.add(prefix + "c".repeat(128 - prefix.length()));
+        }
+        List<String> evidenceRefs = new ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            String prefix = "receipt-%d-".formatted(index);
+            evidenceRefs.add(prefix + "r".repeat(256 - prefix.length()));
+        }
+        criterionIds.forEach(rejection.putArray("availableCriterionIds")::add);
+        evidenceRefs.forEach(rejection.putArray("availableEvidenceRefs")::add);
+
+        for (String reason : List.of("UNKNOWN_CRITERION_ID", "UNKNOWN_EVIDENCE_REFERENCE")) {
+            rejection.put("reasonCode", reason);
+            String feedback = SpringAiReasoningGateway.protocolRepairFeedback(rejection);
+            assertTrue(feedback.length() < 2000, "Repair feedback must fit the durable context bound");
+            int objectStart = feedback.indexOf('{');
+            assertTrue(objectStart >= 0, "Repair guidance must include a JSON feedback object");
+            com.fasterxml.jackson.databind.JsonNode parsed = json.reader().with(
+                    com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(feedback.substring(objectStart));
+            assertEquals(reason, parsed.path("reasonCode").asText());
+            assertEquals("INVALID_DECISION_ARGUMENTS", parsed.path("errorCode").asText());
+            List<String> includedCriteria = jsonStrings(parsed.path("availableCriterionIds"));
+            List<String> includedRefs = jsonStrings(parsed.path("availableEvidenceRefs"));
+            assertTrue(criterionIds.containsAll(includedCriteria), "Criterion IDs must never be truncated");
+            assertTrue(evidenceRefs.containsAll(includedRefs), "Evidence refs must never be truncated");
+            if (reason.equals("UNKNOWN_CRITERION_ID")) assertFalse(includedCriteria.isEmpty());
+            else assertFalse(includedRefs.isEmpty());
+        }
+    }
+
+    @Test
+    void mixedDecisionAndBusinessToolBatchExecutesNeither() {
+        AtomicInteger businessCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return response(
+                AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("business", "function", "test_mutate",
+                                "{\"value\":1}"),
+                        new AssistantMessage.ToolCall("decision", "function",
+                                HarnessDecisionToolCallback.NAME,
+                                "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\","
+                                        + "\"unmetCriterionIds\":[]}")))
+                        .build(), 2, 1);
+        }, toolCallBudget(3), businessCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("mutate"));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals("PROTOCOL_ERROR",
+                    fixture.engine.get(handle.id()).output().path("code").asText());
+            assertEquals(2, providerCalls.get());
+            assertEquals(0, businessCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.protocol_repair_requested")).count());
+            assertTrue(events.stream().noneMatch(event ->
+                    event.type().equals("core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void correctedMixedDecisionCompletesWithoutRunningRejectedBusinessCall() throws Exception {
+        AtomicInteger businessCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            if (providerCalls.incrementAndGet() == 1) {
+                return response(AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("business", "function", "test_mutate",
+                                "{\"value\":1}"),
+                        new AssistantMessage.ToolCall("decision", "function",
+                                HarnessDecisionToolCallback.NAME,
+                                "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\","
+                                        + "\"unmetCriterionIds\":[]}"))).build(), 2, 1);
+            }
+            assertTrue(prompt.getInstructions().stream().anyMatch(
+                    TaskRepairContext::isRepair));
+            return textResponse("done", 2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(2), businessCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, providerCalls.get());
+            assertEquals(0, businessCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.protocol_repair_requested")).count());
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.decision_submitted")).count());
+        }
+    }
+
+    @Test
+    void multiGenerationControlResponsePausesWithoutAttemptingUnjournaledRepair() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger businessCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            providerCalls.incrementAndGet();
+            AssistantMessage control = AssistantMessage.builder().content("")
+                    .toolCalls(List.of(new AssistantMessage.ToolCall("decision", "function",
+                            HarnessDecisionToolCallback.NAME,
+                            "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\","
+                                    + "\"unmetCriterionIds\":[]}"))).build();
+            AssistantMessage business = AssistantMessage.builder().content("")
+                    .toolCalls(List.of(new AssistantMessage.ToolCall("business", "function",
+                            "test_mutate", "{\"value\":1}"))).build();
+            return new ChatResponse(List.of(new Generation(control), new Generation(business)),
+                    ChatResponseMetadata.builder().model("unknown-test-model")
+                            .usage(new DefaultUsage(2, 1)).build());
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(2), businessCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer"));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals("PROTOCOL_ERROR",
+                    fixture.engine.get(handle.id()).output().path("code").asText());
+            assertEquals(1, providerCalls.get());
+            assertEquals(0, businessCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertTrue(events.stream().noneMatch(event -> event.type().equals(
+                    "core.harness.protocol_repair_requested")));
+            assertTrue(events.stream().noneMatch(event -> event.type().equals(
+                    "core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void duplicateDecisionCallsGetOneCorrectionWithoutExecutingEither() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            providerCalls.incrementAndGet();
+            return response(AssistantMessage.builder().content("").toolCalls(List.of(
+                    new AssistantMessage.ToolCall("decision-a", "function",
+                            HarnessDecisionToolCallback.NAME,
+                            "{\"decision\":\"CLAIM_DONE\",\"userMessage\":\"done\","
+                                    + "\"unmetCriterionIds\":[]}"),
+                    new AssistantMessage.ToolCall("decision-b", "function",
+                            HarnessDecisionToolCallback.NAME,
+                            "{\"decision\":\"BLOCKED\",\"userMessage\":\"blocked\","
+                                    + "\"unmetCriterionIds\":[]}"))).build(), 2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(1), new AtomicInteger())) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer"));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals("PROTOCOL_ERROR",
+                    fixture.engine.get(handle.id()).output().path("code").asText());
+            assertEquals(2, providerCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream().filter(event -> event.type()
+                    .equals("core.harness.protocol_repair_requested")).count());
+            assertTrue(events.stream().noneMatch(event -> event.type()
+                    .equals("core.harness.decision_submitted")));
+        }
+    }
+
+    @Test
+    void 回复前验收使用已结束子Run的可信收据() throws Exception {
+        AtomicReference<Fixture> fixtureRef = new AtomicReference<>();
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            Fixture current = fixtureRef.get();
+            var parent = current.runs.nonTerminalRuns().stream()
+                    .filter(run -> run.request().source().kind().equals("chat"))
+                    .findFirst().orElseThrow();
+            RunId childId = RunId.random();
+            RunRequest child = RunRequest.builder()
+                    .agent(AgentDefinitionRef.latest("test.agent"))
+                    .profile(RunProfileRef.latest("test.profile"))
+                    .source(InvocationSource.subAgent(parent.snapshot().id().value()))
+                    .scope(new RunScope("workspace", "user", "child-session"))
+                    .input(InputBlock.text("write child result"))
+                    .linkage(new RunLinkage(parent.snapshot().id(), null, null))
+                    .permissionCeiling(PermissionSet.UNRESTRICTED).build();
+            current.runs.create(childId, child, parent.snapshot().executionPlanId(),
+                    new RunEventDraft("core.run.created", 1, "framework.core", null, null,
+                            JsonNodeFactory.instance.objectNode()));
+            current.runs.append(childId, Set.of(RunState.CREATED), RunState.RUNNING,
+                    new RunEventDraft("core.run.started", 1, "framework.core", null, null,
+                            JsonNodeFactory.instance.objectNode()), null, null);
+            current.runs.append(childId, Set.of(RunState.RUNNING), RunState.RUNNING,
+                    new RunEventDraft("core.tool.receipt", 1, "framework.core", null, null,
+                            current.json.createObjectNode().put("invocationId", "child-write")
+                                    .put("tool", "sys_file_write").put("operation", "write")
+                                    .put("target", com.javaclaw.util.ProjectAccessPolicy.projectRoot()
+                                            .resolve("child.txt").toString()).put("status", "VERIFIED")
+                                    .put("observedAt", "2026-01-01T00:00:00Z")
+                                    .put("evidenceRef", "file:child.txt")), null, null);
+            current.runs.append(childId, Set.of(RunState.RUNNING), RunState.COMPLETED,
+                    new RunEventDraft("core.run.completed", 1, "framework.core", null, null,
+                            JsonNodeFactory.instance.objectNode()), null, null);
+            return textResponse("子任务已完成", 2, 1);
+        }, toolCallBudget(2), new AtomicInteger(), new FixtureConfig().harness())) {
+            fixtureRef.set(fixture);
+            TaskContractV3 contract = new TaskContractV3(3, "write child result",
+                    List.of(new TaskCriterionV3("write", "child result exists", "file.write", CapabilityMetadata.TargetKind.FILE,
+                            "child.txt", EffectReceiptV1.Status.VERIFIED, "")),
+                    true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("write child result",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, providerCalls.get());
+            assertEquals("子任务已完成", outcome.output().path("text").asText());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                    TaskResultEvaluator.latestOutcome(events, fixture.json).orElseThrow().outcome());
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.task.review")
+                    && event.payload().path("outcome").asText().equals("VERIFIED_COMPLETE")));
+        }
+    }
+
+    @Test
+    void 任务验收反馈在同一Run补做且无新证据后如实停止() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        FixtureConfig config = new FixtureConfig().harness();
+        try (Fixture fixture = new Fixture(prompt -> {
+            delivered.add(prompt);
+            providerCalls.incrementAndGet();
+            return textResponse("已经查看了目标内容", 2, 1);
+        }, toolCallBudget(3), new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "查看目标内容",
+                    List.of(new TaskCriterionV3("observe", "观察目标内容", "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                            "target", EffectReceiptV1.Status.OBSERVED, "")),
+                    true, true, "definition");
+            ObjectNode value = fixture.json.valueToTree(contract);
+            RunHandle handle = fixture.engine.start(fixture.request("查看目标内容",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, value)));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals(2, providerCalls.get());
+            assertTrue(delivered.get(1).getInstructions().stream()
+                    .anyMatch(message -> message instanceof UserMessage user
+                            && user.getText().contains("任务验收尚未通过")));
+            assertTrue(snapshot.output().path("text").asText().contains("尚未验证完成"));
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(1, events.stream()
+                    .filter(event -> event.type().equals("core.task.repair_requested")).count());
+            assertEquals(1, events.stream()
+                    .filter(event -> event.type().equals("core.task.outcome")
+                            && event.payload().path("outcome").asText().equals("UNVERIFIED")).count());
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.task.stop")
+                    && event.payload().path("reasonCode").asText().equals("NO_PROGRESS")));
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void repeatedDesktopFrameAndUndispatchedClickDoNotTriggerAnotherRepair() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1, 3 -> namedToolCallResponse("desktop_session_observe",
+                    "{\"sessionId\":\"sample-session\"}", 2, 1);
+            case 2 -> textResponse("已经查看设置页面", 2, 1);
+            case 4 -> namedToolCallResponse("desktop_session_click",
+                    "{\"sessionId\":\"sample-session\",\"observationId\":"
+                            + "\"00000000-0000-4000-8000-000000000002\","
+                            + "\"elementId\":\"missing-target\"}", 2, 1);
+            case 5 -> textResponse("无法确认是否进入设置页面", 2, 1);
+            default -> throw new AssertionError("same frame and NOT_SENT click must not cause"
+                    + " another repair call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .simulatedDesktopSession(observeCalls, clickCalls).harness();
+        try (Fixture fixture = new Fixture(model, toolCallBudget(5),
+                new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "查看 示例应用 设置页面",
+                    List.of(new TaskCriterionV3("observe-settings", "观察设置页面",
+                            "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "示例应用", EffectReceiptV1.Status.OBSERVED,
+                            "settings")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("查看 示例应用 设置页面",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals(5, modelCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(0, clickCalls.get(), "invalid target cannot dispatch input");
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.tool.receipt")
+                    && event.payload().path("tool").asText().equals("desktop_session_click")
+                    && event.payload().path("status").asText().equals("FAILED")
+                    && event.payload().path("metadata").path("delivery").asText()
+                            .equals("NOT_SENT")));
+            assertEquals(1, events.stream().filter(event ->
+                    event.type().equals("core.task.repair_requested")).count());
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.task.stop")
+                    && event.payload().path("reasonCode").asText().equals("NO_PROGRESS")));
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void dispatchedActionAfterRepairAllowsASecondRepairForItsResultingView() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1, 5 -> namedToolCallResponse("desktop_session_observe",
+                    "{\"sessionId\":\"sample-session\"}", 2, 1);
+            case 2, 4 -> textResponse("尚未取得设置页面证据", 2, 1);
+            case 3 -> namedToolCallResponse("desktop_session_click",
+                    "{\"sessionId\":\"sample-session\",\"observationId\":"
+                            + "\"00000000-0000-4000-8000-000000000001\","
+                            + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}",
+                    2, 1);
+            case 6 -> textResponse("已查看设置页面", 2, 1);
+            default -> throw new AssertionError("unexpected repair call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .simulatedDesktopSession(observeCalls, clickCalls).harness();
+        try (Fixture fixture = new Fixture(model, toolCallBudget(5),
+                new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "查看 示例应用 设置页面",
+                    List.of(new TaskCriterionV3("observe-settings", "观察设置页面",
+                            "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "示例应用", EffectReceiptV1.Status.OBSERVED,
+                            "settings")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("查看 示例应用 设置页面",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(6, modelCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(1, clickCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(2, events.stream().filter(event ->
+                    event.type().equals("core.task.repair_requested")).count());
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                    fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+        }
+    }
+
+    @Test
+    void repairStopsBeforeAnotherModelCallWhenInputBudgetCannotFitIt() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            modelCalls.incrementAndGet();
+            return textResponse("目标已经达到", 2, 1);
+        };
+        RunBudget budget = new RunBudget(Duration.ofMinutes(5), 500, 1_000_000,
+                5, new BigDecimal("1000"));
+        try (Fixture fixture = new Fixture(model, budget, new AtomicInteger(),
+                new FixtureConfig().harness())) {
+            TaskContractV3 contract = new TaskContractV3(3, "查看目标内容",
+                    List.of(new TaskCriterionV3("observe", "观察目标内容", "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                            "target", EffectReceiptV1.Status.OBSERVED, "")),
+                    true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("查看目标内容",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals(1, modelCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .anyMatch(event -> event.type().equals("core.task.stop")
+                            && event.payload().path("reasonCode").asText()
+                                    .equals("BUDGET_EXHAUSTED")));
+        }
+    }
+
+    @Test
+    void applicableContractPausesWhenProviderExhaustsBudgetBeforeDecision() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            providerCalls.incrementAndGet();
+            throw BudgetExceededException.modelInputTokens(2, 1);
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), new FixtureConfig().harness())) {
+            TaskContractV3 contract = new TaskContractV3(3, "observe target",
+                    List.of(new TaskCriterionV3("observe", "observe target", "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                            "target", EffectReceiptV1.Status.OBSERVED, "")),
+                    true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("observe target",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals(1, providerCalls.get());
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.harness.decision_submitted")));
+        }
+    }
 
     @Test
     void 固定Persona首次经网关读取且重启后每步复用同一用户级快照() throws Exception {
@@ -111,7 +832,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                             JsonNodeFactory.instance.objectNode().put("value", 1)));
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("tool.approval", approval));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(2, providerCalls.get());
@@ -204,11 +925,12 @@ class SpringAiReasoningGatewayIntegrationTest {
                     List.of(InputBlock.text("tool-free request")),
                     Map.of("framework.disableTools", JsonNodeFactory.instance.booleanNode(true)),
                     PermissionSet.NONE));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(0, reads.get());
-            assertEquals(1, plannerCalls.get());
+            assertEquals(0, plannerCalls.get(),
+                    "zero business budget bypasses context and tool planning");
             assertEquals(1, providerCalls.get());
         }
     }
@@ -271,7 +993,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("done", outcome.output().path("text").asText());
@@ -334,7 +1056,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("use workflow evidence")),
                     Map.of(), PermissionSet.of("context.read"));
             RunHandle handle = fixture.engine.start(request);
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
         }
@@ -400,7 +1122,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         }, toolCallBudget(2), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request(
                     List.of(InputBlock.text("上海亲子游")), Map.of(), PermissionSet.of("context.read")));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             AgentStep read = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
                     .filter(step -> step.kind() == AgentStep.Kind.TOOL
@@ -437,7 +1159,8 @@ class SpringAiReasoningGatewayIntegrationTest {
         }, toolCallBudget(4), new AtomicInteger(), references)) {
             RunOutcome outcome = fixture.engine.start(fixture.request(
                     List.of(InputBlock.text("use memory and knowledge")), Map.of(),
-                    PermissionSet.of("context.read"))).completion().toCompletableFuture().get();
+                    PermissionSet.of("context.read"))).completion().toCompletableFuture()
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
         }
 
@@ -458,7 +1181,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                     List.of(InputBlock.text("use workflow")), Map.of(),
                     PermissionSet.of("context.read")));
             RunSnapshot snapshot = fixture.engine.get(handle.id());
-            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
             assertEquals("context.planning_required", snapshot.output().path("kind").asText());
             assertTrue(snapshot.output().path("reason").asText().contains("workflow"));
             assertEquals(0, providerCalls.get());
@@ -547,6 +1270,14 @@ class SpringAiReasoningGatewayIntegrationTest {
                     JsonNodeFactory.instance.objectNode().put("text", "上海明天")));
             assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
             assertEquals(1, resumedSelections.get());
+            var contextApproval = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.run.waiting_approval"))
+                    .reduce((previous, next) -> next).orElseThrow();
+            assertTrue(contextApproval.payload().path("approval").isObject());
+            assertTrue(contextApproval.payload().path("approval")
+                    .path("trustedContextRead").isBoolean());
+            assertTrue(ToolApprovalChallenge.fromEventPayload(
+                    contextApproval.payload()).trustedContextRead());
             fixture.restart();
             assertTrue(Set.of(RunState.WAITING_APPROVAL, RunState.PAUSED)
                     .contains(fixture.engine.get(handle.id()).state()));
@@ -562,7 +1293,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                         JsonNodeFactory.instance.objectNode().put("approved", true)
                                 .put("fingerprint", fingerprint)));
             }
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, resumedSelections.get(),
                     "the persisted selection must be reused after context-tool approval");
@@ -571,9 +1302,11 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     @Test
-    void 已耗尽工具额度时规划器要求目录发现会在第二次主模型调用前暂停() throws Exception {
+    void 已耗尽工具额度时跳过目录规划并只允许控制决策() throws Exception {
         AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger plannerCalls = new AtomicInteger();
         ModelTaskGateway planner = request -> {
+            plannerCalls.incrementAndGet();
             ObjectNode selection = JsonNodeFactory.instance.objectNode();
             selection.putArray("historyIds");
             if (providerCalls.get() == 0) {
@@ -599,16 +1332,26 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
                 .planner(planner).autoApproveTestMutate();
         try (Fixture fixture = new Fixture(prompt -> {
-            providerCalls.incrementAndGet();
-            return toolCallResponse(2, 1);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> toolCallResponse(2, 1);
+                case 2 -> {
+                    assertEquals(List.of(), toolNames(prompt),
+                            "no business tool remains in the shared budget");
+                    assertEquals(List.of(HarnessDecisionToolCallback.NAME),
+                            allToolNames(prompt));
+                    yield textResponse("budget exhausted", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
         }, toolCallBudget(1), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("call then discover"));
-            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
-            assertEquals(RunState.PAUSED, snapshot.state());
-            assertEquals(1, providerCalls.get());
-            assertTrue(snapshot.output().path("reason").asText().contains("budget"));
-            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, providerCalls.get());
+            assertEquals(2, plannerCalls.get(),
+                    "the control-only final step must bypass tool selection");
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
                     .filter(step -> step.kind() == AgentStep.Kind.MODEL).count());
         }
     }
@@ -668,7 +1411,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                                 JsonNodeFactory.instance.objectNode().put("value", number)));
                 handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval", approval));
             }
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(2, tools.get());
             assertEquals(3, calls.get());
             assertEquals(2, finalPrompt.get().getInstructions().stream().filter(ToolResponseMessage.class::isInstance).count());
@@ -698,9 +1441,8 @@ class SpringAiReasoningGatewayIntegrationTest {
             ObjectNode finalInput = (ObjectNode) new RunStepQuery(fixture.runs).steps(turn.id())
                     .stream().filter(step -> step.kind() == AgentStep.Kind.MODEL)
                     .reduce((previous, current) -> current).orElseThrow().input().deepCopy();
-            finalInput.set("toolNames", JsonNodeFactory.instance.arrayNode());
-            finalInput.set("toolFingerprints", JsonNodeFactory.instance.objectNode());
-            finalInput.remove("toolCandidateStepId");
+            assertTrue(jsonStrings(finalInput.path("toolNames"))
+                    .contains(HarnessDecisionToolCallback.NAME));
             StepEvents.started(events, finalStep, AgentStep.Kind.MODEL, finalInput, null);
             ChatResponse finalResponse = textResponse("already finished", 3, 1);
             StepEvents.completed(events, finalStep, StepMessageCodec.response(finalResponse), StepMessageCodec.usage(finalResponse));
@@ -713,6 +1455,66 @@ class SpringAiReasoningGatewayIntegrationTest {
                     .get(10, java.util.concurrent.TimeUnit.SECONDS).state());
             assertEquals(1, modelCalls.get());
             assertEquals("already finished", fixture.engine.get(turn.id()).output().path("text").asText());
+        }
+    }
+
+    @Test
+    void disabledToolsOnDemandRecoversPersistedControlDecisionWithoutCatalog()
+            throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, "");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "none");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner)
+                .downstreamMutation(DownstreamMutation.PAUSE_AFTER_UNAVAILABLE_FEEDBACK_ONCE);
+        try (Fixture fixture = new Fixture(prompt -> {
+            modelCalls.incrementAndGet();
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME), allToolNames(prompt));
+            return namedToolCallResponse("web_content", "{}", 2, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
+            RunHandle turn = fixture.engine.start(fixture.request("answer without tools", Map.of(
+                    "framework.disableTools", JsonNodeFactory.instance.booleanNode(true))));
+            assertEquals(RunState.WAITING_INPUT, fixture.engine.get(turn.id()).state());
+            assertEquals(1, modelCalls.get());
+            Prompt pausedPrompt = config.pausedPrompt.get();
+            assertNotNull(pausedPrompt);
+
+            ObjectNode input = (ObjectNode) new RunStepQuery(fixture.runs).steps(turn.id())
+                    .stream().filter(step -> step.kind() == AgentStep.Kind.MODEL)
+                    .reduce((previous, current) -> current).orElseThrow().input().deepCopy();
+            input.set("messages", StepMessageCodec.messages(pausedPrompt.getInstructions()));
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME),
+                    jsonStrings(input.path("toolNames")));
+            assertTrue(input.path("toolFingerprints")
+                    .has(HarnessDecisionToolCallback.NAME));
+            var events = StepEvents.durableSink(fixture.runs, turn.id());
+            StepId finalStep = StepId.random();
+            StepEvents.started(events, finalStep, AgentStep.Kind.MODEL, input, null);
+            ChatResponse finalResponse = textResponse("answer delivered", 3, 1);
+            StepEvents.completed(events, finalStep, StepMessageCodec.response(finalResponse),
+                    StepMessageCodec.usage(finalResponse));
+
+            fixture.restart();
+            RunHandle resumed = fixture.engine.resume(turn.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            assertEquals(RunState.COMPLETED, resumed.completion().toCompletableFuture()
+                    .get(10, java.util.concurrent.TimeUnit.SECONDS).state());
+            assertEquals(1, modelCalls.get(), "the persisted control response must be replayed");
+            assertEquals("answer delivered", fixture.engine.get(turn.id()).output()
+                    .path("text").asText());
         }
     }
 
@@ -741,7 +1543,10 @@ class SpringAiReasoningGatewayIntegrationTest {
             assertEquals(RunState.CANCELLED, fixture.engine.get(child.id()).state());
             var step = new RunStepQuery(fixture.runs).steps(child.id()).getFirst();
             assertEquals(AgentStep.State.COMPLETED, step.state());
-            assertEquals("late but billable", step.output().path("message").path("text").asText());
+            var cancelledDecision = assertDoesNotThrow(() -> fixture.json.readTree(
+                    step.output().path("message").path("toolCalls").get(0)
+                            .path("arguments").asText()));
+            assertEquals("late but billable", cancelledDecision.path("userMessage").asText());
             assertEquals(7, step.usage().path("inputTokens").asLong());
             assertEquals(7, fixture.ledger.aggregateSnapshot(parent.id()).inputTokens());
             var events = fixture.runs.eventsAfter(child.id(), 0);
@@ -833,6 +1638,16 @@ class SpringAiReasoningGatewayIntegrationTest {
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls)) {
             var handle = fixture.engine.start(fixture.request());
             assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
+            var waiting = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.run.waiting_approval"))
+                    .reduce((previous, next) -> next).orElseThrow();
+            assertTrue(waiting.payload().path("approval").isObject());
+            assertTrue(waiting.payload().path("approval").path("trustedContextRead").isBoolean());
+            ToolApprovalChallenge challenge = ToolApprovalChallenge.fromEventPayload(
+                    waiting.payload());
+            assertFalse(challenge.trustedContextRead());
+            assertEquals("test_mutate", challenge.tool());
+            assertEquals(1, challenge.arguments().path("value").asInt());
 
             ObjectNode approval = JsonNodeFactory.instance.objectNode();
             approval.put("approved", true);
@@ -840,7 +1655,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                     "test_mutate", JsonNodeFactory.instance.objectNode().put("value", 1)));
             var resumed = fixture.engine.resume(
                     handle.id(), new ResumeCommand("tool.approval", approval));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state());
             assertEquals(2, modelCalls.get());
@@ -881,7 +1696,16 @@ class SpringAiReasoningGatewayIntegrationTest {
                     ToolResponseMessage.ToolResponse feedback = lastToolResponse(prompt);
                     assertEquals("provider-call", feedback.id());
                     assertEquals("web_content", feedback.name());
-                    assertTrue(feedback.responseData().contains("web_content"));
+                    var details = assertDoesNotThrow(() ->
+                            new ObjectMapper().readTree(feedback.responseData()));
+                    assertEquals("tool_not_offered", details.path("error").asText());
+                    assertEquals("web_content", details.path("tool").asText());
+                    assertFalse(details.path("executed").asBoolean(true));
+                    assertEquals(List.of(HarnessDecisionToolCallback.NAME),
+                            jsonStrings(details.path("offeredTools")));
+                    assertEquals("previous_provider_step", details.path("feedbackScope").asText());
+                    assertTrue(details.path("message").asText().contains(
+                            "framework_tool_catalog only when currently offered"));
                     yield textResponse("上海", 2, 1);
                 }
                 default -> throw new AssertionError("unexpected provider call");
@@ -891,7 +1715,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls)) {
             RunHandle handle = fixture.engine.start(fixture.request("上海", Map.of(
                     "framework.disableTools", JsonNodeFactory.instance.booleanNode(true))));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("上海", outcome.output().path("text").asText());
@@ -907,9 +1731,11 @@ class SpringAiReasoningGatewayIntegrationTest {
     void unadvertisedToolInBatchRejectsBeforeVisibleToolCanExecute() throws Exception {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<List<String>> offeredTools = new AtomicReference<>();
         ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
             case 1 -> {
-                assertTrue(toolNames(prompt).contains("test_mutate"));
+                offeredTools.set(allToolNames(prompt));
+                assertTrue(offeredTools.get().contains("test_mutate"));
                 AssistantMessage output = AssistantMessage.builder().content("")
                         .toolCalls(List.of(
                                 new AssistantMessage.ToolCall("visible", "function",
@@ -922,13 +1748,20 @@ class SpringAiReasoningGatewayIntegrationTest {
             case 2 -> {
                 assertEquals(0, toolCalls.get(),
                         "the visible tool must not run before the entire batch is validated");
-                assertTrue(prompt.getInstructions().stream()
+                ToolResponseMessage.ToolResponse feedback = prompt.getInstructions().stream()
                         .filter(ToolResponseMessage.class::isInstance)
                         .map(ToolResponseMessage.class::cast)
                         .flatMap(message -> message.getResponses().stream())
-                        .anyMatch(item -> item.id().equals("unadvertised")
-                                && item.name().equals("web_content")
-                                && item.responseData().contains("web_content")));
+                        .filter(item -> item.id().equals("unadvertised")
+                                && item.name().equals("web_content"))
+                        .findFirst().orElseThrow();
+                var details = assertDoesNotThrow(() ->
+                        new ObjectMapper().readTree(feedback.responseData()));
+                List<String> actualOffered = new ArrayList<>();
+                details.path("offeredTools").forEach(value -> actualOffered.add(value.asText()));
+                assertEquals(offeredTools.get(), actualOffered,
+                        "feedback must list the exact tools offered to the provider");
+                assertFalse(details.path("executed").asBoolean(true));
                 yield textResponse("done", 2, 1);
             }
             default -> throw new AssertionError("unexpected provider call");
@@ -936,7 +1769,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         FixtureConfig config = new FixtureConfig().autoApproveTestMutate();
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls, config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(2, modelCalls.get());
@@ -987,7 +1820,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(), new ResumeCommand(
                     "delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("done", outcome.output().path("text").asText());
@@ -1012,6 +1845,10 @@ class SpringAiReasoningGatewayIntegrationTest {
 
             assertEquals(RunState.PAUSED, snapshot.state());
             assertEquals("tool.recovery_required", snapshot.output().path("kind").asText());
+            assertEquals("web_content", snapshot.output().path("requestedTools").get(0).asText());
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME),
+                    jsonStrings(snapshot.output().path("offeredTools")));
+            assertTrue(snapshot.output().path("unfinishedAction").asText().contains("not executed"));
             assertEquals(3, modelCalls.get(), "two feedback batches then stop the next bad batch");
             assertEquals(0, toolCalls.get());
             assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
@@ -1024,29 +1861,229 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     @Test
+    void untrustedBusinessResultDoesNotResetUnavailableBatchLimit() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1, 3, 4, 5 -> namedToolCallResponse("web_content", "{}", 2, 1);
+            case 2 -> namedToolCallResponse("test_mutate", "{\"value\":7}", 2, 1);
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls,
+                new FixtureConfig().autoApproveTestMutate())) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals(4, modelCalls.get(),
+                    "an untrusted business result cannot reset the rejection streak");
+            assertEquals(1, toolCalls.get());
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean())
+                    .count());
+        }
+    }
+
+    @Test
+    void pausedUnavailableBatchResumesWithDurableFeedbackWithoutExecutingOldCall()
+            throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1, 2, 3 -> namedToolCallResponse("web_content", "{}", 2, 1);
+            case 4 -> {
+                String feedback = lastToolResponse(prompt).responseData();
+                assertTrue(feedback.contains("\"error\":\"tool_not_offered\""));
+                assertTrue(feedback.contains("\"executed\":false"));
+                yield textResponse("done", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("上海", Map.of(
+                    "framework.disableTools", JsonNodeFactory.instance.booleanNode(true))));
+            assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean())
+                    .count());
+
+            fixture.restart();
+            RunHandle resumed = fixture.engine.resume(handle.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals("done", outcome.output().path("text").asText());
+            assertEquals(4, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+            assertEquals(3, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean())
+                    .count());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    @Test
+    void invalidToolArgumentsAreReturnedToModelBeforeCorrectedCallExecutes() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1 -> namedToolCallResponse("test_mutate", "{\"session_ref\":\"wrong-key\"}", 2, 1);
+            case 2 -> {
+                String feedback = lastToolResponse(prompt).responseData();
+                assertTrue(feedback.contains("\"error\":\"invalid_tool_arguments\""));
+                assertTrue(feedback.contains("\"executed\":false"));
+                assertTrue(feedback.contains("session_ref"));
+                assertTrue(feedback.contains("\"requiredProperties\":[\"value\"]"));
+                assertTrue(feedback.contains("\"allowedProperties\":[\"value\"]"));
+                assertEquals(0, toolCalls.get());
+                yield namedToolCallResponse("test_mutate", "{\"value\":7}", 2, 1);
+            }
+            case 3 -> {
+                assertTrue(lastToolResponse(prompt).responseData().contains("\"observed\":7"));
+                yield textResponse("done", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls,
+                new FixtureConfig().autoApproveTestMutate())) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(3, modelCalls.get());
+            assertEquals(1, toolCalls.get());
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.TOOL
+                            && step.output().path("validationRejected").asBoolean(false))
+                    .count());
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started")).count(),
+                    "only the corrected call starts tool execution");
+        }
+    }
+
+    @Test
+    void invalidArgumentsFeedbackSurvivesRestartBeforeNextProviderRequest() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<String> resumedFeedback = new AtomicReference<>();
+        FixtureConfig config = new FixtureConfig().autoApproveTestMutate()
+                .context(contextConfiguration(true, 48_000, 16_000, 10))
+                .downstreamMutation(DownstreamMutation.PAUSE_AFTER_ARGUMENT_FEEDBACK_ONCE);
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1 -> namedToolCallResponse("test_mutate", "{\"session_ref\":\"wrong-key\"}", 2, 1);
+            case 2 -> {
+                String feedback = lastToolResponse(prompt).responseData();
+                resumedFeedback.set(feedback);
+                yield namedToolCallResponse("test_mutate", "{\"value\":7}", 2, 1);
+            }
+            case 3 -> textResponse("done", 2, 1);
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, toolCalls, config)) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            assertEquals(RunState.WAITING_INPUT, fixture.engine.get(handle.id()).state());
+            assertEquals(1, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+            Prompt paused = config.pausedPrompt.get();
+            assertNotNull(paused);
+            String persistedFeedback = lastToolResponse(paused).responseData();
+            assertTrue(persistedFeedback.contains("invalid_tool_arguments"));
+
+            fixture.restart();
+            RunHandle resumed = fixture.engine.resume(handle.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals("done", outcome.output().path("text").asText());
+            assertEquals(persistedFeedback, resumedFeedback.get());
+            assertEquals(3, modelCalls.get());
+            assertEquals(1, toolCalls.get());
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.TOOL
+                            && step.output().path("validationRejected").asBoolean(false))
+                    .count());
+        }
+    }
+
+    @Test
+    void repeatedInvalidArgumentsPauseAfterBoundedModelFeedback() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            modelCalls.incrementAndGet();
+            return namedToolCallResponse("test_mutate", "{\"session_ref\":\"wrong-key\"}", 2, 1);
+        }, RunBudget.UNBOUNDED, toolCalls, new FixtureConfig().autoApproveTestMutate())) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals("tool.recovery_required", snapshot.output().path("kind").asText());
+            assertEquals(3, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.TOOL
+                            && step.output().path("validationRejected").asBoolean(false))
+                    .count());
+        }
+    }
+
+    @Test
     void overBudgetToolCallResponseIsMeteredBeforeAnyToolExecutes() throws Exception {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
         ChatModel model = prompt -> {
             modelCalls.incrementAndGet();
-            return toolCallResponse(7, 3);
+            return toolCallResponse(1_007, 3);
         };
         RunBudget budget = new RunBudget(
-                Duration.ofMinutes(1), 5, 100, 4, BigDecimal.TEN);
+                Duration.ofMinutes(1), 1_000, 100, 4, BigDecimal.TEN);
 
         try (Fixture fixture = new Fixture(model, budget, toolCalls)) {
             var handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
 
-            assertEquals(RunState.FAILED, outcome.state());
-            assertTrue(outcome.error().contains(BudgetExceededException.class.getName()));
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals("harness.budget_exhausted", snapshot.output().path("kind").asText());
+            assertEquals("MODEL_INPUT_TOKENS", snapshot.output().path("budgetKind").asText());
+            assertEquals("1007", snapshot.output().path("budgetActual").asText());
+            assertEquals("1000", snapshot.output().path("budgetLimit").asText());
             assertEquals(1, modelCalls.get());
             assertEquals(0, toolCalls.get());
             assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .filter(event -> event.type().equals("core.model.usage")).count());
-            assertEquals(7, fixture.ledger.snapshot(handle.id()).inputTokens());
+            assertEquals(1_007, fixture.ledger.snapshot(handle.id()).inputTokens());
             assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    @Test
+    void clearlyUnaffordablePromptStopsBeforeProviderCallAndRecordsNoUsage() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        RunBudget budget = new RunBudget(
+                Duration.ofMinutes(1), 1_724, 100, 4, BigDecimal.TEN);
+        try (Fixture fixture = new Fixture(prompt -> {
+            modelCalls.incrementAndGet();
+            return textResponse("unexpected", 21_510, 1);
+        }, budget, toolCalls)) {
+            RunHandle handle = fixture.engine.start(fixture.request("x".repeat(32_000)));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals("harness.budget_exhausted", snapshot.output().path("kind").asText());
+            assertEquals(0, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+            assertEquals(0, fixture.ledger.snapshot(handle.id()).inputTokens());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.model.usage")));
         }
     }
 
@@ -1091,7 +2128,7 @@ class SpringAiReasoningGatewayIntegrationTest {
 
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger())) {
             var handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.FAILED, outcome.state());
             assertEquals(1, calls.get());
@@ -1114,20 +2151,28 @@ class SpringAiReasoningGatewayIntegrationTest {
                 case 1 -> {
                     assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
                     yield namedToolCallResponse("framework_tool_catalog",
-                            "{\"action\":\"list\",\"query\":\"code_target\"}", 2, 1);
+                            "{\"query\":\"code_target\"}", 2, 1);
                 }
                 case 2 -> {
                     assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
                     assertTrue(lastToolResponse(prompt).responseData().contains("code_target"));
+                    assertTrue(lastToolResponse(prompt).responseData().contains("\"action\":\"list\""));
+                    yield namedToolCallResponse("framework_tool_catalog",
+                            "{\"names\":[\"code_target\"]}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                    assertTrue(lastToolResponse(prompt).responseData()
+                            .contains("action=activate is required when names are supplied"));
                     yield namedToolCallResponse("framework_tool_catalog",
                             "{\"action\":\"activate\",\"names\":[\"code_target\"]}", 2, 1);
                 }
-                case 3 -> {
+                case 4 -> {
                     assertEquals(List.of("code_target"), toolNames(prompt));
                     assertTrue(lastToolResponse(prompt).responseData().contains("code_target"));
                     yield namedToolCallResponse("code_target", "{\"value\":42}", 2, 1);
                 }
-                case 4 -> {
+                case 5 -> {
                     assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
                     assertEquals("code_target", lastToolResponse(prompt).name());
                     yield textResponse("done", 2, 1);
@@ -1140,10 +2185,10 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .fillerTools(70).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
-            assertEquals(4, calls.get());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
+            assertEquals(5, calls.get());
             assertEquals(1, codeCalls.get());
-            assertEquals(3, fixture.runs.eventsAfter(handle.id(), 0).stream()
+            assertEquals(4, fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .filter(event -> event.type().equals("core.tool.completed")).count());
             assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .anyMatch(event -> event.type().equals("core.tool.completed")
@@ -1151,6 +2196,492 @@ class SpringAiReasoningGatewayIntegrationTest {
                             && event.payload().path("output").path("activated").toString()
                                     .contains("code_target")));
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    void catalogNaturalLanguageDesktopQueryListsAuthorizedNavigationToolsOnFirstPage() throws Exception {
+        Set<String> desktopNames = Set.of("desktop_session_probe", "desktop_session_targets",
+                "desktop_session_open", "desktop_session_click");
+        Map<String, String> desktopDescriptions = new HashMap<>();
+        for (var method : DesktopSessionTools.class.getDeclaredMethods()) {
+            var annotation = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
+            if (annotation != null && desktopNames.contains(annotation.name())) {
+                desktopDescriptions.put(annotation.name(), annotation.description());
+            }
+        }
+        assertEquals(desktopNames, desktopDescriptions.keySet());
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> switch (calls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"query\":\"桌面会话 探测 打开 示例应用 设置\"}", 2, 1);
+            }
+            case 2 -> {
+                String listed = lastToolResponse(prompt).responseData();
+                assertTrue(listed.contains("\"action\":\"list\""), listed);
+                assertTrue(listed.contains("desktop_session_probe"), listed);
+                assertTrue(listed.contains("desktop_session_targets"), listed);
+                assertTrue(listed.contains("desktop_session_open"), listed);
+                assertFalse(listed.contains("desktop_session_click"), listed);
+                assertFalse(listed.contains("code_target"), listed);
+                assertFalse(listed.contains("\"hasNext\":true"), listed);
+                yield textResponse("found", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .simulatedDesktopSession(new AtomicInteger(), new AtomicInteger())
+                .desktopToolDescriptions(desktopDescriptions)
+                .allowedToolNames(Set.of("framework_tool_catalog", "desktop_session_probe",
+                        "desktop_session_targets", "desktop_session_open"));
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request());
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, calls.get());
+        }
+    }
+
+    @Test
+    void continuingAfterAnOldDesktopDenialCanDiscoverAndLaunchWithCurrentAccess() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launchCalls = new AtomicInteger();
+        AtomicBoolean desktopEnabled = new AtomicBoolean(false);
+        String oldFailure = "OLD_DESKTOP_DENIAL：请先在设置中开启电脑应用访问";
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            if (request.purpose().equals("task.contract.plan.v3")) {
+                assertEquals("继续", request.input().path("request").asText());
+                assertTrue(request.input().path("humanHistory").toString().contains("打开QQ查看联系人"));
+                assertFalse(request.input().path("humanHistory").toString().contains("OLD_DESKTOP_DENIAL"));
+                selection.put("applicable", true).put("intentStatus", "RESOLVED")
+                        .put("originalRequest", "打开QQ查看联系人");
+                var criteria = selection.putArray("criteria");
+                criteria.addObject().put("id", "launch").put("description", "启动QQ")
+                        .put("capabilityId", "desktop.launch").put("targetType", "DESKTOP_APPLICATION")
+                        .put("target", "QQ").put("requiredEvidence", "ACCEPTED")
+                        .put("requiredSubject", "");
+                criteria.addObject().put("id", "contacts").put("description", "观察QQ联系人")
+                        .put("capabilityId", "desktop.observe").put("targetType", "DESKTOP_APPLICATION")
+                        .put("target", "QQ").put("requiredEvidence", "OBSERVED")
+                        .put("requiredSubject", "联系人");
+            } else {
+                assertEquals("context.on_demand.select_v2", request.purpose());
+                assertTrue(request.input().path("task").asText().contains("打开QQ查看联系人"));
+                var current = request.input().path("runtimeContext");
+                assertEquals(1, current.size(), "Current host state is deduplicated across desktop tools");
+                assertTrue(current.get(0).path("settingEnabled").asBoolean());
+                assertEquals("NOT_CHECKED", current.get(0).path("systemStatus").asText());
+                selection.putArray("searches");
+                var selected = selection.putArray("historyIds");
+                request.input().path("history").forEach(history -> {
+                    if (history.path("summary").asText().contains("OLD_DESKTOP_DENIAL")) {
+                        selected.add(history.path("id").asText());
+                    }
+                });
+                toolIntent(selection, "");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                        message instanceof org.springframework.ai.chat.messages.SystemMessage
+                                && message.getText().contains("\"settingEnabled\":true")
+                                && message.getText().contains("NOT_CHECKED")));
+                assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                        message.getText() != null && message.getText().contains("打开QQ查看联系人")));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"action\":\"activate\",\"names\":[\"desktop_session_probe\"]}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of("desktop_session_probe"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_probe", "{}", 2, 1);
+            }
+            case 3 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                var probe = toolEnvelope(prompt);
+                assertEquals("SUCCEEDED", probe.path("status").asText());
+                assertTrue(probe.toString().contains("ready"));
+                assertFalse(probe.toString().contains("不可用"));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"action\":\"activate\",\"names\":[\"desktop_session_launch_application\"]}", 2, 1);
+            }
+            case 4 -> {
+                assertEquals(List.of("desktop_session_launch_application"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_launch_application",
+                        "{\"application\":\"QQ\"}", 2, 1);
+            }
+            case 5 -> {
+                assertEquals("SUCCEEDED", toolEnvelope(prompt).path("status").asText());
+                assertTrue(toolNames(prompt).contains("desktop_session_open"));
+                yield namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                        "{\"decision\":\"CONTINUE\",\"userMessage\":\"QQ已启动，继续观察联系人\","
+                                + "\"evidenceRefs\":[],\"unmetCriterionIds\":[\"contacts\"]}", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig().harness()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner)
+                .simulatedDesktopLaunchOpenObserve(launchCalls, new AtomicInteger(),
+                        new AtomicInteger(), new AtomicInteger())
+                .simulatedDesktopDiscovery().simulatedApplication("QQ")
+                .simulatedRuntimeContext(() -> List.of(JsonNodeFactory.instance.objectNode()
+                        .put("kind", "desktop.access.current")
+                        .put("settingEnabled", desktopEnabled.get())
+                        .put("systemStatus", "NOT_CHECKED")));
+        try (Fixture fixture = new Fixture(model, toolCallBudget(8), new AtomicInteger(), config)) {
+            desktopEnabled.set(true);
+            RunRequest request = fixture.request(List.of(
+                    InputBlock.message("user", "打开QQ查看联系人"),
+                    InputBlock.message("assistant", oldFailure), InputBlock.text("继续")), Map.of());
+            RunHandle handle = fixture.engine.start(request);
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(5, providerCalls.get());
+            assertEquals(1, launchCalls.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals("打开QQ查看联系人",
+                    TaskResultEvaluator.latestContractV3(events, fixture.json).orElseThrow().originalRequest());
+            assertEquals("继续", TaskContractCompiler.originalRequest(request),
+                    "Resolution must preserve the current user input and request permissions");
+            assertEquals(ModelDecisionV1.Decision.CONTINUE,
+                    TaskResultEvaluator.latestModelDecision(events).orElseThrow());
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.tool.receipt")
+                    && event.payload().path("tool").asText().equals("desktop_session_launch_application")
+                    && event.payload().path("status").asText().equals("ACCEPTED")));
+            assertTrue(events.stream().noneMatch(event -> event.type().equals("core.task.stop")
+                    && event.payload().path("reasonCode").asText().equals("MODEL_BLOCKED")));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"fixed", "deferred", "deferred_fetch"})
+    void contextApprovalRecoveryReusesSelectionAndRefreshesCurrentHostState(String sourceKind)
+            throws Exception {
+        AtomicBoolean desktopEnabled = new AtomicBoolean();
+        AtomicInteger selectionCalls = new AtomicInteger();
+        AtomicInteger refinementCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger fixedReads = new AtomicInteger();
+        AtomicInteger searches = new AtomicInteger();
+        AtomicInteger fetches = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        String body = "CONTEXT_READ_ONCE_AFTER_APPROVAL";
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selectionCalls.incrementAndGet();
+                assertFalse(request.input().path("runtimeContext").get(0)
+                        .path("settingEnabled").asBoolean(),
+                        "the original settled selection observed the old switch");
+                assertTrue(request.input().toString().length() <= 1_000);
+                var selectedSearches = selection.putArray("searches");
+                if (sourceKind.startsWith("deferred")) {
+                    selectedSearches.addObject().put("source", "docs").put("query", "preference");
+                }
+                toolIntent(selection, "");
+            } else {
+                assertEquals("context.on_demand.refine_v2", request.purpose());
+                refinementCalls.incrementAndGet();
+                selection.putArray("sourceIds").add("docs:one");
+                toolChoice(selection, request, "none");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode()
+                        .put("enabled", true).put("plannerInputChars", 1_000))
+                .planner(planner)
+                .simulatedDesktopLaunchOpenObserve(launches, opens, observes, clicks)
+                .simulatedDesktopDiscovery()
+                .simulatedRuntimeContext(() -> {
+                    ObjectNode current = JsonNodeFactory.instance.objectNode()
+                            .put("kind", "desktop.access.current")
+                            .put("settingEnabled", desktopEnabled.get())
+                            .put("systemStatus", "NOT_CHECKED");
+                    if (desktopEnabled.get()) {
+                        current.put("detail", "The saved setting changed while awaiting approval. "
+                                .repeat(4));
+                    }
+                    return List.of(current);
+                });
+        if (sourceKind.equals("fixed")) {
+            config.fixedSource(fixedPersona(fixedReads, new AtomicReference<>(body)));
+        } else {
+            config.source(new DeferredContextSource() {
+                @Override public String id() { return "docs"; }
+                @Override public String description() { return "Document evidence"; }
+                @Override public PermissionSet requiredPermissions() {
+                    return PermissionSet.of("context.read");
+                }
+                @Override public List<DeferredContextCandidate> search(
+                        RunRequest request, String query, int limit) {
+                    searches.incrementAndGet();
+                    return List.of(new DeferredContextCandidate("one", "v1", "saved preference",
+                            PermissionSet.NONE));
+                }
+                @Override public String fetch(RunRequest request, String id, String version) {
+                    fetches.incrementAndGet();
+                    return body;
+                }
+            });
+        }
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                    message.getText() != null && message.getText().contains(body)));
+            var current = prompt.getInstructions().stream()
+                    .filter(org.springframework.ai.chat.messages.SystemMessage.class::isInstance)
+                    .filter(message -> message.getText().contains("Current host runtime state"))
+                    .findFirst().orElseThrow().getText();
+            assertTrue(current.contains("\"settingEnabled\":true"));
+            assertFalse(current.contains("\"settingEnabled\":false"));
+            assertTrue(current.contains("NOT_CHECKED"));
+            assertTrue(current.contains("changed while awaiting approval"));
+            assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+            return textResponse("context read completed", 2, 1);
+        }, toolCallBudget(6), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(
+                    "Use the saved context. " + "Additional human goal context. ".repeat(30)));
+            assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
+            assertEquals(1, selectionCalls.get());
+            assertEquals(0, providerCalls.get());
+            assertEquals(0, fixedReads.get() + searches.get() + fetches.get());
+            int approvals = sourceKind.equals("fixed") ? 1 : 2;
+            for (int index = 0; index < approvals; index++) {
+                RunSnapshot waitingSnapshot = fixture.engine.get(handle.id());
+                assertEquals(RunState.WAITING_APPROVAL, waitingSnapshot.state(),
+                        sourceKind + " approval " + index + ": " + waitingSnapshot.error()
+                                + "; output=" + waitingSnapshot.output());
+                if (!sourceKind.equals("deferred_fetch") || index == 1) {
+                    if (sourceKind.equals("deferred_fetch")) {
+                        assertEquals(1, searches.get());
+                        assertEquals(1, refinementCalls.get(),
+                                "refinement settled before the host state changes at fetch approval");
+                        assertEquals(0, fetches.get());
+                    }
+                    desktopEnabled.set(true);
+                }
+                var waiting = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.run.waiting_approval"))
+                        .reduce((previous, next) -> next).orElseThrow();
+                String fingerprint = ToolApprovalChallenge.fromEventPayload(
+                        waiting.payload()).fingerprint();
+                fixture.restart();
+                handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval",
+                        JsonNodeFactory.instance.objectNode().put("approved", true)
+                                .put("fingerprint", fingerprint)));
+            }
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, selectionCalls.get(), "completed select_v2 is replayed, not rerun");
+            assertEquals(sourceKind.equals("fixed") ? 0 : 1, refinementCalls.get());
+            assertEquals(1, providerCalls.get());
+            assertEquals(sourceKind.equals("fixed") ? 1 : 0, fixedReads.get());
+            assertEquals(sourceKind.startsWith("deferred") ? 1 : 0, searches.get());
+            assertEquals(sourceKind.startsWith("deferred") ? 1 : 0, fetches.get());
+            assertEquals(0, launches.get() + opens.get() + observes.get() + clicks.get());
+            var steps = new RunStepQuery(fixture.runs).steps(handle.id());
+            assertEquals(1, steps.stream().filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                    && step.input().path("phase").asText().equals("select_v2")).count());
+            assertEquals(approvals, steps.stream().filter(step -> step.kind() == AgentStep.Kind.TOOL
+                    && step.input().path("tool").asText().startsWith("framework_context_")).count());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"sys_file_read", "web_content"})
+    void emptyLightSelectionStillAllowsAuthorizedFileAndWebDiscovery(String toolName) throws Exception {
+        Path file = toolName.equals("sys_file_read")
+                ? Files.createTempFile(Path.of("target"), "discovery-file-", ".txt")
+                        .toAbsolutePath().normalize() : null;
+        if (file != null) Files.writeString(file, "Observed file content through the host callback.");
+        AtomicInteger providerCalls = new AtomicInteger();
+        ModelTaskGateway planner = emptyToolSelection();
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).allowedToolNames(Set.of("framework_tool_catalog", toolName));
+        if (file != null) config.systemFileRead();
+        else config.webToolDescriptions(Map.of("web_content", "Read an authorized web page")).autoApproveWeb();
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"action\":\"activate\",\"names\":[\"" + toolName + "\"]}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of(toolName), toolNames(prompt));
+                yield namedToolCallResponse(toolName, file == null ? "{\"value\":7}"
+                        : JsonNodeFactory.instance.objectNode().put("path", file.toString()).toString(), 2, 1);
+            }
+            case 3 -> {
+                assertEquals(toolName, lastToolResponse(prompt).name());
+                assertEquals("SUCCEEDED", toolEnvelope(prompt).path("status").asText());
+                yield textResponse("已读取", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, toolCallBudget(4), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("Read the authorized source"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(3, providerCalls.get());
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started")
+                            && event.payload().path("tool").asText().equals(toolName)).count());
+        } finally {
+            if (file != null) Files.deleteIfExists(file);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"disabled", "zero_budget", "one_budget", "catalog_denied", "no_authorized_tools"})
+    void emptyLightSelectionDoesNotBypassDiscoveryAdmission(String gate) throws Exception {
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(emptyToolSelection());
+        if (gate.equals("catalog_denied")) config.allowedToolNames(Set.of("code_target"));
+        if (gate.equals("no_authorized_tools")) config.allowedToolNames(Set.of());
+        Map<String, com.fasterxml.jackson.databind.JsonNode> attributes = gate.equals("disabled")
+                ? Map.of("framework.disableTools", JsonNodeFactory.instance.booleanNode(true)) : Map.of();
+        RunBudget budget = toolCallBudget(gate.equals("zero_budget") ? 0 : gate.equals("one_budget") ? 1 : 4);
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME), allToolNames(prompt));
+            return namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                    "{\"decision\":\"BLOCKED\",\"userMessage\":\"当前无法发现业务工具\","
+                            + "\"evidenceRefs\":[],\"unmetCriterionIds\":[]}", 2, 1);
+        }, budget, new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("Find an authorized tool", attributes));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, providerCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unauthorized", "schema", "slots"})
+    void discoveryFallbackStillRejectsUnauthorizedOrOverBudgetActivation(String gate) throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger codeCalls = new AtomicInteger();
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1)
+                        .put("maxToolSchemaCharacters", 4_000))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(emptyToolSelection()).codeCalls(codeCalls);
+        if (gate.equals("unauthorized")) config.allowedToolNames(Set.of("framework_tool_catalog", "code_target"));
+        if (gate.equals("schema")) config.codeDescriptionPadding(4_500);
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                String arguments = switch (gate) {
+                    case "unauthorized" -> "{\"action\":\"activate\",\"names\":[\"test_mutate\"]}";
+                    case "schema" -> "{\"action\":\"activate\",\"names\":[\"code_target\"]}";
+                    default -> "{\"action\":\"activate\",\"names\":[\"code_target\",\"test_mutate\"]}";
+                };
+                yield namedToolCallResponse("framework_tool_catalog", arguments, 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                var data = toolEnvelope(prompt).path("data");
+                assertFalse(data.path("success").asBoolean(true));
+                String error = data.path("error").asText();
+                assertTrue(error.contains(gate.equals("unauthorized") ? "unauthorized"
+                        : gate.equals("schema") ? "schema" : "tool count budget"), error);
+                yield namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                        "{\"decision\":\"BLOCKED\",\"userMessage\":\"工具激活未通过当前约束\","
+                                + "\"evidenceRefs\":[],\"unmetCriterionIds\":[]}", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        AtomicInteger mutations = new AtomicInteger();
+        try (Fixture fixture = new Fixture(model, toolCallBudget(4), mutations, config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("Discover the requested tool"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, providerCalls.get());
+            assertEquals(0, codeCalls.get());
+            assertEquals(0, mutations.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started"))
+                    .allMatch(event -> event.payload().path("tool").asText().equals("framework_tool_catalog")));
+        }
+    }
+
+    private static ModelTaskGateway emptyToolSelection() {
+        return request -> {
+            assertEquals("context.on_demand.select_v2", request.purpose());
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("searches");
+            selection.putArray("historyIds");
+            toolIntent(selection, "");
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+    }
+
+    @Test
+    void unobservedDesktopSettingsAreNotPersistedAsCompletedWork() throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger();
+        FixtureConfig config = new FixtureConfig()
+                .simulatedDesktopSession(new AtomicInteger(), new AtomicInteger())
+                .desktopToolDescriptions(Map.of("desktop_session_targets", "list visible windows"))
+                .autoApproveDesktop().harness();
+        ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1 -> {
+                assertTrue(toolNames(prompt).contains("desktop_session_targets"));
+                yield namedToolCallResponse("desktop_session_targets", "{}", 2, 1);
+            }
+            case 2, 3 -> textResponse("示例应用 主窗口现在已经在前台正常显示，我已经切到设置页看过。"
+                    + "设置列表如下：虚构设置。", 2, 1);
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "去 app 中心打开 示例应用 查看设置", List.of(
+                    new TaskCriterionV3("settings", "观察设置页面", "desktop.observe",
+                            CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "示例应用",
+                            EffectReceiptV1.Status.OBSERVED, "设置")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("去 app 中心打开 示例应用 查看设置",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            String reply = snapshot.output().path("text").asText();
+            assertTrue(reply.contains("任务尚未验证完成"), reply);
+            assertFalse(reply.contains("虚构设置"), reply);
+            assertEquals(reply, fixture.engine.get(handle.id()).output().path("text").asText());
+            assertEquals(3, modelCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.task.repair_requested"))
+                    .count() <= 1,
+                    "missing target-page evidence permits at most one attempted repair here");
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .anyMatch(event -> event.type().equals("core.task.stop")
+                            && !event.payload().path("reasonCode").asText().isBlank()),
+                    "the paused result must record a structured stop reason");
+            assertEquals(TaskOutcome.UNVERIFIED,
+                    fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
         }
     }
 
@@ -1177,7 +2708,9 @@ class SpringAiReasoningGatewayIntegrationTest {
             }
             com.fasterxml.jackson.databind.JsonNode output;
             try {
-                output = json.readTree(response.responseData());
+                var envelope = json.readTree(response.responseData());
+                assertEquals("SUCCEEDED", envelope.path("status").asText());
+                output = envelope.path("data");
             } catch (Exception failure) {
                 throw new IllegalStateException("invalid catalog output", failure);
             }
@@ -1186,7 +2719,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 return namedToolCallResponse("code_target", "{\"value\":1}", 2, 1);
             }
             assertEquals("list", output.path("action").asText());
-            assertTrue(response.responseData().length() <= 1_000);
+            assertTrue(output.toString().length() <= 1_000);
             assertEquals(pageNumber.get(), output.path("page").asInt());
             assertEquals(output.path("tools").size(), output.path("pageSize").asInt());
             assertTrue(output.path("pageSize").asInt() > 0);
@@ -1206,7 +2739,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .fillerTools(70).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertTrue(pageNumber.get() > 1);
             assertEquals(1, codeCalls.get());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
@@ -1255,7 +2788,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            assertEquals(RunState.COMPLETED, resumed.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, resumed).state());
             assertEquals(3, providerCalls.get());
             assertEquals(1, codeCalls.get());
             assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
@@ -1320,7 +2853,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 fixture.restart();
                 RunHandle resumed = fixture.engine.resume(handle.id(),
                         new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-                RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+                RunOutcome outcome = awaitCompletion(fixture, resumed);
 
                 assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
                 assertEquals(3, providerCalls.get());
@@ -1362,7 +2895,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .fillerTools(70).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.requestWithAllowedGroups("test", "filler"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state());
             assertEquals(3, calls.get());
             assertEquals(0, codeCalls.get());
@@ -1395,7 +2928,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .denyTestGroup().codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(2, calls.get());
             assertEquals(1, codeCalls.get());
         }
@@ -1426,7 +2959,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .allowedToolNames(Set.of("code_target")).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, toolCallBudget(1), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(2, providerCalls.get());
             assertEquals(1, codeCalls.get());
             assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
@@ -1450,7 +2983,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("unexpected", 1, 1);
         }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.FAILED, outcome.state());
             assertEquals(0, providerCalls.get());
             assertTrue(outcome.error().contains("framework_tool_catalog"));
@@ -1458,20 +2991,23 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     @Test
-    void catalogNeedsTwoRemainingCallsAndChargesBothActivationAndExecution() throws Exception {
+    void catalogNeedsTwoRemainingCallsAndOneStillAllowsAControlDecision() throws Exception {
         FixtureConfig config = new FixtureConfig()
                 .context(contextConfiguration(true, 48_000, 1_000, 1))
                 .fillerTools(70);
         AtomicInteger insufficientProviderCalls = new AtomicInteger();
         try (Fixture fixture = new Fixture(prompt -> {
             insufficientProviderCalls.incrementAndGet();
-            return textResponse("unexpected", 1, 1);
+            assertEquals(List.of(), toolNames(prompt));
+            assertEquals(List.of(HarnessDecisionToolCallback.NAME), allToolNames(prompt));
+            return textResponse("catalog requires another business call", 1, 1);
         }, toolCallBudget(1), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
-            assertEquals(RunState.FAILED, outcome.state());
-            assertEquals(0, insufficientProviderCalls.get());
-            assertTrue(outcome.error().contains("tool-call budget"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, insufficientProviderCalls.get());
+            assertEquals(0, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started")).count());
         }
 
         AtomicInteger providerCalls = new AtomicInteger();
@@ -1506,7 +3042,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             delivered.clear();
             try (Fixture fixture = new Fixture(model, toolCallBudget(limit), new AtomicInteger(), sufficient)) {
                 RunHandle handle = fixture.engine.start(fixture.request());
-                assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+                assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
                 assertEquals(3, providerCalls.get());
                 assertEquals(1, codeCalls.get());
                 assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
@@ -1551,7 +3087,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .autoApproveTestMutate().fillerTools(70).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(3, calls.get());
             assertEquals(1, codeCalls.get());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
@@ -1575,7 +3111,8 @@ class SpringAiReasoningGatewayIntegrationTest {
                     assertEquals("code_target", latest.name());
                     assertEquals("provider-call", latest.id());
                     assertTrue(latest.responseData().contains("工具已执行"));
-                    assertTrue(latest.responseData().length() <= 1_000);
+                    assertEquals("SUCCEEDED", toolEnvelope(prompt).path("status").asText());
+                    assertTrue(toolEnvelope(prompt).path("data").toString().length() <= 1_000);
                     assertFalse(latest.responseData().contains(fullResult));
                     yield textResponse("done", 2, 1);
                 }
@@ -1587,7 +3124,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .codeResult(fullResult).codeCalls(codeCalls);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(3, calls.get());
             assertEquals(1, codeCalls.get());
             assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
@@ -1609,10 +3146,10 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("unexpected", 1, 1);
         }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("task-" + "x".repeat(5_000)));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.FAILED, outcome.state());
             assertEquals(0, calls.get());
-            assertTrue(outcome.error().contains("context") || outcome.error().contains("budget"));
+            assertTrue(outcome.error().contains(LocalContextBudgetExceededException.CODE));
         }
     }
 
@@ -1643,7 +3180,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .fillerTools(70).codeResult(fullResult);
         try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(2, calls.get());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
         }
@@ -1662,7 +3199,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             return toolCallResponse(2, 1);
         }, RunBudget.UNBOUNDED, toolCalls, config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.FAILED, outcome.state());
             assertEquals(1, providerCalls.get());
             assertEquals(1, toolCalls.get());
@@ -1680,10 +3217,10 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("unexpected", 1, 1);
         }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.FAILED, outcome.state());
             assertEquals(0, providerCalls.get());
-            assertTrue(outcome.error().contains("context") || outcome.error().contains("budget"));
+            assertTrue(outcome.error().contains(LocalContextBudgetExceededException.CODE));
         }
     }
 
@@ -1714,7 +3251,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                                 JsonNodeFactory.instance.objectNode().put("value", number)));
                 handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval", approval));
             }
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(3, calls.get());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
         }
@@ -1738,9 +3275,10 @@ class SpringAiReasoningGatewayIntegrationTest {
                 ? toolCallResponse(2, 1) : textResponse("done", 2, 1),
                 RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture().get().state());
+            assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state());
             assertEquals(2, modelCalls.get());
-            assertEquals(1, observations.get());
+            assertEquals(2, observations.get(),
+                    "the business call and the independent decision call are both observed");
         }
     }
 
@@ -1800,14 +3338,15 @@ class SpringAiReasoningGatewayIntegrationTest {
                     InputBlock.text("Run code_target once")), Map.of());
             RunHandle handle = fixture.engine.start(request);
 
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(3, plannerCalls.get());
+            assertEquals(2, plannerCalls.get(),
+                    "the control-only final step does not invoke the tool selector");
             assertEquals(2, providerCalls.get());
             assertEquals(1, codeCalls.get());
             assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .filter(event -> event.type().equals("core.tool.completed")).count());
-            assertEquals(2, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
                     .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
                             && step.input().path("phase").asText().equals("select_v2"))
                     .count());
@@ -1857,7 +3396,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("done", 2, 1);
         }, toolCallBudget(1), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("计划中秋节的游玩地方"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(2, plannerCalls.get());
@@ -1883,13 +3422,13 @@ class SpringAiReasoningGatewayIntegrationTest {
                 toolIntent(selection, "site", "web");
             } else {
                 assertEquals("context.on_demand.refine_v2", request.purpose());
-                assertEquals(Set.of("site_login_now", "site_fill_password"),
+                assertEquals(Set.of("test_site_login_now", "test_site_fill_password"),
                         java.util.stream.StreamSupport.stream(
                                 request.input().path("toolCandidates").spliterator(), false)
                                 .map(candidate -> candidate.path("name").asText())
                                 .collect(java.util.stream.Collectors.toSet()));
                 selection.putArray("sourceIds");
-                toolChoice(selection, request, "direct", "site_login_now");
+                toolChoice(selection, request, "direct", "test_site_login_now");
             }
             return CompletableFuture.completedFuture(new ModelTaskResult(
                     selection, "planner", 1, 1, false, Map.of()));
@@ -1899,15 +3438,15 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
                 .planner(planner)
                 .webToolDescriptions(Map.of(
-                        "site_login_now", "密码：工具内部仅在站点登录时填写已保存的凭据",
-                        "site_fill_password", "密码由站点凭据工具管理，不会写入普通日志"));
+                        "test_site_login_now", "密码：工具内部仅在站点登录时填写已保存的凭据",
+                        "test_site_fill_password", "密码由站点凭据工具管理，不会写入普通日志"));
         try (Fixture fixture = new Fixture(prompt -> {
             providerCalls.incrementAndGet();
-            assertEquals(List.of("site_login_now"), toolNames(prompt));
+            assertEquals(List.of("test_site_login_now"), toolNames(prompt));
             return textResponse("中秋攻略", 2, 1);
         }, toolCallBudget(1), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("给我中秋节的攻略"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(2, plannerCalls.get());
@@ -2081,15 +3620,16 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("done", 2, 1);
         }, toolCallBudget(0), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("answer without tools"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(1, plannerCalls.get());
+            assertEquals(0, plannerCalls.get(),
+                    "zero business budget offers the control callback directly");
             assertEquals(1, providerCalls.get());
         }
     }
 
     @Test
-    void 按需规划零工具时误报WebContent仍能收到反馈并回答() throws Exception {
+    void 按需规划选空时仍拒绝未提供的WebContent并保留目录发现() throws Exception {
         AtomicInteger plannerCalls = new AtomicInteger();
         AtomicInteger providerCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
@@ -2110,7 +3650,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .planner(planner);
         ChatModel model = prompt -> {
             delivered.add(prompt);
-            assertEquals(List.of(), toolNames(prompt));
+            assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
             return switch (providerCalls.incrementAndGet()) {
                 case 1 -> namedToolCallResponse("web_content", "{}", 2, 1);
                 case 2 -> {
@@ -2124,7 +3664,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         };
         try (Fixture fixture = new Fixture(model, toolCallBudget(2), toolCalls, config)) {
             RunHandle handle = fixture.engine.start(fixture.request("上海"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("上海", outcome.output().path("text").asText());
@@ -2185,11 +3725,63 @@ class SpringAiReasoningGatewayIntegrationTest {
             default -> throw new AssertionError("unexpected provider call");
         }, toolCallBudget(3), new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("activate code, then inspect mutate"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(3, providerCalls.get());
             assertEquals(4, plannerCalls.get());
             assertEquals(1, codeCalls.get());
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void 已激活工具与目录有容量时可继续调用目录() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            selection.putArray("searches");
+            toolIntent(selection, providerCalls.get() < 2 ? "__no_matching_tool__" : "");
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner);
+        try (Fixture fixture = new Fixture(prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"action\":\"activate\",\"names\":[\"code_target\"]}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(Set.of("code_target", "framework_tool_catalog"),
+                        Set.copyOf(toolNames(prompt)));
+                yield namedToolCallResponse("framework_tool_catalog",
+                        "{\"action\":\"list\",\"query\":\"code_target\"}", 2, 1);
+            }
+            case 3 -> {
+                assertEquals("framework_tool_catalog", lastToolResponse(prompt).name());
+                assertTrue(lastToolResponse(prompt).responseData().contains("\"action\":\"list\""));
+                yield textResponse("done", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        }, toolCallBudget(3), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("activate code, then inspect catalog"));
+            RunOutcome outcome = handle.completion().toCompletableFuture()
+                    .get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(3, providerCalls.get());
+            assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started")
+                            && event.payload().path("tool").asText()
+                                    .equals("framework_tool_catalog"))
+                    .count());
+            assertTrue(new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .noneMatch(step -> step.output() != null
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean()));
         }
     }
 
@@ -2244,7 +3836,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("inspect a tool and summary")),
                     Map.of(), PermissionSet.of("context.read", "tool.execute"));
             RunHandle handle = fixture.engine.start(request);
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, searches.get());
             assertEquals(0, fetches.get());
@@ -2261,14 +3853,20 @@ class SpringAiReasoningGatewayIntegrationTest {
         ModelTaskGateway planner = request -> {
             ObjectNode selection = JsonNodeFactory.instance.objectNode();
             selection.putArray("historyIds");
-            int number = plannerCalls.incrementAndGet();
+            plannerCalls.incrementAndGet();
             if (request.purpose().endsWith(".select_v2")) {
                 selection.putArray("searches");
-                toolIntent(selection, number == 1 ? "code_target" : "",
-                        number == 1 ? "code" : "");
+                String target = providerCalls.get() == 0 ? "code_target"
+                        : providerCalls.get() == 1 ? "filler_009" : "";
+                toolIntent(selection, target, providerCalls.get() == 0 ? "code"
+                        : providerCalls.get() == 1 ? "filler" : "");
             } else {
                 selection.putArray("sourceIds");
-                toolChoice(selection, request, "direct", "code_target");
+                if (providerCalls.get() == 0) {
+                    toolChoice(selection, request, "direct", "code_target");
+                } else {
+                    toolChoice(selection, request, "discover");
+                }
             }
             return CompletableFuture.completedFuture(new ModelTaskResult(
                     selection, "planner", 1, 1, false, Map.of()));
@@ -2277,17 +3875,21 @@ class SpringAiReasoningGatewayIntegrationTest {
             delivered.add(prompt);
             return switch (providerCalls.incrementAndGet()) {
                 case 1 -> {
-                    assertEquals(Set.of("code_target", "framework_tool_catalog"),
-                            Set.copyOf(toolNames(prompt)));
+                    assertEquals(List.of("code_target"), toolNames(prompt));
+                    yield namedToolCallResponse("code_target", "{\"value\":1}", 2, 1);
+                }
+                case 2 -> {
+                    assertEquals(List.of("framework_tool_catalog"), toolNames(prompt));
+                    assertEquals("code_target", lastToolResponse(prompt).name());
                     yield namedToolCallResponse("framework_tool_catalog",
                             "{\"action\":\"activate\",\"names\":[\"filler_009\"]}", 2, 1);
                 }
-                case 2 -> {
+                case 3 -> {
                     assertEquals(List.of("filler_009"), toolNames(prompt));
                     assertEquals("framework_tool_catalog", lastToolResponse(prompt).name());
                     yield namedToolCallResponse("filler_009", "{\"value\":9}", 2, 1);
                 }
-                case 3 -> {
+                case 4 -> {
                     assertEquals(List.of(), toolNames(prompt));
                     assertEquals("filler_009", lastToolResponse(prompt).name());
                     yield textResponse("done", 2, 1);
@@ -2299,20 +3901,1535 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .context(contextConfiguration(true, 48_000, 16_000, 2))
                 .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
                 .planner(planner).fillerTools(10);
-        try (Fixture fixture = new Fixture(model, toolCallBudget(2),
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3),
                 new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("use a hidden filler tool"));
             RunSnapshot snapshot = fixture.engine.get(handle.id());
-            assertNotEquals(RunState.PAUSED, snapshot.state(), snapshot.output().toString());
+            assertNotEquals(RunState.PAUSED, snapshot.state(), String.valueOf(snapshot.output()));
             RunOutcome outcome = handle.completion().toCompletableFuture()
                     .get(30, java.util.concurrent.TimeUnit.SECONDS);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(4, plannerCalls.get());
-            assertEquals(3, providerCalls.get());
-            assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
+            assertTrue(plannerCalls.get() >= 4);
+            assertEquals(4, providerCalls.get());
+            assertEquals(3, fixture.runs.eventsAfter(handle.id(), 0).stream()
                     .filter(event -> event.type().equals("core.tool.started")).count());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"INVALID_JSON", "SCHEMA_MISMATCH"})
+    @org.junit.jupiter.api.Timeout(30)
+    void malformedAuxiliaryPlanningPreservesAuthorizedGroundedComputerUse(String reason)
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            assertTrue(Set.of(0, 1, 4, 6).contains(providerCalls.get()),
+                    "mandatory open/observe stages must never call the auxiliary planner");
+            plannerCalls.incrementAndGet();
+            return CompletableFuture.failedFuture(new ModelTaskOutputException(
+                    ModelTaskOutputException.Reason.valueOf(reason),
+                    "model returned a malformed planning structure", null));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertEquals(List.of("framework_tool_catalog"), toolNames(prompt),
+                            "bootstrap fallback discovers only the Run-authorized tools");
+                    assertEquals("BOOTSTRAP", computerUseCursor(prompt).path("phase").asText());
+                    yield namedToolCallResponse("framework_tool_catalog",
+                            "{\"action\":\"activate\",\"names\":[\"desktop_session_launch_application\"]}", 2, 1);
+                }
+                case 2 -> {
+                    assertTrue(toolNames(prompt).contains("desktop_session_launch_application"));
+                    yield namedToolCallResponse("desktop_session_launch_application",
+                            "{\"application\":\"示例应用\"}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    assertEquals("OPEN_SESSION", computerUseCursor(prompt).path("phase").asText());
+                    assertEquals("sample-target", computerUseCursor(prompt).path("targetId").asText());
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    assertEquals("OBSERVE", computerUseCursor(prompt).path("phase").asText());
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals(Set.of("desktop_session_click", "desktop_session_observe"),
+                            Set.copyOf(toolNames(prompt)));
+                    var cursor = computerUseCursor(prompt);
+                    assertEquals("READY", cursor.path("phase").asText());
+                    assertTrue(cursor.path("inputAllowed").asBoolean());
+                    assertEquals("sample-session", cursor.path("sessionId").asText());
+                    assertEquals("00000000-0000-4000-8000-000000000001",
+                            cursor.path("observationId").asText());
+                    assertFalse(cursor.path("evidenceRefs").isEmpty());
+                    assertTrue(prompt.getInstructions().stream()
+                            .filter(ToolResponseMessage.class::isInstance)
+                            .map(ToolResponseMessage.class::cast)
+                            .flatMap(responses -> responses.getResponses().stream())
+                            .anyMatch(response -> response.name().equals("desktop_session_observe")
+                                    && response.responseData().contains("设置标签")
+                                    && response.responseData().contains("00000000-0000-4000-8000-000000000001:v7")),
+                            "fallback must keep the complete trusted frame used to ground the input");
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000001\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(1, clicks.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    assertFalse(computerUseCursor(prompt).path("inputAllowed").asBoolean());
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 7 -> {
+                    assertEquals(2, observes.get());
+                    assertEquals("READY", computerUseCursor(prompt).path("phase").asText());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("设置页面"));
+                    yield textResponse("已取得设置页面的观察结果", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(launches, opens, observes, clicks);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(7), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(4, plannerCalls.get());
+            assertEquals(7, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(2, observes.get());
+            assertEquals(1, clicks.get());
+            assertEquals(List.of("framework_tool_catalog", "desktop_session_launch_application",
+                            "desktop_session_open", "desktop_session_observe", "desktop_session_click",
+                            "desktop_session_observe"),
+                    fixture.runs.eventsAfter(handle.id(), 0).stream()
+                            .filter(event -> event.type().equals("core.tool.started"))
+                            .map(event -> event.payload().path("tool").asText()).toList());
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void readOnlyDesktopSessionUpgradesControlAndObservesBeforeAnyInput() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = desktopBootstrapPlanner(providerCalls, new AtomicInteger(),
+                "desktop_session_open");
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":false}", 2, 1);
+                case 2 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 3 -> {
+                    assertTrue(toolNames(prompt).contains("desktop_session_open"));
+                    assertFalse(toolNames(prompt).contains("desktop_session_click"));
+                    assertFalse(computerUseCursor(prompt).path("inputAllowed").asBoolean());
+                    assertEquals(0, clicks.get(), "read-only navigation must never dispatch input");
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                            "control upgrade invalidates the pre-upgrade observation");
+                    assertEquals("OBSERVE", computerUseCursor(prompt).path("phase").asText());
+                    assertFalse(computerUseCursor(prompt).path("inputAllowed").asBoolean());
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertTrue(toolNames(prompt).contains("desktop_session_click"));
+                    assertTrue(computerUseCursor(prompt).path("inputAllowed").asBoolean());
+                    assertEquals(2, observes.get());
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000002\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000002:v7\"}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(1, clicks.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 7 -> textResponse("已取得设置页面的观察结果", 2, 1);
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(new AtomicInteger(), opens,
+                        observes, clicks);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(6), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, opens.get());
+            assertEquals(3, observes.get());
+            assertEquals(1, clicks.get());
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertFalse(events.stream().anyMatch(event -> event.type().equals("core.effect.observation_required")));
+            assertEquals(List.of("false", "true"), events.stream()
+                    .filter(event -> event.type().equals("core.tool.receipt")
+                            && event.payload().path("tool").asText().equals("desktop_session_open"))
+                    .map(event -> event.payload().path("metadata").path("controlGranted").asText()).toList());
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void unknownDesktopDeliveryRequiresFreshObservationBeforeSubsequentInput() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = desktopBootstrapPlanner(providerCalls, plannerCalls,
+                "desktop_session_open");
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                case 2 -> namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+                case 3 -> namedToolCallResponse("desktop_session_click",
+                        "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                + "\"00000000-0000-4000-8000-000000000001\","
+                                + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                case 4 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    assertFalse(computerUseCursor(prompt).path("pendingInvocationIds").isEmpty());
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals(2, observes.get());
+                    assertEquals(Set.of("desktop_session_observe", "desktop_session_click"),
+                            Set.copyOf(toolNames(prompt)));
+                    var cursor = computerUseCursor(prompt);
+                    assertEquals("READY", cursor.path("phase").asText());
+                    assertTrue(cursor.path("inputAllowed").asBoolean());
+                    assertEquals(1, cursor.path("pendingInvocationIds").size());
+                    assertEquals(1, cursor.path("observedPendingInvocationIds").size(),
+                            "baseline refresh preserves UNKNOWN rather than claiming SATISFIED");
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000002\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000002:v7\"}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(2, clicks.get(), "a paired fresh baseline grounds a subsequent input");
+                    assertEquals("OBSERVE", computerUseCursor(prompt).path("phase").asText());
+                    assertFalse(toolNames(prompt).contains("desktop_session_click"));
+                    assertEquals(2, computerUseCursor(prompt).path("pendingInvocationIds").size());
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 7 -> {
+                    assertEquals("READY", computerUseCursor(prompt).path("phase").asText());
+                    assertEquals(2, computerUseCursor(prompt).path("pendingInvocationIds").size());
+                    assertEquals(2, computerUseCursor(prompt).path("observedPendingInvocationIds").size());
+                    yield textResponse("点击的投递结果尚未确认", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(new AtomicInteger(), opens,
+                        observes, clicks).simulatedUnknownDesktopDelivery();
+        try (Fixture fixture = new Fixture(model, toolCallBudget(6), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, opens.get());
+            assertEquals(2, clicks.get());
+            assertEquals(3, observes.get());
+            assertTrue(plannerCalls.get() >= 4);
+            var events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(2, events.stream().filter(event -> event.type().equals("core.tool.started")
+                    && event.payload().path("tool").asText().equals("desktop_session_click")).count());
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("core.tool.receipt")
+                    && event.payload().path("tool").asText().equals("desktop_session_click")
+                    && event.payload().path("status").asText().equals("UNKNOWN")
+                    && event.payload().path("metadata").path("delivery").asText().equals("MAYBE_SENT")));
+            assertFalse(events.stream().anyMatch(event -> event.type().equals("core.effect.reconciled")),
+                    "observing a window is not business-effect reconciliation");
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void malformedPlanningFallbackPreservesCatalogDenialAndDiscoveryBudget(boolean catalogDenied)
+            throws Exception {
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(request -> {
+                    plannerCalls.incrementAndGet();
+                    return CompletableFuture.failedFuture(new ModelTaskOutputException(
+                            ModelTaskOutputException.Reason.INVALID_JSON,
+                            "invalid auxiliary planning response", null));
+                }).simulatedDesktopLaunchOpenObserve(launches, opens, observes, clicks);
+        if (catalogDenied) config.allowedToolNames(Set.of("desktop_session_launch_application",
+                "desktop_session_open", "desktop_session_observe", "desktop_session_click"));
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return namedToolCallResponse("desktop_session_launch_application",
+                    "{\"application\":\"示例应用\"}", 1, 1);
+        }, catalogDenied ? RunBudget.UNBOUNDED : toolCallBudget(1), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals("context.planning_required", snapshot.output().path("kind").asText());
+            String reason = snapshot.output().path("reason").asText().toLowerCase();
+            assertTrue(reason.contains(catalogDenied ? "catalog" : "budget"), reason);
+            assertEquals(1, plannerCalls.get());
+            assertEquals(0, providerCalls.get());
+            assertEquals(0, launches.get() + opens.get() + observes.get() + clicks.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void desktopResumeObservesCompletedInputWithoutDispatchingItAgain() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        ModelTaskGateway planner = desktopBootstrapPlanner(providerCalls, plannerCalls,
+                "desktop_session_launch_application");
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> namedToolCallResponse("desktop_session_launch_application",
+                    "{\"application\":\"示例应用\"}", 2, 1);
+            case 2 -> namedToolCallResponse("desktop_session_open",
+                    "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+            case 3 -> namedToolCallResponse("desktop_session_observe",
+                    "{\"sessionId\":\"sample-session\"}", 2, 1);
+            case 4 -> namedToolCallResponse("desktop_session_click",
+                    "{\"sessionId\":\"sample-session\",\"observationId\":"
+                            + "\"00000000-0000-4000-8000-000000000001\","
+                            + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+            case 5 -> {
+                assertEquals(1, clicks.get());
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                assertEquals("OBSERVE", computerUseCursor(prompt).path("phase").asText());
+                yield namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+            }
+            case 6 -> {
+                assertEquals(2, observes.get());
+                assertTrue(lastToolResponse(prompt).responseData().contains("设置页面"));
+                yield textResponse("已观察点击后的设置页面", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(launches, opens, observes, clicks)
+                .downstreamMutation(DownstreamMutation.PAUSE_AFTER_DESKTOP_INPUT_ONCE);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(6), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            assertEquals(RunState.WAITING_INPUT, fixture.engine.get(handle.id()).state());
+            assertEquals(4, providerCalls.get());
+            assertEquals(1, clicks.get());
+            assertEquals(1, observes.get());
+            fixture.restart();
+            RunHandle resumed = fixture.engine.resume(handle.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(6, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(1, clicks.get());
+            assertEquals(2, observes.get());
+            assertEquals(6, plannerCalls.get(), "resume must not replan the mandatory observation");
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.started")
+                            && event.payload().path("tool").asText().equals("desktop_session_click")).count());
+        }
+    }
+
+    private static ModelTaskGateway desktopBootstrapPlanner(AtomicInteger providerCalls,
+            AtomicInteger plannerCalls, String bootstrap) {
+        return request -> {
+            plannerCalls.incrementAndGet();
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String selected = providerCalls.get() == 0 ? bootstrap : "desktop_session_observe";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, selected, "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", selected);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode computerUseCursor(Prompt prompt) {
+        String prefix = "Host computer-use control state:\n";
+        String text = prompt.getInstructions().stream()
+                .filter(SystemMessage.class::isInstance)
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .filter(value -> value.startsWith(prefix)).reduce((first, last) -> last).orElseThrow();
+        int end = text.indexOf('\n', prefix.length());
+        return assertDoesNotThrow(() -> new ObjectMapper().readTree(text.substring(prefix.length(), end)));
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void desktopClickKeepsLastObservedFrameEvenWhenPlannerOmitsItsHistoryId()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                String target = switch (providerCalls.get()) {
+                    case 0, 1 -> "desktop_session_click";
+                    case 2 -> "desktop_session_observe";
+                    default -> "";
+                };
+                toolIntent(selection, target,
+                        target.isBlank() ? "" : "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct",
+                        providerCalls.get() < 2
+                                ? "desktop_session_click" : "desktop_session_observe");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertTrue(toolNames(prompt).contains("desktop_session_observe"),
+                            "without a prior frame, observe must be available before clicking");
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 2 -> {
+                    assertTrue(toolNames(prompt).contains("desktop_session_click"));
+                    assertTrue(toolNames(prompt).contains("desktop_session_observe"));
+                    List<org.springframework.ai.chat.messages.Message> messages =
+                            prompt.getInstructions();
+                    boolean completeExchange = false;
+                    for (int index = 0; index + 1 < messages.size(); index++) {
+                        if (!(messages.get(index) instanceof AssistantMessage assistant)
+                                || !(messages.get(index + 1) instanceof ToolResponseMessage responses)) {
+                            continue;
+                        }
+                        completeExchange |= assistant.getToolCalls().stream()
+                                .anyMatch(call -> call.name().equals("desktop_session_observe")
+                                        && responses.getResponses().stream().anyMatch(item ->
+                                                item.id().equals(call.id())
+                                                        && item.responseData().contains("概览页面")));
+                    }
+                    assertTrue(completeExchange,
+                            "click must retain the full assistant and tool exchange for the last frame");
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000001\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(1, clickCalls.get());
+                    assertTrue(toolNames(prompt).contains("desktop_session_observe"));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(2, observeCalls.get());
+                    yield textResponse("已查看 示例应用 设置页面", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 3))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopSession(observeCalls, clickCalls);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3),
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(4, providerCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(1, clickCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .anyMatch(event -> event.type().equals("core.tool.receipt")
+                            && event.payload().path("tool").asText()
+                                    .equals("desktop_session_observe")
+                            && event.payload().path("status").asText().equals("OBSERVED")
+                            && event.payload().path("target").asText().equals("示例应用")
+                            && event.payload().path("subject").asText().equals("settings")),
+                    "the final answer needs a target-page observation receipt");
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void observedNavigationTargetOffersClickWhenPlannerRepeatsObserve()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            boolean afterHomeFrame = providerCalls.get() == 3;
+            if (afterHomeFrame) {
+                String targets = request.input().path("observedDesktopTargets").asText();
+                assertTrue(targets.contains("设置标签"),
+                        "both LIGHT stages need the compact live-frame navigation target");
+                if (request.purpose().endsWith(".select_v2")) {
+                    assertTrue(request.input().path("latest").asText().contains("概览页面"),
+                            "摘要必须保留辅助功能长列表之后的当前页面描述");
+                }
+            }
+            String selected = providerCalls.get() < 3
+                    ? "desktop_session_launch_application" : "desktop_session_observe";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, selected, "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", selected);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> namedToolCallResponse("desktop_session_launch_application",
+                        "{\"application\":\"示例应用\"}", 2, 1);
+                case 2 -> {
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(Set.of("desktop_session_click", "desktop_session_observe"),
+                            Set.copyOf(toolNames(prompt)),
+                            "a user-named visual target should make click available");
+                    assertTrue(prompt.getInstructions().stream()
+                            .filter(ToolResponseMessage.class::isInstance)
+                            .map(ToolResponseMessage.class::cast)
+                            .flatMap(response -> response.getResponses().stream())
+                            .anyMatch(response -> response.responseData().contains("设置标签")),
+                            "click must retain the complete observed frame");
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000001\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals(1, clicks.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(2, observes.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("设置页面"));
+                    assertFalse(toolNames(prompt).contains("desktop_session_click"),
+                            "a dispatched click must not be suggested again from the same tab label");
+                    yield textResponse("已查看设置页面", 2, 1);
+                }
+                case 7 -> textResponse("设置页面仍需结构化画面证据核验", 2, 1);
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(
+                        launches, opens, observes, clicks)
+                .harness()
+                .simulatedVisualNavigationTarget();
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "打开 示例应用 查看设置",
+                    List.of(new TaskCriterionV3("open", "打开会话", "desktop.open", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                                    "示例应用", EffectReceiptV1.Status.ACCEPTED, ""),
+                            new TaskCriterionV3("click", "点击设置入口", "desktop.click", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                                    "示例应用", EffectReceiptV1.Status.ACCEPTED, ""),
+                            new TaskCriterionV3("observe", "观察设置页", "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                                    "示例应用", EffectReceiptV1.Status.OBSERVED, "设置")),
+                    true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state(),
+                    "provider calls=" + providerCalls.get() + "; " + snapshot.error()
+                            + "; output=" + snapshot.output());
+            assertNotEquals(RunState.WAITING_APPROVAL, snapshot.state(),
+                    "provider calls=" + providerCalls.get() + "; " + snapshot.error());
+            assertEquals(7, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(2, observes.get());
+            assertEquals(1, clicks.get());
+            var taskResult = fixture.engine.taskResult(handle.id()).orElseThrow();
+            assertEquals(TaskOutcome.PARTIAL, taskResult.outcome(),
+                    "open and click are proven, but the final view is not; result="
+                            + taskResult + "; receipts=" + fixture.runs.eventsAfter(handle.id(), 0)
+                                    .stream().filter(event -> event.type().equals("core.tool.receipt"))
+                                    .map(RunEventEnvelope::payload).toList());
+            assertTrue(taskResult.unmetCriteria().stream()
+                            .anyMatch(item -> item.contains("观察设置页")
+                                    && item.contains("OBSERVED")),
+                    "plain text without structured active-view evidence cannot verify the view: "
+                            + taskResult);
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void 有界补做保留失败条件并通过描述性控件完成页面切换() throws Exception {
+        for (String label : List.of("设置入口（齿轮图标）", "Preferences and appearance")) {
+            AtomicInteger calls = new AtomicInteger();
+            AtomicInteger launches = new AtomicInteger();
+            AtomicInteger opens = new AtomicInteger();
+            AtomicInteger observes = new AtomicInteger();
+            AtomicInteger clicks = new AtomicInteger();
+            List<Prompt> delivered = new ArrayList<>();
+            ModelTaskGateway planner = request -> {
+                ObjectNode selection = JsonNodeFactory.instance.objectNode();
+                selection.putArray("historyIds");
+                if (calls.get() >= 3) {
+                    assertTrue(request.input().path("task").asText().contains("查看设置"),
+                            "两个规划阶段都必须知道原始目标");
+                }
+                if (calls.get() == 3) {
+                    assertTrue(request.input().path("latest").asText().contains("desktop_session_"),
+                            "phase=" + request.purpose() + "; input=" + request.input());
+                }
+                if (calls.get() == 3 || calls.get() == 4) {
+                    assertTrue(request.input().path("observedDesktopTargets").asText().contains(label),
+                            "phase=" + request.purpose() + "; input=" + request.input());
+                }
+                if (calls.get() >= 4) {
+                    assertTrue(request.input().path("taskRepairFeedback").asText().contains("观察设置页"),
+                            "补做条件必须传到 select 和 refine，不得重复盲选工具");
+                }
+                String selected = calls.get() >= 6 ? "" : calls.get() < 3
+                        ? "desktop_session_launch_application" : "desktop_session_observe";
+                if (request.purpose().endsWith(".select_v2")) {
+                    selection.putArray("searches");
+                    toolIntent(selection, selected, selected.isBlank() ? "" : "desktop-session");
+                } else {
+                    selection.putArray("sourceIds");
+                    toolChoice(selection, request, "direct", selected);
+                }
+                return CompletableFuture.completedFuture(new ModelTaskResult(
+                        selection, "planner", 1, 1, false, Map.of()));
+            };
+            ChatModel model = prompt -> {
+                delivered.add(prompt);
+                int call = calls.incrementAndGet();
+                if (call >= 5) {
+                    assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                            message.getText() != null && message.getText().contains("任务验收尚未通过")
+                                    && message.getText().contains("观察设置页")),
+                            "补做反馈必须持续送达主模型直到本轮核验结束");
+                }
+                return switch (call) {
+                    case 1 -> namedToolCallResponse("desktop_session_launch_application",
+                            "{\"application\":\"示例应用\"}", 2, 1);
+                    case 2 -> namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                    case 3 -> namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                    case 4 -> textResponse("已打开应用，尚未进入目标页面", 2, 1);
+                    case 5 -> {
+                        assertTrue(toolNames(prompt).contains("desktop_session_click"),
+                                "词面不匹配也不能阻断已观察控件的操作能力");
+                        var observedResponses = prompt.getInstructions().stream()
+                                .filter(ToolResponseMessage.class::isInstance)
+                                .map(ToolResponseMessage.class::cast)
+                                .flatMap(message -> message.getResponses().stream())
+                                .filter(response -> response.name()
+                                        .equals("desktop_session_observe"))
+                                .toList();
+                        assertTrue(observedResponses.stream().anyMatch(response -> {
+                                    var frame = historicalToolData(response);
+                                    return frame.path("schemaVersion").asInt() == 1
+                                            && frame.path("kind").asText().equals("desktop.observation")
+                                            && frame.path("sessionId").asText().equals("sample-session")
+                                            && frame.path("targetId").asText().equals("sample-target")
+                                            && frame.path("observationId").asText().equals(
+                                                    "00000000-0000-4000-8000-000000000001")
+                                            && java.util.stream.StreamSupport.stream(
+                                                    frame.path("visualTargets").spliterator(), false)
+                                                    .anyMatch(target -> target.path("id").asText().equals(
+                                                            "00000000-0000-4000-8000-000000000001:v7")
+                                                            && target.path("label").asText().equals(label));
+                                }),
+                                "repair must include the trusted observed frame, responses="
+                                        + observedResponses);
+                        yield namedToolCallResponse("desktop_session_click",
+                                "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                        + "\"00000000-0000-4000-8000-000000000001\","
+                                        + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                    }
+                    case 6 -> namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                    case 7 -> textResponse("已查看设置页面", 2, 1);
+                    default -> throw new AssertionError("unexpected provider call");
+                };
+            };
+            FixtureConfig config = new FixtureConfig()
+                    .context(contextConfiguration(true, 48_000, 16_000, 2))
+                    .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                    .planner(planner).harness().simulatedDesktopLaunchOpenObserve(
+                            launches, opens, observes, clicks)
+                    .simulatedVisualNavigationTarget(label, true);
+            try (Fixture fixture = new Fixture(model, toolCallBudget(5), new AtomicInteger(), config)) {
+                TaskContractV3 contract = new TaskContractV3(3, "打开示例应用查看设置",
+                        List.of(new TaskCriterionV3("open", "打开会话", "desktop.open", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                                        "示例应用", EffectReceiptV1.Status.ACCEPTED, ""),
+                                new TaskCriterionV3("view", "观察设置页", "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION,
+                                        "示例应用", EffectReceiptV1.Status.OBSERVED, "settings")),
+                        true, true, "definition");
+                RunHandle handle = fixture.engine.start(fixture.request("打开示例应用查看设置",
+                        Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+                RunSnapshot snapshot = fixture.engine.get(handle.id());
+                assertEquals(RunState.COMPLETED, snapshot.state(),
+                        "calls=" + calls.get() + "; " + snapshot.error() + "; " + snapshot.output());
+                RunOutcome outcome = awaitCompletion(fixture, handle);
+                assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+                assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                        fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
+                assertEquals(7, calls.get());
+                assertEquals(1, launches.get());
+                assertEquals(1, opens.get());
+                assertEquals(1, clicks.get());
+                assertEquals(2, observes.get());
+                assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.task.repair_requested")).count());
+                assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+            }
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void oneSelectedToolOffersClickAloneAfterFrameAndObserveAfterClick() throws Exception {
+        runBudgetedObservedNavigation(1, 48_000);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void schemaBudgetKeepsRelevantDesktopToolsWithinTheSafeLimit()
+            throws Exception {
+        runBudgetedObservedNavigation(2, 4_000);
+    }
+
+    private static void runBudgetedObservedNavigation(int selectedTools,
+            int schemaBudget) throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        AtomicInteger clicks = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String selected = providerCalls.get() < 3
+                    ? "desktop_session_launch_application" : "desktop_session_observe";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, selected, "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", selected);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            assertTrue(toolNames(prompt).size() <= selectedTools,
+                    "provider tool selection must stay within the configured count");
+            var options = assertInstanceOf(ToolCallingChatOptions.class, prompt.getOptions());
+            int schemaCharacters = options.getToolCallbacks() == null ? 0
+                    : options.getToolCallbacks().stream()
+                            .filter(callback -> !callback.getToolDefinition().name()
+                                    .equals(HarnessDecisionToolCallback.NAME))
+                            .mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
+            assertTrue(schemaCharacters <= schemaBudget,
+                    "provider schemas must stay within their character budget");
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> namedToolCallResponse("desktop_session_launch_application",
+                        "{\"application\":\"示例应用\"}", 2, 1);
+                case 2 -> {
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                            "an unobserved session must not expose click");
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 4 -> {
+                    if (selectedTools == 1) {
+                        assertEquals(List.of("desktop_session_click"), toolNames(prompt));
+                    } else {
+                        assertEquals(Set.of("desktop_session_observe", "desktop_session_click"),
+                                Set.copyOf(toolNames(prompt)),
+                                "both trusted desktop schemas fit the minimum safe budget");
+                    }
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000001\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals(1, clicks.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 6 -> textResponse("已取得设置画面", 2, 1);
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        ObjectNode context = contextConfiguration(true, 48_000, 16_000, selectedTools)
+                .put("maxToolSchemaCharacters", schemaBudget);
+        ObjectNode onDemand = JsonNodeFactory.instance.objectNode()
+                .put("enabled", true).put("selectedTools", selectedTools);
+        FixtureConfig config = new FixtureConfig()
+                .context(context).onDemand(onDemand).planner(planner)
+                .simulatedDesktopLaunchOpenObserve(launches, opens, observes, clicks)
+                .simulatedVisualNavigationTarget();
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunOutcome outcome = handle.completion().toCompletableFuture()
+                    .get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(6, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(2, observes.get());
+            assertEquals(1, clicks.get());
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void oldRunDesktopClickWithoutObservationIdReobservesInsteadOfReplayingInput()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, "desktop_session_click", "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", "desktop_session_click");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                var feedback = assertDoesNotThrow(() -> new ObjectMapper()
+                        .readTree(lastToolResponse(prompt).responseData()));
+                assertEquals("legacy_desktop_observation_required",
+                        feedback.path("error").asText());
+                assertFalse(feedback.path("executed").asBoolean(true));
+                yield namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(1, observeCalls.get());
+                assertEquals(0, clickCalls.get());
+                var observed = assertDoesNotThrow(() -> new ObjectMapper()
+                        .readTree(lastToolResponse(prompt).responseData()));
+                assertFalse(observed.path("data").path("observationId").asText().isBlank(),
+                        "the current frame identity remains in structured evidence after display compaction");
+                yield textResponse("已重新观察，请基于新画面继续", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopSession(observeCalls, clickCalls)
+                .downstreamMutation(DownstreamMutation.PAUSE_ON_DESKTOP_OBSERVE_ONCE);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3),
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            assertEquals(RunState.WAITING_INPUT, fixture.engine.get(handle.id()).state(),
+                    String.valueOf(fixture.engine.get(handle.id()).output()) + " "
+                            + fixture.engine.get(handle.id()).error());
+            Prompt selected = config.pausedPrompt.get();
+            assertNotNull(selected);
+
+            ObjectNode oldInput = JsonNodeFactory.instance.objectNode();
+            oldInput.set("messages", StepMessageCodec.messages(selected.getInstructions()));
+            oldInput.putArray("toolNames").add("desktop_session_click");
+            oldInput.putObject("toolFingerprints")
+                    .put("desktop_session_click", "pre-observation-token-schema");
+            oldInput.put("modelPolicy", "test:model");
+            oldInput.put("attempt", 1);
+            StepId oldModel = StepId.random();
+            var events = StepEvents.durableSink(fixture.runs, handle.id());
+            StepEvents.started(events, oldModel, AgentStep.Kind.MODEL, oldInput, null);
+            ChatResponse oldResponse = namedToolCallResponse("desktop_session_click",
+                    "{\"sessionId\":\"sample-session\",\"generation\":1,\"x\":20,\"y\":30}",
+                    2, 1);
+            StepEvents.completed(events, oldModel, StepMessageCodec.response(oldResponse),
+                    StepMessageCodec.usage(oldResponse));
+
+            fixture.restart();
+            fixture.engine.resume(handle.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+
+            assertTrue(Set.of(RunState.COMPLETED, RunState.PAUSED)
+                    .contains(snapshot.state()), snapshot.error());
+            assertEquals(0, clickCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")
+                            && event.payload().path("tool").asText()
+                                    .equals("desktop_session_click")),
+                    "legacy click must never be replayed without an observation ID");
+            if (snapshot.state() == RunState.COMPLETED) {
+                assertEquals(2, providerCalls.get());
+                assertEquals(1, observeCalls.get());
+                assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                        .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                                && step.input().path("phase").asText()
+                                        .equals("legacy_desktop_reobserve"))
+                        .count());
+            } else {
+                assertEquals(0, observeCalls.get(),
+                        "an incompatible persisted Run must stop before desktop execution");
+            }
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void trustedFailedDesktopActionRequestsObserveBeforePlannerReopensSession()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger openCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String target = providerCalls.get() == 2
+                    ? "desktop_session_click" : "desktop_session_open";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, target, "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", target);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+            }
+            case 3 -> {
+                assertEquals(Set.of("desktop_session_click", "desktop_session_observe"),
+                        Set.copyOf(toolNames(prompt)));
+                yield namedToolCallResponse("desktop_session_click",
+                        "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                + "\"00000000-0000-4000-8000-000000000001\","
+                                + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+            }
+            case 4 -> {
+                assertEquals(1, clickCalls.get());
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                        "trusted nextStep=OBSERVE must take precedence over another open");
+                assertEquals("REOBSERVE", toolEnvelope(prompt).path("status").asText());
+                yield namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+            }
+            case 5 -> {
+                assertEquals(2, observeCalls.get());
+                assertTrue(lastToolResponse(prompt).responseData().contains("概览页面"),
+                        "an input that was not dispatched cannot change the simulated view");
+                yield textResponse("已取得新画面", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner)
+                .simulatedDesktopLaunchOpenObserve(new AtomicInteger(), openCalls,
+                        observeCalls, clickCalls)
+                .simulatedClickReobserve();
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置"));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.COMPLETED, snapshot.state(),
+                    String.valueOf(snapshot.output()) + " " + snapshot.error());
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(5, providerCalls.get());
+            assertEquals(1, openCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(1, clickCalls.get());
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void launchedDesktopReobservesTargetAfterClickWhenPlannerRepeatsEarlierTools()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launchCalls = new AtomicInteger();
+        AtomicInteger openCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        AtomicInteger clickCalls = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String target = switch (providerCalls.get()) {
+                case 0, 1, 2 -> "desktop_session_launch_application";
+                case 3, 4 -> "desktop_session_click";
+                default -> "";
+            };
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, target, target.isBlank() ? "" : "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", target);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertEquals(List.of("desktop_session_launch_application"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_launch_application",
+                            "{\"application\":\"示例应用\"}", 2, 1);
+                }
+                case 2 -> {
+                    assertEquals(1, launchCalls.get());
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt),
+                            "a launched application must not be launched again");
+                    assertTrue(lastToolResponse(prompt).responseData().contains("目标 ID=sample-target"));
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(1, openCalls.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                            "an opened session must be observed before claiming the target view");
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(1, observeCalls.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("概览页面"));
+                    assertEquals(Set.of("desktop_session_click", "desktop_session_observe"),
+                            Set.copyOf(toolNames(prompt)));
+                    yield namedToolCallResponse("desktop_session_click",
+                            "{\"sessionId\":\"sample-session\",\"observationId\":"
+                                    + "\"00000000-0000-4000-8000-000000000001\","
+                                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals(1, clickCalls.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                            "clicking navigation invalidates the previous home-page frame");
+                    assertTrue(lastToolResponse(prompt).responseData().contains("已点击"));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(2, observeCalls.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("设置页面"));
+                    yield textResponse("已查看 示例应用 设置页面", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).harness().simulatedDesktopLaunchOpenObserve(
+                        launchCalls, openCalls, observeCalls, clickCalls);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(5),
+                new AtomicInteger(), config)) {
+            TaskContractV3 contract = new TaskContractV3(3, "打开 示例应用 查看设置",
+                    List.of(new TaskCriterionV3("app-window", "打开 示例应用 会话",
+                                    "desktop.open", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "示例应用", EffectReceiptV1.Status.ACCEPTED, ""),
+                            new TaskCriterionV3("settings", "观察 示例应用 设置",
+                                    "desktop.observe", CapabilityMetadata.TargetKind.DESKTOP_APPLICATION, "示例应用", EffectReceiptV1.Status.OBSERVED,
+                                    "settings")), true, true, "definition");
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 查看设置",
+                    Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(6, providerCalls.get());
+            assertEquals(1, launchCalls.get());
+            assertEquals(1, openCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(1, clickCalls.get());
+            var observations = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.receipt")
+                            && event.payload().path("tool").asText()
+                                    .equals("desktop_session_observe")
+                            && event.payload().path("status").asText().equals("OBSERVED")
+                            && !event.payload().path("metadata").path("viewEvidence")
+                                    .asText("").isBlank())
+                    .toList();
+            assertEquals(List.of("overview", "settings"), observations.stream()
+                    .map(event -> event.payload().path("subject").asText()).toList());
+            assertNotEquals(observations.get(0).payload().path("metadata")
+                            .path("observationId").asText(),
+                    observations.get(1).payload().path("metadata")
+                            .path("observationId").asText());
+            assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                    TaskResultEvaluator.latestOutcome(
+                            fixture.runs.eventsAfter(handle.id(), 0), fixture.json)
+                            .orElseThrow().outcome());
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void mandatoryDesktopLifecycleRejectsRepeatedDiscoveryWithoutRepeatingLaunch()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            String target = switch (providerCalls.get()) {
+                case 0, 2, 3 -> "desktop_session_launch_application";
+                case 1 -> "desktop_session_targets";
+                case 4, 5 -> "desktop_session_open";
+                default -> "";
+            };
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, target, target.isBlank() ? "" : "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", target);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertEquals(List.of("desktop_session_launch_application"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_probe", "{}", 2, 1);
+                }
+                case 2 -> {
+                    assertEquals(0, launches.get());
+                    assertEquals(Set.of("desktop_session_launch_application", "desktop_session_probe",
+                            "desktop_session_targets"), Set.copyOf(toolNames(prompt)));
+                    yield namedToolCallResponse("desktop_session_launch_application",
+                            "{\"application\":\"示例应用\"}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(1, launches.get());
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_targets", "{}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(0, opens.get());
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt),
+                            "a durable launch target takes precedence over unoffered rediscovery");
+                    assertEquals("OPEN_SESSION", computerUseCursor(prompt).path("phase").asText());
+                    yield namedToolCallResponse("desktop_session_targets", "{}", 2, 1);
+                }
+                case 5 -> {
+                    assertEquals("sample-target", computerUseCursor(prompt).path("targetId").asText());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("tool_not_offered"));
+                    assertEquals(1, launches.get());
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 6 -> {
+                    assertEquals(1, opens.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 7 -> {
+                    assertEquals(1, observes.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("概览页面"));
+                    yield textResponse("已打开示例应用并观察概览页面", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 4))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(
+                        launches, opens, observes, new AtomicInteger()).simulatedDesktopDiscovery();
+        try (Fixture fixture = new Fixture(model, toolCallBudget(4), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 并查看窗口"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(7, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(1, observes.get());
+            assertEquals(List.of("desktop_session_launch_application",
+                            "desktop_session_open", "desktop_session_observe"),
+                    fixture.runs.eventsAfter(handle.id(), 0).stream()
+                            .filter(event -> event.type().equals("core.tool.started"))
+                            .map(event -> event.payload().path("tool").asText()).toList(),
+                    "rejected calls must never execute or replay");
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    void repairedToolKeepsPriorityWhenPreviousOfferingExceedsCountOrSchemaBudget()
+            throws Exception {
+        for (boolean schemaLimited : List.of(false, true)) {
+            AtomicInteger providerCalls = new AtomicInteger();
+            AtomicInteger codeCalls = new AtomicInteger();
+            ModelTaskGateway planner = directPlannerByProviderStep(providerCalls,
+                    "code_target", "filler_000");
+            FixtureConfig config = new FixtureConfig()
+                    .context(contextConfiguration(true, 48_000, 16_000,
+                            schemaLimited ? 2 : 1).put("maxToolSchemaCharacters", 4_000))
+                    .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                    .planner(planner).fillerTools(1).codeCalls(codeCalls)
+                    .codeDescriptionPadding(schemaLimited ? 3_700 : 0);
+            ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertEquals(List.of("code_target"), toolNames(prompt));
+                    yield namedToolCallResponse("filler_000", "{\"value\":1}", 2, 1);
+                }
+                case 2 -> {
+                    assertEquals(List.of("filler_000"), toolNames(prompt),
+                            "an old optional tool must not displace the requested tool or overflow its budget");
+                    yield namedToolCallResponse("filler_000", "{\"value\":2}", 2, 1);
+                }
+                case 3 -> textResponse("done", 2, 1);
+                default -> throw new AssertionError("unexpected provider call");
+            };
+            try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED,
+                    new AtomicInteger(), config)) {
+                RunHandle handle = fixture.engine.start(fixture.request("perform the selected operation"));
+                RunOutcome outcome = awaitCompletion(fixture, handle);
+                assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+                assertEquals(3, providerCalls.get());
+                assertEquals(0, codeCalls.get());
+                assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.tool.started")).count());
+            }
+        }
+    }
+
+    @Test
+    void repairDoesNotPromotePreviouslyOfferedToolAfterAuthorizationRevocation()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger codeCalls = new AtomicInteger();
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(directPlannerByProviderStep(providerCalls, "code_target", "filler_000"))
+                .fillerTools(1).codeCalls(codeCalls)
+                .allowedToolNames(Set.of("code_target", "filler_000", "framework_tool_catalog"))
+                .downstreamMutation(DownstreamMutation.PAUSE_AFTER_UNAVAILABLE_FEEDBACK_ONCE);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return namedToolCallResponse("filler_000", "{\"value\":1}", 2, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("perform the selected operation"));
+            assertEquals(RunState.WAITING_INPUT, fixture.engine.get(handle.id()).state());
+            config.allowedToolNames(Set.of("filler_000", "framework_tool_catalog"));
+            fixture.restart();
+            fixture.engine.resume(handle.id(), new ResumeCommand(
+                    "delegation.continue", JsonNodeFactory.instance.objectNode()));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state());
+            assertTrue(snapshot.output().path("reason").asText().contains("no longer authorized"),
+                    snapshot.output().toString());
+            assertEquals(1, providerCalls.get());
+            assertEquals(0, codeCalls.get());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.tool.started")));
+        }
+    }
+
+    private static ModelTaskGateway directPlannerByProviderStep(AtomicInteger providerCalls,
+            String first, String following) {
+        return request -> {
+            String target = providerCalls.get() == 0 ? first : following;
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, target, target.substring(0, target.indexOf('_')));
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", target);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void rejectedDesktopReopenKeepsMandatoryObserveForTheNextModelStep()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger openCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        List<Prompt> delivered = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, providerCalls.get() < 3 ? "desktop_session_open" : "",
+                        providerCalls.get() < 3 ? "desktop-session" : "");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", "desktop_session_open");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            return switch (providerCalls.incrementAndGet()) {
+                case 1 -> {
+                    assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 2 -> {
+                    assertEquals(1, openCalls.get());
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                    assertEquals("SUCCEEDED", toolEnvelope(prompt).path("status").asText());
+                    assertEquals("sample-session", toolEnvelope(prompt)
+                            .path("data").path("sessionId").asText());
+                    yield namedToolCallResponse("desktop_session_open",
+                            "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+                }
+                case 3 -> {
+                    assertEquals(1, openCalls.get());
+                    assertEquals(0, observeCalls.get(),
+                            "the unavailable open call must reject the whole batch");
+                    assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                            "unoffered reopen cannot replace the mandatory first observation");
+                    var feedback = assertDoesNotThrow(() -> new ObjectMapper()
+                            .readTree(lastToolResponse(prompt).responseData()));
+                    assertEquals("tool_not_offered", feedback.path("error").asText());
+                    assertEquals("desktop_session_open", feedback.path("tool").asText());
+                    assertFalse(feedback.path("executed").asBoolean(true));
+                    yield namedToolCallResponse("desktop_session_observe",
+                            "{\"sessionId\":\"sample-session\"}", 2, 1);
+                }
+                case 4 -> {
+                    assertEquals(1, observeCalls.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("概览页面"));
+                    yield textResponse("已查看示例应用概览页面", 2, 1);
+                }
+                default -> throw new AssertionError("unexpected provider call");
+            };
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopOpenObserve(openCalls, observeCalls);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3),
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 并查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals("已查看示例应用概览页面", outcome.output().path("text").asText());
+            assertEquals(4, providerCalls.get());
+            assertEquals(1, openCalls.get());
+            assertEquals(1, observeCalls.get());
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean())
+                    .count());
+            assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .noneMatch(event -> event.type().equals("core.run.paused")));
+            assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void rejectedDesktopOpenDoesNotReplacePlannedObserveOnTheNextModelStep()
+            throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger openCalls = new AtomicInteger();
+        AtomicInteger observeCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String target = providerCalls.get() == 0 ? "desktop_session_open"
+                    : providerCalls.get() < 3 ? "desktop_session_observe" : "";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, target, target.isBlank() ? "" : "desktop-session");
+            } else {
+                selection.putArray("sourceIds");
+                toolChoice(selection, request, "direct", target);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        ChatModel model = prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+            }
+            case 3 -> {
+                assertEquals(1, openCalls.get(),
+                        "the unoffered second open call must not reopen the application");
+                assertEquals(List.of("desktop_session_observe"), toolNames(prompt),
+                        "the rejected open call cannot alter the host's observation phase");
+                assertTrue(lastToolResponse(prompt).responseData()
+                        .contains("\"error\":\"tool_not_offered\""));
+                yield namedToolCallResponse("desktop_session_observe",
+                        "{\"sessionId\":\"sample-session\"}", 2, 1);
+            }
+            case 4 -> {
+                assertEquals(1, observeCalls.get());
+                assertTrue(lastToolResponse(prompt).responseData().contains("概览页面"));
+                yield textResponse("已查看示例应用概览页面", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 2))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopOpenObserve(openCalls, observeCalls);
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3),
+                new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("打开 示例应用 并查看设置"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(4, providerCalls.get());
+            assertEquals(1, openCalls.get());
+            assertEquals(1, observeCalls.get());
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.output().path("rejectedUnavailableToolBatch").asBoolean())
+                    .count());
         }
     }
 
@@ -2404,6 +5521,335 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"core.tool.completed:host-evidence", "desktop-session", "t0"})
+    void toolOnlyBootstrapIgnoresContextReferencesThenRoutesOpenFromHostReceipt(String wrongRef)
+            throws Exception {
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger launches = new AtomicInteger();
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger observes = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            plannerCalls.incrementAndGet();
+            assertEquals(0, providerCalls.get(),
+                    "launch-to-open routing must not depend on another LIGHT response");
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("historyIds");
+            String targetTool = providerCalls.get() == 0
+                    ? "desktop_session_launch_application" : "desktop_session_open";
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("searches");
+                toolIntent(selection, targetTool, "desktop-session");
+            } else {
+                assertEquals("context.on_demand.refine_v2", request.purpose(),
+                        "empty context candidates need no corrective model call");
+                assertTrue(request.input().path("candidates").isEmpty());
+                assertFalse(request.input().path("toolCandidates").isEmpty());
+                selection.putArray("sourceIds").add(wrongRef);
+                toolChoice(selection, request, "direct", targetTool);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).simulatedDesktopLaunchOpenObserve(
+                        launches, opens, observes, new AtomicInteger());
+        try (Fixture fixture = new Fixture(prompt -> switch (providerCalls.incrementAndGet()) {
+            case 1 -> {
+                assertEquals(List.of("desktop_session_launch_application"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_launch_application",
+                        "{\"application\":\"示例应用\"}", 2, 1);
+            }
+            case 2 -> {
+                assertEquals(List.of("desktop_session_open"), toolNames(prompt));
+                yield namedToolCallResponse("desktop_session_open",
+                        "{\"targetId\":\"sample-target\",\"control\":true}", 2, 1);
+            }
+            case 3 -> {
+                assertEquals("SUCCEEDED", toolEnvelope(prompt).path("status").asText());
+                yield textResponse("desktop session opened", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected provider call");
+        }, toolCallBudget(2), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("Launch and open the application window"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, plannerCalls.get(),
+                    "only bootstrap select/refine use LIGHT; opening uses the durable launch receipt");
+            assertEquals(3, providerCalls.get());
+            assertEquals(1, launches.get());
+            assertEquals(1, opens.get());
+            assertEquals(0, observes.get());
+            assertTrue(new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .noneMatch(step -> step.kind() == AgentStep.Kind.TOOL
+                            && step.input().path("tool").asText().startsWith("framework_context_")));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void contextReferenceCorrectionPreservesToolSelectionAndRejectsRepeatedInvalidIds(
+            boolean corrected) throws Exception {
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger searches = new AtomicInteger();
+        AtomicInteger fetches = new AtomicInteger();
+        AtomicInteger codeCalls = new AtomicInteger();
+        DeferredContextSource source = new DeferredContextSource() {
+            @Override public String id() { return "docs"; }
+            @Override public String description() { return "Document evidence"; }
+            @Override public PermissionSet requiredPermissions() {
+                return PermissionSet.of("context.read");
+            }
+            @Override public List<DeferredContextCandidate> search(
+                    RunRequest request, String query, int limit) {
+                searches.incrementAndGet();
+                return List.of(new DeferredContextCandidate("one", "v1", "saved evidence",
+                        PermissionSet.NONE));
+            }
+            @Override public String fetch(RunRequest request, String id, String version) {
+                fetches.incrementAndGet();
+                assertEquals("one", id);
+                return "CORRECTED_CONTEXT_BODY";
+            }
+        };
+        ModelTaskGateway planner = request -> {
+            plannerCalls.incrementAndGet();
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("historyIds");
+                selection.putArray("searches").addObject()
+                        .put("source", "docs").put("query", "saved evidence");
+                toolIntent(selection, "code_target", "code");
+            } else if (request.purpose().endsWith(".refine_v2")) {
+                selection.putArray("historyIds");
+                selection.putArray("sourceIds").add("docs");
+                toolChoice(selection, request, "direct", "code_target");
+            } else {
+                assertEquals("context.on_demand.repair_refine_sources_v2", request.purpose());
+                assertEquals(1, request.outputSchema().path("properties").size(),
+                        "context repair may not replace the selected tool or history");
+                JsonNode schema = request.outputSchema().path("properties").path("sourceIds");
+                assertTrue(schema.path("uniqueItems").asBoolean());
+                assertEquals(1, schema.path("maxItems").asInt());
+                assertEquals(List.of("docs:one"), jsonStrings(schema.path("items").path("enum")));
+                selection.putArray("sourceIds").add(corrected ? "docs:one" : "docs");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true).put("fetches", 1))
+                .planner(planner).source(source).autoApproveContext().codeCalls(codeCalls);
+        try (Fixture fixture = new Fixture(prompt -> {
+            int call = providerCalls.incrementAndGet();
+            if (call == 1) {
+                assertEquals(List.of("code_target"), toolNames(prompt));
+                assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                        message.getText() != null && message.getText().contains("CORRECTED_CONTEXT_BODY")));
+            }
+            return call == 1 ? namedToolCallResponse("code_target", "{\"value\":1}", 2, 1)
+                    : textResponse("context and tool completed", 2, 1);
+        }, toolCallBudget(3), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(
+                    List.of(InputBlock.text("Read the saved evidence and run the code tool")), Map.of(),
+                    PermissionSet.of("context.read", "tool.execute")));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            if (corrected) {
+                assertEquals(RunState.COMPLETED, awaitCompletion(fixture, handle).state(), snapshot.error());
+                assertEquals(2, providerCalls.get());
+                assertEquals(1, fetches.get());
+                assertEquals(1, codeCalls.get());
+            } else {
+                assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+                assertEquals(0, providerCalls.get());
+                assertEquals(0, fetches.get());
+                assertEquals(0, codeCalls.get());
+            }
+            assertEquals(3, plannerCalls.get());
+            assertEquals(1, searches.get());
+            assertEquals(1, new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.input().path("phase").asText().equals("repair_refine_sources_v2"))
+                    .count());
+        }
+    }
+
+    @Test
+    void correctedContextSelectionSurvivesFetchApprovalRestartWithoutRepeatingPlanningOrSearch()
+            throws Exception {
+        AtomicInteger selectCalls = new AtomicInteger();
+        AtomicInteger refineCalls = new AtomicInteger();
+        AtomicInteger repairCalls = new AtomicInteger();
+        AtomicInteger searches = new AtomicInteger();
+        AtomicInteger fetches = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        DeferredContextSource source = new DeferredContextSource() {
+            @Override public String id() { return "docs"; }
+            @Override public String description() { return "Document evidence"; }
+            @Override public PermissionSet requiredPermissions() { return PermissionSet.of("context.read"); }
+            @Override public List<DeferredContextCandidate> search(
+                    RunRequest request, String query, int limit) {
+                searches.incrementAndGet();
+                return List.of(new DeferredContextCandidate("one", "v1", "saved evidence",
+                        PermissionSet.NONE));
+            }
+            @Override public String fetch(RunRequest request, String id, String version) {
+                fetches.incrementAndGet();
+                return "REPLAYED_CONTEXT_REPAIR_BODY";
+            }
+        };
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            if (request.purpose().endsWith(".select_v2")) {
+                selectCalls.incrementAndGet();
+                selection.putArray("historyIds");
+                selection.putArray("searches").addObject()
+                        .put("source", "docs").put("query", "saved evidence");
+                toolIntent(selection, "");
+            } else if (request.purpose().endsWith(".refine_v2")) {
+                refineCalls.incrementAndGet();
+                selection.putArray("historyIds");
+                selection.putArray("sourceIds").add("core.tool.completed:old-search-evidence");
+                toolChoice(selection, request, "none");
+            } else {
+                assertEquals("context.on_demand.repair_refine_sources_v2", request.purpose());
+                repairCalls.incrementAndGet();
+                selection.putArray("sourceIds").add("docs:one");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).source(source);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            assertTrue(prompt.getInstructions().stream().anyMatch(message ->
+                    message.getText() != null && message.getText().contains("REPLAYED_CONTEXT_REPAIR_BODY")));
+            return textResponse("context recovered", 2, 1);
+        }, toolCallBudget(2), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(
+                    List.of(InputBlock.text("Read saved evidence")), Map.of(), PermissionSet.of("context.read")));
+            for (int index = 0; index < 2; index++) {
+                RunSnapshot snapshot = fixture.engine.get(handle.id());
+                assertEquals(RunState.WAITING_APPROVAL, snapshot.state(), snapshot.error());
+                if (index == 1) {
+                    assertEquals(1, searches.get());
+                    assertEquals(1, refineCalls.get());
+                    assertEquals(1, repairCalls.get());
+                    assertEquals(0, fetches.get());
+                }
+                var waiting = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.run.waiting_approval"))
+                        .reduce((previous, next) -> next).orElseThrow();
+                String fingerprint = ToolApprovalChallenge.fromEventPayload(waiting.payload()).fingerprint();
+                fixture.restart();
+                handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval",
+                        JsonNodeFactory.instance.objectNode().put("approved", true)
+                                .put("fingerprint", fingerprint)));
+            }
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, selectCalls.get());
+            assertEquals(1, refineCalls.get());
+            assertEquals(1, repairCalls.get());
+            assertEquals(1, searches.get());
+            assertEquals(1, fetches.get());
+            assertEquals(1, providerCalls.get());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"permission", "planner_budget"})
+    void contextRepairCannotSelectUnauthorizedOrUnadvertisedCandidates(String gate) throws Exception {
+        AtomicInteger searches = new AtomicInteger();
+        AtomicInteger fetches = new AtomicInteger();
+        AtomicInteger repairs = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger codeCalls = new AtomicInteger();
+        String rejected = gate.equals("permission") ? "docs:secret" : "docs:trimmed";
+        DeferredContextSource source = new DeferredContextSource() {
+            @Override public String id() { return "docs"; }
+            @Override public String description() { return "Document evidence"; }
+            @Override public PermissionSet requiredPermissions() { return PermissionSet.of("context.read"); }
+            @Override public List<DeferredContextCandidate> search(
+                    RunRequest request, String query, int limit) {
+                searches.incrementAndGet();
+                List<DeferredContextCandidate> results = new ArrayList<>();
+                results.add(new DeferredContextCandidate("one", "v1", "allowed evidence",
+                        PermissionSet.NONE));
+                if (gate.equals("permission")) {
+                    results.add(new DeferredContextCandidate("secret", "v1", "SECRET_CONTEXT_SUMMARY",
+                            PermissionSet.of("secret.read")));
+                } else {
+                    for (int index = 2; index < 8; index++) {
+                        results.add(new DeferredContextCandidate("doc" + index, "v1", "x".repeat(120),
+                                PermissionSet.NONE));
+                    }
+                    results.add(new DeferredContextCandidate("trimmed", "v1", "x".repeat(120),
+                            PermissionSet.NONE));
+                }
+                return results;
+            }
+            @Override public String fetch(RunRequest request, String id, String version) {
+                fetches.incrementAndGet();
+                throw new AssertionError("rejected context must not be fetched");
+            }
+        };
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            if (request.purpose().endsWith(".select_v2")) {
+                selection.putArray("historyIds");
+                selection.putArray("searches").addObject().put("source", "docs").put("query", "evidence");
+                toolIntent(selection, "code_target", "code");
+            } else if (request.purpose().endsWith(".refine_v2")) {
+                assertFalse(request.input().path("candidates").findValuesAsText("id").contains(rejected));
+                assertFalse(request.input().toString().contains("SECRET_CONTEXT_SUMMARY"));
+                selection.putArray("historyIds");
+                selection.putArray("sourceIds").add(rejected);
+                toolChoice(selection, request, "direct", "code_target");
+            } else {
+                assertEquals("context.on_demand.repair_refine_sources_v2", request.purpose());
+                repairs.incrementAndGet();
+                List<String> allowed = jsonStrings(request.outputSchema().path("properties")
+                        .path("sourceIds").path("items").path("enum"));
+                assertTrue(allowed.contains("docs:one"));
+                assertFalse(allowed.contains(rejected));
+                assertFalse(request.input().toString().contains("SECRET_CONTEXT_SUMMARY"));
+                selection.putArray("sourceIds").add(rejected);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true)
+                        .put("plannerInputChars", gate.equals("planner_budget") ? 1_000 : 8_000))
+                .planner(planner).source(source).autoApproveContext()
+                .codeCalls(codeCalls).codeDescriptionPadding(300);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return textResponse("unexpected", 2, 1);
+        }, toolCallBudget(3), new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(
+                    List.of(InputBlock.text("Read evidence and use the code tool")), Map.of(),
+                    PermissionSet.of("context.read", "tool.execute")));
+            RunSnapshot snapshot = fixture.engine.get(handle.id());
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
+            assertEquals(1, searches.get());
+            assertEquals(1, repairs.get());
+            assertEquals(0, fetches.get());
+            assertEquals(0, providerCalls.get());
+            assertEquals(0, codeCalls.get());
+        }
+    }
+
     @Test
     void 修正未知上下文来源后保留工具意图并完成运行() throws Exception {
         AtomicInteger plannerCalls = new AtomicInteger();
@@ -2482,7 +5928,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("plan Shanghai outing")),
                     Map.of(), PermissionSet.of("context.read", "tool.execute"));
             RunHandle handle = fixture.engine.start(request);
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("done", outcome.output().path("text").asText());
@@ -2607,7 +6053,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("done", outcome.output().path("text").asText());
@@ -2790,7 +6236,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals("done", outcome.output().path("text").asText());
@@ -2855,9 +6301,11 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunHandle handle = fixture.engine.start(request);
             RunSnapshot snapshot = fixture.engine.get(handle.id());
 
-            assertEquals(RunState.PAUSED, snapshot.state());
+            assertEquals(RunState.PAUSED, snapshot.state(), snapshot.error());
             assertEquals("context.planning_required", snapshot.output().path("kind").asText());
-            assertTrue(snapshot.output().path("reason").asText().contains("web"));
+            assertEquals(TurnPausedException.Reason.UNAUTHORIZED_CONTEXT_SOURCE.name(),
+                    snapshot.output().path("reasonCode").asText());
+            assertEquals("web", snapshot.output().path("contextSourceId").asText());
             assertEquals(2, plannerCalls.get(), "source repair must be attempted once only");
             assertEquals(0, searches.get());
             assertEquals(0, providerCalls.get());
@@ -2931,8 +6379,9 @@ class SpringAiReasoningGatewayIntegrationTest {
                 planned.set(request);
                 plannerCalls.incrementAndGet();
                 ObjectNode invalid = JsonNodeFactory.instance.objectNode();
-                invalid.putArray("searches");
-                invalid.putArray("historyIds").add("unknown-history");
+                invalid.putArray("searches").addObject()
+                        .put("source", "docs").put("query", "needle");
+                invalid.putArray("historyIds");
                 assertEquals("context.on_demand.select_v2", request.purpose());
                 toolIntent(invalid, "");
                 return CompletableFuture.completedFuture(new ModelTaskResult(
@@ -2976,7 +6425,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 var events = StepEvents.durableSink(fixture.runs, handle.id());
                 StepEvents.started(events, task, AgentStep.Kind.MODEL_TASK, taskInput, null);
                 if (taskCompleted) {
-                    ChatResponse valid = textResponse("""
+                    ChatResponse valid = rawTextResponse("""
                             {"searches":[],"historyIds":[],"toolIntent":{"query":"","groups":[]}}
                             """, 3, 2);
                     StepEvents.completed(events, task, StepMessageCodec.response(valid),
@@ -3036,10 +6485,14 @@ class SpringAiReasoningGatewayIntegrationTest {
                 selection.putArray("searches").addObject()
                         .put("source", "docs").put("query", "needle");
                 toolIntent(selection, "");
-            } else {
+            } else if (request.purpose().endsWith(".refine_v2")) {
                 refineRequest.set(request);
                 selection.putArray("sourceIds").add("docs:missing");
                 toolChoice(selection, request, "none");
+            } else {
+                assertEquals("context.on_demand.repair_refine_sources_v2", request.purpose());
+                selection.remove("historyIds");
+                selection.putArray("sourceIds").add("docs:missing");
             }
             return CompletableFuture.completedFuture(new ModelTaskResult(
                     selection, "planner", 1, 1, false, Map.of()));
@@ -3061,7 +6514,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                     Map.of(), PermissionSet.of("context.read"));
             RunHandle handle = fixture.engine.start(request);
             assertEquals(RunState.PAUSED, fixture.engine.get(handle.id()).state());
-            assertEquals(2, plannerCalls.get());
+            assertEquals(3, plannerCalls.get(), "one select, one refine, one context correction");
             assertEquals(1, searches.get());
             assertEquals(0, fetches.get());
             AgentStep outer = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
@@ -3087,7 +6540,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             StepId task = StepId.random();
             var events = StepEvents.durableSink(fixture.runs, handle.id());
             StepEvents.started(events, task, AgentStep.Kind.MODEL_TASK, taskInput, null);
-            ChatResponse valid = textResponse("""
+            ChatResponse valid = rawTextResponse("""
                     {"historyIds":[],"sourceIds":["docs:one"],"toolAction":"none","toolIds":[]}
                     """, 3, 2);
             StepEvents.completed(events, task, StepMessageCodec.response(valid),
@@ -3096,10 +6549,11 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(2, plannerCalls.get());
+            assertEquals(3, plannerCalls.get(),
+                    "a recovered valid refine response does not replay the obsolete correction");
             assertEquals(1, searches.get(), "durable search must be reused");
             assertEquals(1, fetches.get());
             assertEquals(1, providerCalls.get());
@@ -3211,7 +6665,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             assertNotNull(selected);
             ObjectNode modelInput = JsonNodeFactory.instance.objectNode();
             modelInput.set("messages", StepMessageCodec.messages(selected.getInstructions()));
-            modelInput.set("toolNames", fixture.json.valueToTree(toolNames(selected)));
+            modelInput.set("toolNames", fixture.json.valueToTree(allToolNames(selected)));
             ObjectNode fingerprints = modelInput.putObject("toolFingerprints");
             ((ToolCallingChatOptions) selected.getOptions()).getToolCallbacks().forEach(callback ->
                     fingerprints.put(callback.getToolDefinition().name(),
@@ -3286,7 +6740,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                     .findFirst().orElseThrow();
             ObjectNode modelInput = JsonNodeFactory.instance.objectNode();
             modelInput.set("messages", StepMessageCodec.messages(selected.getInstructions()));
-            modelInput.set("toolNames", fixture.json.valueToTree(toolNames(selected)));
+            modelInput.set("toolNames", fixture.json.valueToTree(allToolNames(selected)));
             ObjectNode fingerprints = modelInput.putObject("toolFingerprints");
             ((ToolCallingChatOptions) selected.getOptions()).getToolCallbacks().forEach(callback ->
                     fingerprints.put(callback.getToolDefinition().name(),
@@ -3350,7 +6804,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             assertEquals(List.of("code_target"), toolNames(selected));
             ObjectNode modelInput = JsonNodeFactory.instance.objectNode();
             modelInput.set("messages", StepMessageCodec.messages(selected.getInstructions()));
-            modelInput.set("toolNames", fixture.json.valueToTree(toolNames(selected)));
+            modelInput.set("toolNames", fixture.json.valueToTree(allToolNames(selected)));
             ObjectNode fingerprints = modelInput.putObject("toolFingerprints");
             ((ToolCallingChatOptions) selected.getOptions()).getToolCallbacks().forEach(callback ->
                     fingerprints.put(callback.getToolDefinition().name(),
@@ -3405,7 +6859,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             assertEquals(List.of("framework_tool_catalog"), toolNames(selected));
             ObjectNode modelInput = JsonNodeFactory.instance.objectNode();
             modelInput.set("messages", StepMessageCodec.messages(selected.getInstructions()));
-            modelInput.set("toolNames", fixture.json.valueToTree(toolNames(selected)));
+            modelInput.set("toolNames", fixture.json.valueToTree(allToolNames(selected)));
             ObjectNode fingerprints = modelInput.putObject("toolFingerprints");
             ((ToolCallingChatOptions) selected.getOptions()).getToolCallbacks().forEach(callback ->
                     fingerprints.put(callback.getToolDefinition().name(),
@@ -3461,7 +6915,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("done", 2, 1);
         }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request("use code_target"));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(3, providerCalls.get());
@@ -3542,7 +6996,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("find needle")),
                     Map.of(), PermissionSet.of("context.read", "tool.execute"));
             RunHandle handle = fixture.engine.start(request);
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(2, plannerCalls.get());
@@ -3628,7 +7082,8 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("find needed evidence")),
                     Map.of(), PermissionSet.of("context.read"));
             RunOutcome outcome = fixture.engine.start(request)
-                    .completion().toCompletableFuture().get();
+                    .completion().toCompletableFuture()
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, earlySearches.get());
@@ -3710,7 +7165,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 RunRequest request = fixture.request(List.of(InputBlock.text("read document")),
                         Map.of(), PermissionSet.of("context.read", "tool.execute"));
                 RunHandle handle = fixture.engine.start(request);
-                RunOutcome outcome = handle.completion().toCompletableFuture().get();
+                RunOutcome outcome = awaitCompletion(fixture, handle);
 
                 assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
                 assertEquals(2, providerCalls.get());
@@ -3776,7 +7231,10 @@ class SpringAiReasoningGatewayIntegrationTest {
         try (Fixture fixture = new Fixture(prompt -> {
             delivered.add(prompt);
             assertTrue(prompt.getInstructions().stream().anyMatch(message ->
-                    message.getText() != null && message.getText().contains(body)));
+                    message instanceof ToolResponseMessage toolResponse
+                            ? toolResponse.getResponses().stream()
+                                    .anyMatch(response -> response.responseData().contains(body))
+                            : message.getText() != null && message.getText().contains(body)));
             return textResponse("done", 2, 1);
         }, toolCallBudget(2), new AtomicInteger(), config)) {
             RunRequest request = fixture.request(List.of(InputBlock.text("read the large document")),
@@ -3795,7 +7253,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             fixture.restart();
             RunHandle resumed = fixture.engine.resume(handle.id(),
                     new ResumeCommand("delegation.continue", JsonNodeFactory.instance.objectNode()));
-            RunOutcome outcome = resumed.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, resumed);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, searches.get());
@@ -3920,7 +7378,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         try (Fixture fixture = new Fixture(model, toolCallBudget(2),
                 new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(3, providerCalls.get());
@@ -3985,7 +7443,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunRequest request = fixture.request(List.of(InputBlock.text("read doc 17")),
                     Map.of(), PermissionSet.of("context.read"));
             RunHandle handle = fixture.engine.start(request);
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, fetches.get());
@@ -4052,7 +7510,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                 RunHandle handle = fixture.engine.start(fixture.request(
                         List.of(InputBlock.text("Read the matching document")),
                         Map.of(), PermissionSet.of("context.read")));
-                RunOutcome outcome = handle.completion().toCompletableFuture().get();
+                RunOutcome outcome = awaitCompletion(fixture, handle);
                 assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
                 assertEquals(duplicate ? 1 : 2, searches.get());
                 assertEquals(1, fetches.get());
@@ -4098,7 +7556,8 @@ class SpringAiReasoningGatewayIntegrationTest {
                 RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunRequest request = fixture.request(List.of(InputBlock.text("search docs")),
                     Map.of(), PermissionSet.of("context.read"));
-            RunOutcome outcome = fixture.engine.start(request).completion().toCompletableFuture().get();
+            RunOutcome outcome = fixture.engine.start(request).completion().toCompletableFuture()
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(0, searches.get());
         }
@@ -4122,6 +7581,13 @@ class SpringAiReasoningGatewayIntegrationTest {
                 assertTrue(request.input().path("history").findValuesAsText("id")
                         .contains(expected), "earlier durable exchange must remain a candidate");
                 history.add(expected);
+            } else if (providerCalls.get() == 3
+                    && request.purpose().endsWith(".refine_v2")) {
+                assertTrue(request.input().path("history").findValuesAsText("id")
+                        .contains(firstExchangeId.get()),
+                        "refinement must advertise the requested durable exchange: "
+                                + request.input());
+                history.add(firstExchangeId.get());
             }
             if (request.purpose().endsWith(".select_v2")) {
                 selection.putArray("searches");
@@ -4143,8 +7609,14 @@ class SpringAiReasoningGatewayIntegrationTest {
                 case 1 -> namedToolCallResponse("code_target", "{\"value\":1}", 2, 1);
                 case 2 -> namedToolCallResponse("code_target", "{\"value\":2}", 2, 1);
                 case 3 -> {
-                    assertFalse(StepMessageCodec.messages(prompt.getInstructions()).toString()
-                            .contains("\\\"value\\\":1"));
+                    assertTrue(prompt.getInstructions().stream()
+                            .filter(ToolResponseMessage.class::isInstance)
+                            .map(ToolResponseMessage.class::cast)
+                            .flatMap(response -> response.getResponses().stream())
+                            .noneMatch(response -> response.name().equals("code_target")
+                                    && historicalToolData(response).path("value")
+                                            .asInt(-1) == 1),
+                            "the first code exchange must be omitted until explicitly selected");
                     yield namedToolCallResponse("test_mutate", "{\"value\":3}", 2, 1);
                 }
                 case 4 -> {
@@ -4152,12 +7624,21 @@ class SpringAiReasoningGatewayIntegrationTest {
                             .filter(ToolResponseMessage.class::isInstance)
                             .map(ToolResponseMessage.class::cast).toList();
                     assertEquals(2, responses.size());
-                    assertTrue(responses.stream().flatMap(value -> value.getResponses().stream())
-                            .anyMatch(value -> value.name().equals("code_target")
-                                    && value.responseData().contains("\"value\":1")));
-                    assertTrue(responses.stream().flatMap(value -> value.getResponses().stream())
-                            .anyMatch(value -> value.name().equals("test_mutate")
-                                    && value.responseData().contains("\"observed\":3")));
+                    String responseData = responses.stream()
+                            .flatMap(value -> value.getResponses().stream())
+                            .map(value -> value.name() + "=" + value.responseData())
+                            .collect(java.util.stream.Collectors.joining("; "));
+                    var code = responses.stream().flatMap(value -> value.getResponses().stream())
+                            .filter(value -> value.name().equals("code_target"))
+                            .findFirst().orElseThrow();
+                    var mutation = responses.stream().flatMap(value -> value.getResponses().stream())
+                            .filter(value -> value.name().equals("test_mutate"))
+                            .findFirst().orElseThrow();
+                    assertEquals(1, historicalToolData(code).path("value").asInt(-1),
+                            "selected exchange=" + firstExchangeId.get() + "; " + responseData);
+                    assertEquals("SUCCEEDED", toolEnvelope(mutation).path("status").asText(), responseData);
+                    assertEquals(3, toolEnvelope(mutation).path("data").path("observed").asInt(-1),
+                            responseData);
                     yield textResponse("done", 2, 1);
                 }
                 default -> throw new AssertionError("unexpected provider call");
@@ -4167,24 +7648,190 @@ class SpringAiReasoningGatewayIntegrationTest {
                 .context(contextConfiguration(true, 48_000, 16_000, 1))
                 .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
                 .planner(planner).codeCalls(codeCalls);
-        try (Fixture fixture = new Fixture(model, toolCallBudget(3), mutations, config)) {
+        try (Fixture fixture = new Fixture(model, toolCallBudget(4), mutations, config)) {
             RunHandle handle = fixture.engine.start(fixture.request("use older code result later"));
             assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
-            firstExchangeId.set("exchange:" + new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+            AgentStep firstModel = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
                     .filter(step -> step.kind() == AgentStep.Kind.MODEL)
-                    .findFirst().orElseThrow().id().value());
+                    .findFirst().orElseThrow();
+            AssistantMessage firstCall = assertInstanceOf(AssistantMessage.class,
+                    StepMessageCodec.message(firstModel.output().path("message")));
+            assertEquals("{\"value\":1}", firstCall.getToolCalls().getFirst().arguments(),
+                    "selected durable exchange must belong to the first code call");
+            firstExchangeId.set("exchange:" + firstModel.id().value());
             fixture.restart();
             var approval = JsonNodeFactory.instance.objectNode().put("approved", true)
                     .put("fingerprint", ToolInvocationFingerprint.create("test_mutate",
                             JsonNodeFactory.instance.objectNode().put("value", 3)));
             handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval", approval));
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(4, providerCalls.get());
             assertEquals(7, plannerCalls.get());
             assertEquals(2, codeCalls.get());
             assertEquals(1, mutations.get());
             assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+        }
+    }
+
+    @Test
+    void 历史规划超选和伪造ID在两阶段裁剪且重启后复用持久化选择() throws Exception {
+        AtomicInteger plannerCalls = new AtomicInteger();
+        AtomicInteger providerCalls = new AtomicInteger();
+        List<String> catalogIds = new ArrayList<>();
+        ModelTaskGateway planner = request -> {
+            plannerCalls.incrementAndGet();
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            var selected = selection.putArray("historyIds");
+            if (request.purpose().endsWith(".select_v2")) {
+                catalogIds.addAll(request.input().path("history").findValuesAsText("id"));
+                assertEquals(11, catalogIds.size());
+                // Deliberately choose all candidates in reverse order. The
+                // catalog's chronology, not planner array order, decides recency.
+                for (int i = catalogIds.size() - 1; i >= 0; i--) selected.add(catalogIds.get(i));
+                selected.add("call_not_a_history_candidate");
+                selection.putArray("searches").addObject()
+                        .put("source", "docs").put("query", "needle");
+                toolIntent(selection, "");
+            } else {
+                assertEquals("context.on_demand.refine_v2", request.purpose());
+                assertEquals(8, request.input().path("firstSelection")
+                        .path("historyIds").size());
+                for (int i = catalogIds.size() - 1; i >= 0; i--) selected.add(catalogIds.get(i));
+                selected.add("call_not_a_history_candidate");
+                selection.putArray("sourceIds");
+                selection.put("toolAction", "none");
+                selection.putArray("toolIds");
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        DeferredContextSource source = new DeferredContextSource() {
+            @Override public String id() { return "docs"; }
+            @Override public String description() { return "Document evidence"; }
+            @Override public PermissionSet requiredPermissions() { return PermissionSet.NONE; }
+            @Override public List<DeferredContextCandidate> search(
+                    RunRequest request, String query, int limit) {
+                return List.of(new DeferredContextCandidate("one", "v1", "summary",
+                        PermissionSet.NONE));
+            }
+            @Override public String fetch(RunRequest request, String id, String version) {
+                throw new AssertionError("unselected context must not be fetched");
+            }
+        };
+        List<InputBlock> inputs = new ArrayList<>();
+        for (int i = 1; i <= 11; i++) {
+            inputs.add(InputBlock.message("user", "HISTORY_UNIT_" + i));
+        }
+        inputs.add(InputBlock.text("answer current task"));
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner).source(source);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            List<String> chosen = prompt.getInstructions().stream()
+                    .map(message -> message.getText())
+                    .filter(text -> text != null && text.startsWith("HISTORY_UNIT_"))
+                    .toList();
+            assertEquals(8, chosen.size());
+            for (int i = 4; i <= 11; i++) {
+                assertTrue(chosen.contains("HISTORY_UNIT_" + i));
+            }
+            return textResponse("done", 2, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(inputs, Map.of()));
+            assertEquals(RunState.WAITING_APPROVAL, fixture.engine.get(handle.id()).state());
+            assertEquals(1, plannerCalls.get());
+            assertEquals(0, providerCalls.get());
+            fixture.restart();
+            var waiting = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.run.waiting_approval"))
+                    .reduce((previous, next) -> next).orElseThrow();
+            String fingerprint = ToolApprovalChallenge.fromEventPayload(
+                    waiting.payload()).fingerprint();
+            handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval",
+                    JsonNodeFactory.instance.objectNode().put("approved", true)
+                            .put("fingerprint", fingerprint)));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(2, plannerCalls.get(), "completed select_v2 must replay after restart");
+            assertEquals(1, providerCalls.get());
+        }
+    }
+
+    @Test
+    void 历史超选包含伪造ID时只保留最近合法候选() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("searches");
+            var history = selection.putArray("historyIds");
+            request.input().path("history").forEach(item -> history.add(item.path("id").asText()));
+            history.add("unknown-history");
+            toolIntent(selection, "");
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        List<InputBlock> inputs = new ArrayList<>();
+        for (int i = 1; i <= 11; i++) {
+            inputs.add(InputBlock.message("user", "HISTORY_UNIT_" + i));
+        }
+        inputs.add(InputBlock.text("answer current task"));
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            List<String> chosen = prompt.getInstructions().stream()
+                    .map(message -> message.getText())
+                    .filter(text -> text != null && text.startsWith("HISTORY_UNIT_"))
+                    .toList();
+            assertEquals(8, chosen.size());
+            for (int i = 4; i <= 11; i++) {
+                assertTrue(chosen.contains("HISTORY_UNIT_" + i));
+            }
+            return textResponse("done", 1, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request(inputs, Map.of()));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, providerCalls.get());
+        }
+    }
+
+    @Test
+    void 空历史候选中误选工具调用ID时继续执行() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        ModelTaskGateway planner = request -> {
+            assertTrue(request.input().path("history").isEmpty());
+            ObjectNode selection = JsonNodeFactory.instance.objectNode();
+            selection.putArray("searches");
+            selection.putArray("historyIds").add("call_2ee5130fdb5b45bdaf47c16f");
+            toolIntent(selection, "");
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    selection, "planner", 1, 1, false, Map.of()));
+        };
+        FixtureConfig config = new FixtureConfig()
+                .context(contextConfiguration(true, 48_000, 16_000, 1))
+                .onDemand(JsonNodeFactory.instance.objectNode().put("enabled", true))
+                .planner(planner);
+        try (Fixture fixture = new Fixture(prompt -> {
+            providerCalls.incrementAndGet();
+            return textResponse("done", 1, 1);
+        }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
+            RunHandle handle = fixture.engine.start(fixture.request("answer current task"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, providerCalls.get());
+            AgentStep selection = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                            && step.input().path("phase").asText().equals("select_v2"))
+                    .findFirst().orElseThrow();
+            assertEquals("call_2ee5130fdb5b45bdaf47c16f",
+                    selection.output().path("selection").path("historyIds").get(0).asText(),
+                    "原始规划结果须保留供排查，只有最终选择被过滤");
         }
     }
 
@@ -4214,7 +7861,8 @@ class SpringAiReasoningGatewayIntegrationTest {
                     InputBlock.message("user", "DUPLICATE_HISTORY_BODY"),
                     InputBlock.message("user", "DUPLICATE_HISTORY_BODY"),
                     InputBlock.text("answer the current task")), Map.of());
-            RunOutcome outcome = fixture.engine.start(request).completion().toCompletableFuture().get();
+            RunOutcome outcome = fixture.engine.start(request).completion().toCompletableFuture()
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS);
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
         }
     }
@@ -4225,7 +7873,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         AtomicInteger providerCalls = new AtomicInteger();
         ChatModel planner = prompt -> {
             plannerCalls.incrementAndGet();
-            return textResponse("""
+            return rawTextResponse("""
                     {"searches":[],"historyIds":[],"toolIntent":{"query":"","groups":[]}}
                     """, 3, 2);
         };
@@ -4238,7 +7886,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             return textResponse("done", 5, 4);
         }, RunBudget.UNBOUNDED, new AtomicInteger(), config)) {
             RunHandle handle = fixture.engine.start(fixture.request());
-            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+            RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
             assertEquals(1, plannerCalls.get());
@@ -4288,6 +7936,24 @@ class SpringAiReasoningGatewayIntegrationTest {
                 maxToolCalls, new BigDecimal("1000"));
     }
 
+    private static RunOutcome awaitCompletion(Fixture fixture, RunHandle handle)
+            throws Exception {
+        RunSnapshot snapshot = fixture.engine.get(handle.id());
+        if (Set.of(RunState.PAUSED, RunState.WAITING_INPUT, RunState.WAITING_APPROVAL)
+                .contains(snapshot.state())) {
+            throw new AssertionError("Run cannot complete while " + snapshot.state()
+                    + ": " + snapshot.output() + "; " + snapshot.error());
+        }
+        try {
+            return handle.completion().toCompletableFuture()
+                    .get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException timeout) {
+            snapshot = fixture.engine.get(handle.id());
+            throw new AssertionError("Run completion timed out in " + snapshot.state()
+                    + ": " + snapshot.output() + "; " + snapshot.error(), timeout);
+        }
+    }
+
     private static void toolIntent(ObjectNode selection, String query, String... groups) {
         ObjectNode intent = selection.putObject("toolIntent").put("query", query);
         var selected = intent.putArray("groups");
@@ -4318,13 +7984,52 @@ class SpringAiReasoningGatewayIntegrationTest {
                 ToolCallingChatOptions.class, prompt.getOptions());
         var callbacks = options.getToolCallbacks();
         return (callbacks == null ? List.<org.springframework.ai.tool.ToolCallback>of() : callbacks).stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .filter(name -> !name.equals(HarnessDecisionToolCallback.NAME)).toList();
+    }
+
+    private static List<String> allToolNames(Prompt prompt) {
+        ToolCallingChatOptions options = assertInstanceOf(
+                ToolCallingChatOptions.class, prompt.getOptions());
+        var callbacks = options.getToolCallbacks();
+        return (callbacks == null ? List.<org.springframework.ai.tool.ToolCallback>of() : callbacks).stream()
                 .map(callback -> callback.getToolDefinition().name()).toList();
     }
 
+    private static List<String> jsonStrings(com.fasterxml.jackson.databind.JsonNode values) {
+        List<String> result = new ArrayList<>();
+        values.forEach(value -> result.add(value.asText()));
+        return result;
+    }
+
     private static ToolResponseMessage.ToolResponse lastToolResponse(Prompt prompt) {
-        ToolResponseMessage message = assertInstanceOf(
-                ToolResponseMessage.class, prompt.getInstructions().getLast());
+        ToolResponseMessage message = prompt.getInstructions().stream()
+                .filter(ToolResponseMessage.class::isInstance)
+                .map(ToolResponseMessage.class::cast).toList().getLast();
         return message.getResponses().getLast();
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode toolEnvelope(Prompt prompt) {
+        return toolEnvelope(lastToolResponse(prompt));
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode toolEnvelope(
+            ToolResponseMessage.ToolResponse response) {
+        return assertDoesNotThrow(() -> new ObjectMapper()
+                .readTree(response.responseData()));
+    }
+
+    /** Durable history may contain the original raw result or the current typed callback envelope. */
+    private static com.fasterxml.jackson.databind.JsonNode historicalToolData(
+            ToolResponseMessage.ToolResponse response) {
+        var result = toolEnvelope(response);
+        if (result.path("status").isTextual()) {
+            assertEquals("SUCCEEDED", result.path("status").asText(), response.responseData());
+            assertTrue(result.path("data").isObject(), response.responseData());
+            return result.path("data");
+        }
+        assertTrue(result.isObject(), response.responseData());
+        return result;
     }
 
     private static void assertJournalMatchesDeliveredPrompts(
@@ -4337,10 +8042,24 @@ class SpringAiReasoningGatewayIntegrationTest {
             AgentStep step = modelSteps.get(index);
             assertEquals(StepMessageCodec.messages(prompt.getInstructions()),
                     step.input().path("messages"));
-            assertEquals(fixture.json.valueToTree(toolNames(prompt)),
+            assertEquals(fixture.json.valueToTree(allToolNames(prompt)),
                     step.input().path("toolNames"));
             var callbacks = ((ToolCallingChatOptions) prompt.getOptions()).getToolCallbacks();
             if (callbacks == null) callbacks = List.of();
+            List<org.springframework.ai.chat.messages.Message> manifests = prompt.getInstructions()
+                    .stream().filter(ProviderToolManifest::isManifest).toList();
+            if (!manifests.isEmpty()) {
+                assertEquals(1, manifests.size(), "a provider step has exactly one current tool manifest");
+                var expectedManifest = ProviderToolManifest.message(callbacks);
+                HostContextBlock.Metadata block = HostContextBlock.metadata(manifests.getFirst());
+                if (block != null) {
+                    assertEquals(HostContextBlock.Kind.TOOL_MANIFEST, block.kind());
+                    assertEquals(runId.value(), block.scope());
+                    assertTrue(block.required());
+                    assertEquals(HostContextBlock.mark(expectedManifest, block), manifests.getFirst());
+                } else assertEquals(expectedManifest, manifests.getFirst());
+                assertEquals(manifests.getFirst(), prompt.getInstructions().getLast());
+            }
             if (step.input().has("toolFingerprints")) {
                 ObjectNode expected = JsonNodeFactory.instance.objectNode();
                 callbacks.forEach(callback ->
@@ -4364,6 +8083,23 @@ class SpringAiReasoningGatewayIntegrationTest {
 
     private static ChatResponse namedToolCallResponse(
             String toolName, String arguments, int inputTokens, int outputTokens) {
+        if (toolName.equals("desktop_session_open") || toolName.equals("desktop_session_click")) {
+            try {
+                ObjectNode supplied = (ObjectNode) new ObjectMapper().readTree(arguments);
+                if (toolName.equals("desktop_session_open")) {
+                    if (!supplied.has("control")) supplied.put("control", true);
+                } else {
+                    if (!supplied.has("generation")) supplied.put("generation", 1);
+                    if (!supplied.has("x")) supplied.put("x", 57);
+                    if (!supplied.has("y")) supplied.put("y", 417);
+                    if (!supplied.has("button")) supplied.put("button", 1);
+                    if (!supplied.has("clicks")) supplied.put("clicks", 1);
+                }
+                arguments = supplied.toString();
+            } catch (Exception malformed) {
+                throw new IllegalArgumentException("invalid desktop fixture arguments", malformed);
+            }
+        }
         AssistantMessage output = AssistantMessage.builder().content("")
                 .toolCalls(List.of(new AssistantMessage.ToolCall(
                         "provider-call", "function", toolName, arguments)))
@@ -4372,6 +8108,17 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     private static ChatResponse textResponse(
+            String text, int inputTokens, int outputTokens) {
+        ObjectNode decision = JsonNodeFactory.instance.objectNode()
+                .put("decision", "CLAIM_DONE").put("userMessage", text);
+        decision.putArray("evidenceRefs");
+        decision.putArray("unmetCriterionIds");
+        String arguments = decision.toString();
+        return namedToolCallResponse(HarnessDecisionToolCallback.NAME,
+                arguments, inputTokens, outputTokens);
+    }
+
+    private static ChatResponse rawTextResponse(
             String text, int inputTokens, int outputTokens) {
         return response(new AssistantMessage(text), inputTokens, outputTokens);
     }
@@ -4504,17 +8251,22 @@ class SpringAiReasoningGatewayIntegrationTest {
                 models.register("test:planner", config.plannerModel);
                 models.route("workspace", ModelTier.LIGHT, "test:planner");
             }
-            ToolInvocationGateway toolGateway = new DefaultToolInvocationGateway(
+            ToolInvocationGateway baseToolGateway = new DefaultToolInvocationGateway(
                     (tool, arguments, owner) -> config.clarificationTool
                             || config.autoApproveTestMutate
                             || config.autoApproveContext
                                     && tool.name().startsWith("framework_context_")
                             || tool.name().equals("framework_tool_catalog")
+                            || config.autoApproveDesktop
+                                    && tool.name().startsWith("desktop_session_")
+                            || config.systemFileRead && tool.name().equals("sys_file_read")
+                            || config.autoApproveWeb && tool.group().equals("web")
                             || tool.name().startsWith("code_")
                             || tool.name().startsWith("filler_")
                             ? ToolApprovalDecision.ALLOW
                             : ToolApprovalDecision.REQUIRE_HUMAN_APPROVAL,
                     executor, clock);
+            ToolInvocationGateway toolGateway = baseToolGateway;
             engineFactory = currentLedger -> {
                 ModelTaskGateway reasoningTasks = config.plannerModel == null ? modelTasks
                         : new SpringAiModelTaskGateway(models, currentLedger,
@@ -4524,8 +8276,12 @@ class SpringAiReasoningGatewayIntegrationTest {
                         ExtensionStateStore.disabled(), currentLedger,
                         reasoningTasks,
                         runs, json, executor, config.observations);
-                return new AgentEngine(new AgentCompiler(definitions, extensions, json),
-                        runs, plans, reasoning, Runnable::run, json, clock, currentLedger);
+                return config.harness
+                        ? new AgentEngine(new AgentCompiler(definitions, extensions, json),
+                                runs, plans, reasoning, Runnable::run, json, clock, currentLedger,
+                                reasoningTasks)
+                        : new AgentEngine(new AgentCompiler(definitions, extensions, json),
+                                runs, plans, reasoning, Runnable::run, json, clock, currentLedger);
             };
             engine = engineFactory.apply(ledger);
         }
@@ -4597,6 +8353,12 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     private static final class FixtureConfig {
+        private boolean harness;
+
+        private FixtureConfig harness() {
+            harness = true;
+            return this;
+        }
         private boolean clarificationTool;
         private boolean autoApproveTestMutate;
         private boolean denyTestGroup;
@@ -4609,9 +8371,27 @@ class SpringAiReasoningGatewayIntegrationTest {
         private final List<DeferredContextSource> sources = new ArrayList<>();
         private final List<FixedContextSource> fixedSources = new ArrayList<>();
         private boolean autoApproveContext;
+        private boolean autoApproveDesktop;
+        private boolean autoApproveWeb;
+        private boolean systemFileRead;
         private boolean singleIoPermit;
         private int fillerTools;
         private Map<String, String> webToolDescriptions = Map.of();
+        private Map<String, String> desktopToolDescriptions = Map.of();
+        private boolean simulatedDesktopSession;
+        private String simulatedApplication = "示例应用";
+        private ToolRuntimeContextProvider simulatedRuntimeContext;
+        private String simulatedDesktopUnavailableDetail;
+        private String simulatedNavigationLabel = "设置标签";
+        private boolean simulatedVisualViewEvidence;
+        private boolean simulatedClickReobserve;
+        private boolean simulatedUnknownDesktopDelivery;
+        private boolean simulatedVisualNavigationTarget;
+        private SimulatedDesktopState simulatedDesktopState;
+        private AtomicInteger simulatedObserveCalls;
+        private AtomicInteger simulatedClickCalls;
+        private AtomicInteger simulatedOpenCalls;
+        private AtomicInteger simulatedLaunchCalls;
         private int codeDescriptionPadding;
         private String codeResult = "code tool executed";
         private AtomicInteger codeCalls = new AtomicInteger();
@@ -4669,6 +8449,26 @@ class SpringAiReasoningGatewayIntegrationTest {
             autoApproveContext = true;
             return this;
         }
+        private FixtureConfig autoApproveDesktop() {
+            autoApproveDesktop = true;
+            return this;
+        }
+        private FixtureConfig systemFileRead() {
+            systemFileRead = true;
+            return this;
+        }
+        private FixtureConfig autoApproveWeb() {
+            autoApproveWeb = true;
+            return this;
+        }
+        private FixtureConfig simulatedApplication(String application) {
+            simulatedApplication = application;
+            return this;
+        }
+        private FixtureConfig simulatedRuntimeContext(ToolRuntimeContextProvider provider) {
+            simulatedRuntimeContext = provider;
+            return this;
+        }
         private FixtureConfig singleIoPermit() {
             singleIoPermit = true;
             return this;
@@ -4679,6 +8479,83 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
         private FixtureConfig webToolDescriptions(Map<String, String> value) {
             webToolDescriptions = Map.copyOf(value);
+            return this;
+        }
+        private FixtureConfig desktopToolDescriptions(Map<String, String> value) {
+            desktopToolDescriptions = Map.copyOf(value);
+            return this;
+        }
+        private FixtureConfig simulatedDesktopSession(
+                AtomicInteger observeCalls, AtomicInteger clickCalls) {
+            simulatedDesktopSession = true;
+            simulatedDesktopState = new SimulatedDesktopState(true);
+            simulatedObserveCalls = observeCalls;
+            simulatedClickCalls = clickCalls;
+            simulatedVisualNavigationTarget = true;
+            simulatedVisualViewEvidence = true;
+            desktopToolDescriptions = Map.of(
+                    "desktop_session_observe", "Observe the current session frame",
+                    "desktop_session_click", "Click a target in the observed frame");
+            autoApproveDesktop = true;
+            return this;
+        }
+        private FixtureConfig simulatedDesktopOpenObserve(
+                AtomicInteger openCalls, AtomicInteger observeCalls) {
+            simulatedDesktopSession = true;
+            simulatedDesktopState = new SimulatedDesktopState(false);
+            simulatedOpenCalls = openCalls;
+            simulatedObserveCalls = observeCalls;
+            simulatedVisualViewEvidence = true;
+            desktopToolDescriptions = Map.of(
+                    "desktop_session_open", "Open a controllable desktop session",
+                    "desktop_session_observe", "Observe the current session frame");
+            autoApproveDesktop = true;
+            return this;
+        }
+        private FixtureConfig simulatedDesktopLaunchOpenObserve(
+                AtomicInteger launchCalls, AtomicInteger openCalls, AtomicInteger observeCalls,
+                AtomicInteger clickCalls) {
+            simulatedDesktopOpenObserve(openCalls, observeCalls);
+            simulatedLaunchCalls = launchCalls;
+            simulatedClickCalls = clickCalls;
+            simulatedVisualNavigationTarget = true;
+            desktopToolDescriptions = Map.of(
+                    "desktop_session_launch_application", "Launch an application and return a window target",
+                    "desktop_session_open", "Open a controllable desktop session",
+                    "desktop_session_observe", "Observe the current session frame",
+                    "desktop_session_click", "Click the settings navigation tab");
+            return this;
+        }
+        private FixtureConfig simulatedDesktopAccessDisabled(AtomicInteger launchCalls) {
+            simulatedDesktopLaunchOpenObserve(launchCalls, new AtomicInteger(),
+                    new AtomicInteger(), new AtomicInteger());
+            simulatedDesktopUnavailableDetail = "请先在设置中开启电脑应用访问";
+            return this;
+        }
+        private FixtureConfig simulatedClickReobserve() {
+            simulatedClickReobserve = true;
+            return this;
+        }
+        private FixtureConfig simulatedUnknownDesktopDelivery() {
+            simulatedUnknownDesktopDelivery = true;
+            return this;
+        }
+        private FixtureConfig simulatedDesktopDiscovery() {
+            Map<String, String> descriptions = new java.util.LinkedHashMap<>(desktopToolDescriptions);
+            descriptions.put("desktop_session_probe", "Check desktop permissions and capabilities");
+            descriptions.put("desktop_session_targets", "List the application's visible windows");
+            desktopToolDescriptions = Map.copyOf(descriptions);
+            return this;
+        }
+        private FixtureConfig simulatedVisualNavigationTarget() {
+            simulatedVisualNavigationTarget = true;
+            simulatedVisualViewEvidence = false;
+            return this;
+        }
+        private FixtureConfig simulatedVisualNavigationTarget(String label, boolean viewEvidence) {
+            simulatedVisualNavigationTarget();
+            simulatedNavigationLabel = label;
+            simulatedVisualViewEvidence = viewEvidence;
             return this;
         }
         private FixtureConfig codeDescriptionPadding(int value) {
@@ -4712,9 +8589,12 @@ class SpringAiReasoningGatewayIntegrationTest {
         DROP_TOOL_RESPONSE,
         ADD_OVERSIZE_USER,
         PAUSE_AFTER_ACTIVATION_ONCE,
+        PAUSE_ON_DESKTOP_OBSERVE_ONCE,
+        PAUSE_AFTER_DESKTOP_INPUT_ONCE,
         PAUSE_ON_CATALOG_ONCE,
         PAUSE_AFTER_DEFERRED_FETCH_ONCE,
-        PAUSE_AFTER_UNAVAILABLE_FEEDBACK_ONCE
+        PAUSE_AFTER_UNAVAILABLE_FEEDBACK_ONCE,
+        PAUSE_AFTER_ARGUMENT_FEEDBACK_ONCE
     }
 
     private static final class DownstreamAdvisorFactory implements AdvisorSpecFactory {
@@ -4757,6 +8637,27 @@ class SpringAiReasoningGatewayIntegrationTest {
                                 JsonNodeFactory.instance.objectNode().put("kind", "test.pause"),
                                 "pause after catalog activation");
                     }
+                    if (mutation == DownstreamMutation.PAUSE_ON_DESKTOP_OBSERVE_ONCE
+                            && toolNames(request.prompt()).equals(List.of("desktop_session_observe"))
+                            && pauseAfterActivation.getAndIncrement() == 0) {
+                        pausedPrompt.set(request.prompt());
+                        throw new ToolInputRequiredException(
+                                JsonNodeFactory.instance.objectNode().put("kind", "test.pause"),
+                                "pause before desktop observe provider call");
+                    }
+                    if (mutation == DownstreamMutation.PAUSE_AFTER_DESKTOP_INPUT_ONCE
+                            && toolNames(request.prompt()).equals(List.of("desktop_session_observe"))
+                            && request.prompt().getInstructions().stream()
+                                    .filter(ToolResponseMessage.class::isInstance)
+                                    .map(ToolResponseMessage.class::cast)
+                                    .flatMap(message -> message.getResponses().stream())
+                                    .anyMatch(response -> response.name().equals("desktop_session_click"))
+                            && pauseAfterActivation.getAndIncrement() == 0) {
+                        pausedPrompt.set(request.prompt());
+                        throw new ToolInputRequiredException(
+                                JsonNodeFactory.instance.objectNode().put("kind", "test.pause"),
+                                "pause after desktop input, before its follow-up observation");
+                    }
                     if (mutation == DownstreamMutation.PAUSE_ON_CATALOG_ONCE
                             && toolNames(request.prompt()).equals(List.of("framework_tool_catalog"))
                             && pauseAfterActivation.getAndIncrement() == 0) {
@@ -4779,12 +8680,26 @@ class SpringAiReasoningGatewayIntegrationTest {
                                     .filter(ToolResponseMessage.class::isInstance)
                                     .map(ToolResponseMessage.class::cast)
                                     .flatMap(message -> message.getResponses().stream())
-                                    .anyMatch(response -> response.name().equals("web_content"))
+                                    .anyMatch(response -> response.responseData()
+                                            .contains("\"error\":\"tool_not_offered\""))
                             && pauseAfterActivation.getAndIncrement() == 0) {
                         pausedPrompt.set(request.prompt());
                         throw new ToolInputRequiredException(
                                 JsonNodeFactory.instance.objectNode().put("kind", "test.pause"),
                                 "pause after unavailable tool feedback");
+                    }
+                    if (mutation == DownstreamMutation.PAUSE_AFTER_ARGUMENT_FEEDBACK_ONCE
+                            && request.prompt().getInstructions().stream()
+                                    .filter(ToolResponseMessage.class::isInstance)
+                                    .map(ToolResponseMessage.class::cast)
+                                    .flatMap(message -> message.getResponses().stream())
+                                    .anyMatch(response -> response.responseData()
+                                            .contains("invalid_tool_arguments"))
+                            && pauseAfterActivation.getAndIncrement() == 0) {
+                        pausedPrompt.set(request.prompt());
+                        throw new ToolInputRequiredException(
+                                JsonNodeFactory.instance.objectNode().put("kind", "test.pause"),
+                                "pause after invalid arguments feedback");
                     }
                     List<org.springframework.ai.chat.messages.Message> messages =
                             new ArrayList<>(request.prompt().getInstructions());
@@ -4881,6 +8796,32 @@ class SpringAiReasoningGatewayIntegrationTest {
             config.webToolDescriptions.forEach((name, description) ->
                     registrar.tool(context -> auxiliaryTool(name, "web", new AtomicInteger(),
                             "web", description)));
+            if (config.systemFileRead) {
+                SpringAiAnnotatedToolRegistry hostTools = new SpringAiAnnotatedToolRegistry(
+                        new ObjectMapper().findAndRegisterModules());
+                hostTools.register("workspace", context -> ToolObjectBundle.of(List.of(
+                        new com.javaclaw.system.SystemTools(null, Path.of("target", "screenshots")))));
+                registrar.toolProvider(hostTools);
+                registrar.toolPolicy((tool, configuration, request) ->
+                        !tool.name().startsWith("sys_") || tool.name().equals("sys_file_read")
+                                ? ToolPolicyDecision.ALLOW : ToolPolicyDecision.DENY);
+            }
+            if (config.simulatedDesktopSession) {
+                SpringAiAnnotatedToolRegistry hostTools = new SpringAiAnnotatedToolRegistry(
+                        new ObjectMapper().findAndRegisterModules());
+                hostTools.register("workspace", context -> ToolObjectBundle.of(List.of(
+                        simulatedDesktopTools(context, config))));
+                registrar.toolProvider(hostTools);
+                registrar.toolPolicy((tool, configuration, request) ->
+                        tool.name().equals("framework_tool_catalog")
+                                || !tool.group().equals("desktop-session")
+                                || config.desktopToolDescriptions.containsKey(tool.name())
+                        ? ToolPolicyDecision.ALLOW : ToolPolicyDecision.DENY);
+            } else {
+                config.desktopToolDescriptions.forEach((name, description) ->
+                        registrar.tool(context -> auxiliaryTool(name, "desktop-session",
+                                new AtomicInteger(), "desktop", description)));
+            }
             if (config.context != null || config.fillerTools > 0) {
                 registrar.tool(context -> auxiliaryTool(
                         "code_target", "code", config.codeCalls, config.codeResult,
@@ -4923,6 +8864,253 @@ class SpringAiReasoningGatewayIntegrationTest {
                             .put("value", arguments.path("value").asInt());
                 }
             };
+        }
+
+        private static DesktopSessionTools simulatedDesktopTools(ToolContext context,
+                FixtureConfig config) {
+            DesktopTarget target = new DesktopTarget("test", "sample-target", 42L,
+                    config.simulatedApplication, config.simulatedApplication,
+                    0, 0, 120, 500, DesktopTarget.VISIBLE);
+            DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
+                    DesktopSessionService.class.getClassLoader(),
+                    new Class<?>[]{DesktopSessionService.class}, (proxy, method, args) -> {
+                        String operation = method.getName();
+                        if (operation.equals("availability")) {
+                            if (config.simulatedDesktopUnavailableDetail != null) {
+                                return new DesktopAvailability(false, "test", 0,
+                                        config.simulatedDesktopUnavailableDetail);
+                            }
+                            return new DesktopAvailability(true, "test", DesktopAvailability.CAPTURE
+                                    | DesktopAvailability.SEMANTIC_INPUT, "ready");
+                        }
+                        if (operation.equals("discoverTargets")) return CompletableFuture.completedFuture(
+                                config.simulatedDesktopState.opened()
+                                        || config.simulatedLaunchCalls != null
+                                                && config.simulatedLaunchCalls.get() > 0
+                                        ? List.of(target) : List.of());
+                        if (operation.equals("launchApplication")) {
+                            if (config.simulatedDesktopUnavailableDetail != null) {
+                                config.simulatedLaunchCalls.incrementAndGet();
+                                return CompletableFuture.failedFuture(new IllegalStateException(
+                                        config.simulatedDesktopUnavailableDetail));
+                            }
+                            if (!config.simulatedApplication.equals(args[1])) return CompletableFuture.failedFuture(
+                                    new IllegalArgumentException("application unavailable"));
+                            config.simulatedLaunchCalls.incrementAndGet();
+                            return CompletableFuture.completedFuture(
+                                    new DesktopApplicationLaunchResult(42L, List.of(target), "ready"));
+                        }
+                        if (operation.equals("open")) {
+                            if (!"sample-target".equals(args[1])) return CompletableFuture.failedFuture(
+                                    new IllegalArgumentException("target unavailable"));
+                            config.simulatedOpenCalls.incrementAndGet();
+                            config.simulatedDesktopState.open(Boolean.TRUE.equals(args[2]));
+                            return CompletableFuture.completedFuture(new DesktopSessionInfo(
+                                    "sample-session", target, config.simulatedDesktopState.controlGranted(), false));
+                        }
+                        if (operation.equals("captureObservation")) {
+                            if (!config.simulatedDesktopState.opened()
+                                    || !"sample-session".equals(args[1])) {
+                                return CompletableFuture.completedFuture(java.util.Optional.empty());
+                            }
+                            int number = config.simulatedObserveCalls.incrementAndGet();
+                            String observationId = "00000000-0000-4000-8000-%012d"
+                                    .formatted(number);
+                            config.simulatedDesktopState.observed(observationId);
+                            DesktopFrame frame = new DesktopFrame("sample-target", 1,
+                                    System.currentTimeMillis(), 120, 500, 120 * 4,
+                                    new byte[120 * 500 * 4],
+                                    config.simulatedDesktopState.targetSelected() ? 2 : 1);
+                            List<DesktopElement> elements = new ArrayList<>();
+                            if (config.simulatedVisualNavigationTarget) {
+                                for (int index = 0; index < 40; index++) {
+                                    elements.add(new DesktopElement(observationId + ":a" + index,
+                                            "text", config.simulatedDesktopState.targetSelected()
+                                                    ? "设置选项" : "概览行",
+                                            1, 40 + index * 10, 30, 8, 0));
+                                }
+                            }
+                            return CompletableFuture.completedFuture(java.util.Optional.of(
+                                    new DesktopObservation("sample-session", observationId,
+                                            frame, elements)));
+                        }
+                        if (operation.equals("commitObservation")) {
+                            @SuppressWarnings("unchecked")
+                            List<DesktopVisualRegion> regions = args.length > 3
+                                    ? (List<DesktopVisualRegion>) args[3] : List.of();
+                            config.simulatedDesktopState.committed(regions);
+                            return CompletableFuture.completedFuture(true);
+                        }
+                        if (operation.equals("releaseForeground")) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        if (operation.equals("info")) return new DesktopSessionInfo(
+                                "sample-session", target, config.simulatedDesktopState.controlGranted(), false);
+                        if (operation.equals("state")) return new DesktopSessionState(
+                                "sample-session", DesktopSessionState.Kind.LIVE, "ready",
+                                System.currentTimeMillis());
+                        if (operation.equals("perform")) {
+                            DesktopAction action = (DesktopAction) args[2];
+                            if (!config.simulatedDesktopState.controlGranted()) {
+                                return CompletableFuture.completedFuture(new DesktopActionResult(
+                                        DesktopActionResult.Status.DENIED, "session control required", 1,
+                                        DesktopActionResult.Mode.NONE,
+                                        DesktopActionResult.Reason.SESSION_CONTROL_REQUIRED, false,
+                                        action.observationId(), DesktopActionResult.NextStep.OPEN_SESSION));
+                            }
+                            ObjectNode check = JsonNodeFactory.instance.objectNode()
+                                    .put("sessionId", args[1].toString())
+                                    .put("observationId", action.observationId())
+                                    .put("elementId", action.elementId());
+                            if (action.kind() != DesktopAction.Kind.CLICK
+                                    || action.windowGeneration() != 1
+                                    || !config.simulatedDesktopState.validClick(check)) {
+                                return CompletableFuture.completedFuture(new DesktopActionResult(
+                                        DesktopActionResult.Status.STALE_FRAME,
+                                        "invalid observed target; no input dispatched", 1,
+                                        DesktopActionResult.Mode.NONE,
+                                        DesktopActionResult.Reason.STALE_OBSERVATION, false,
+                                        action.observationId(), DesktopActionResult.NextStep.OBSERVE));
+                            }
+                            config.simulatedClickCalls.incrementAndGet();
+                            if (config.simulatedUnknownDesktopDelivery) {
+                                return CompletableFuture.completedFuture(new DesktopActionResult(
+                                        DesktopActionResult.Status.UNKNOWN,
+                                        "input may have been delivered; effect is not confirmed", 1,
+                                        DesktopActionResult.Mode.BACKGROUND_SEMANTIC,
+                                        DesktopActionResult.Reason.DELIVERY_UNCERTAIN, true,
+                                        action.observationId(), DesktopActionResult.NextStep.OBSERVE));
+                            }
+                            if (config.simulatedClickReobserve) {
+                                return CompletableFuture.completedFuture(new DesktopActionResult(
+                                        DesktopActionResult.Status.UNSUPPORTED,
+                                        "background input unavailable", 1,
+                                        DesktopActionResult.Mode.NONE,
+                                        DesktopActionResult.Reason.NO_SEMANTIC_PATH, false,
+                                        action.observationId(), DesktopActionResult.NextStep.OBSERVE));
+                            }
+                            config.simulatedDesktopState.clicked();
+                            return CompletableFuture.completedFuture(new DesktopActionResult(
+                                    DesktopActionResult.Status.VERIFIED, "设置入口已点击", 1,
+                                    DesktopActionResult.Mode.BACKGROUND_SEMANTIC,
+                                    DesktopActionResult.Reason.NONE, true,
+                                    action.observationId(), DesktopActionResult.NextStep.OBSERVE));
+                        }
+                        if (operation.equals("acknowledgeActionResult")
+                                || operation.equals("markDeliveryUncertain")
+                                || operation.equals("closeSession")
+                                || operation.equals("closeScope")
+                                || operation.equals("closeWorkspace")
+                                || operation.equals("close")) return null;
+                        throw new UnsupportedOperationException(operation);
+                    });
+            var vision = new VisionPreprocessor(request -> {
+                assertEquals("vision.desktop.structured", request.purpose());
+                String page = config.simulatedDesktopState.page();
+                ObjectNode output = JsonNodeFactory.instance.objectNode()
+                        .put("summary", page)
+                        .put("visibleText", page + "\n" + config.simulatedDesktopState.subject());
+                var targets = output.putArray("targets");
+                if (config.simulatedVisualNavigationTarget) {
+                    for (int index = 0; index < 7; index++) {
+                        targets.addObject().put("label", "占位控件" + index)
+                                .put("role", "button").put("x", 1).put("y", 40 + index * 20)
+                                .put("width", 10).put("height", 10).put("confidence", 0.9);
+                    }
+                    targets.addObject().put("label", config.simulatedNavigationLabel)
+                            .put("role", "tab").put("x", 35).put("y", 399)
+                            .put("width", 44).put("height", 36).put("confidence", 0.94);
+                }
+                if (!config.simulatedVisualNavigationTarget
+                        || config.simulatedVisualViewEvidence) {
+                    String subject = config.simulatedDesktopState.subject();
+                    ObjectNode view = output.putObject("activeView")
+                            .put("label", subject).put("confidence", 0.95);
+                    view.putObject("heading").put("label", subject).put("role", "heading")
+                            .put("x", 1).put("y", 1).put("width", 25).put("height", 10)
+                            .put("confidence", 0.95);
+                    view.putObject("content").put("label", page).put("role", "content")
+                            .put("x", 1).put("y", 20).put("width", 100).put("height", 20)
+                            .put("confidence", 0.95);
+                }
+                return CompletableFuture.completedFuture(new ModelTaskResult(
+                        output, "test-vision", 1, 1, false, Map.of()));
+            }, context.runId());
+            DesktopSessionOwner owner = new DesktopSessionOwner(
+                    context.scope().workspaceId(), context.scope().sessionId(),
+                    "chat", context.runId().value());
+            return new DesktopSessionTools(service, owner,
+                    Path.of("target", "simulated-desktop-screenshots"), null, vision,
+                    config.simulatedRuntimeContext);
+        }
+    }
+
+    private static final class SimulatedDesktopState {
+        private boolean opened;
+        private boolean controlGranted;
+        private boolean targetSelected;
+        private String lastObservationId = "";
+        private Set<String> committedTargets = Set.of();
+
+        private SimulatedDesktopState(boolean opened) {
+            this.opened = opened;
+            this.controlGranted = opened;
+        }
+
+        private synchronized boolean opened() {
+            return opened;
+        }
+
+        private synchronized void open(boolean requestControl) {
+            opened = true;
+            if (requestControl && !controlGranted) {
+                controlGranted = true;
+                lastObservationId = "";
+                committedTargets = Set.of();
+            }
+        }
+
+        private synchronized boolean controlGranted() { return controlGranted; }
+
+        private synchronized void observed(String observationId) {
+            lastObservationId = observationId;
+            committedTargets = Set.of();
+        }
+
+        private synchronized void committed(List<DesktopVisualRegion> regions) {
+            committedTargets = regions.stream().map(DesktopVisualRegion::id)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+
+        private synchronized boolean validClick(com.fasterxml.jackson.databind.JsonNode arguments) {
+            String observationId = arguments.path("observationId").asText("");
+            String elementId = arguments.path("elementId").asText("");
+            if (!opened || targetSelected || lastObservationId.isBlank()
+                    || !lastObservationId.equals(observationId)
+                    || !elementId.equals(observationId + ":v7")
+                    || !committedTargets.contains(elementId)
+                    || !arguments.path("sessionId").asText().equals("sample-session")) {
+                return false;
+            }
+            lastObservationId = "";
+            committedTargets = Set.of();
+            return true;
+        }
+
+        private synchronized void clicked() {
+            targetSelected = true;
+        }
+
+        private synchronized boolean targetSelected() {
+            return targetSelected;
+        }
+
+        private synchronized String subject() {
+            return targetSelected ? "settings" : "overview";
+        }
+
+        private synchronized String page() {
+            return targetSelected ? "示例应用 设置页面" : "示例应用 概览页面";
         }
     }
 

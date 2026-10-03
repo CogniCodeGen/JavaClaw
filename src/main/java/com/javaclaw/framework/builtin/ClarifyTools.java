@@ -25,18 +25,17 @@ public final class ClarifyTools {
                     "【严格约束】" +
                     "1. 只在确实无法基于上下文与常识推断时调用；能用合理默认值时绝不调用。" +
                     "2. 调用本工具后你必须立即结束本轮回复，不要再做任何推理、生成或工具调用，等待用户的下一条输入。" +
-                    "3. reason 字段必须用中文向用户说明你为什么问这个问题（识别出的歧义/缺失是什么、为什么模型不能替决策）。" +
+                    "3. reason 字段必须用用户语言说明你为什么问这个问题（识别出的歧义/缺失是什么、为什么模型不能替决策）。" +
                     "4. question 字段必须是具体可回答的问题；若有候选项请列出供用户选择，避免开放式提问。")
     public String askUserClarification(
             @ToolParam(
-                    description = "向用户解释为什么需要澄清：识别出的歧义/缺失是什么、为什么模型不能替决策。中文。") String reason,
+                    description = "向用户解释为什么需要澄清：识别出的歧义/缺失是什么、为什么模型不能替决策。跟随用户语言。") String reason,
             @ToolParam(
-                    description = "向用户的具体提问；若有候选选项请逐条列出。中文。") String question) {
+                    description = "向用户的具体提问；若有候选选项请逐条列出。跟随用户语言。") String question) {
         String safeReason = reason == null ? "" : reason.trim();
         String safeQuestion = question == null ? "" : question.trim();
         if (safeReason.isEmpty() && safeQuestion.isEmpty()) {
-            return "[ask_user_clarification][失败] reason 与 question 均为空，"
-                    + "澄清请求无效。请重新组织你的澄清问题。";
+            throw new IllegalArgumentException("reason and question must not both be blank");
         }
 
         log.info("模型主动请求澄清: reason=「{}」 question=「{}」", safeReason, safeQuestion);

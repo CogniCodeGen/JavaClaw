@@ -1,5 +1,6 @@
 package com.javaclaw.app;
 
+import com.javaclaw.platform.data.ApplicationUpgradeGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -149,6 +150,42 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
             }
             throw failure;
         }
+    }
+
+    /** Adopt the lock acquired before format preparation without a release/reacquire gap. */
+    public static SingleInstanceCoordinator adopt(Path dataDirectory, String buildFingerprint,
+            ApplicationUpgradeGuard.DataLock lease) throws IOException {
+        Path dataDir = dataDirectory.toAbsolutePath().normalize();
+        String fingerprint = requireFingerprint(buildFingerprint);
+        if (lease == null || !lease.lock().isValid()) {
+            throw new IOException("启动锁已经失效");
+        }
+        ServerSocket server = new ServerSocket();
+        try {
+            server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 8);
+            SingleInstanceCoordinator coordinator = new SingleInstanceCoordinator(
+                    dataDir.resolve(ENDPOINT_FILE), lease.channel(), lease.lock(), server,
+                    UUID.randomUUID().toString(), fingerprint);
+            if (!CURRENT.compareAndSet(null, coordinator)) {
+                coordinator.close();
+                throw new IOException("当前 JVM 已存在单实例协调器");
+            }
+            return coordinator;
+        } catch (IOException | RuntimeException failure) {
+            try { server.close(); } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            try { lease.close(); } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+    }
+
+    /** Notify a primary process after a preflight lock finds an already-running instance. */
+    public static void notifyRunning(Path dataDirectory, String buildFingerprint) {
+        notifyExisting(dataDirectory.toAbsolutePath().normalize().resolve(ENDPOINT_FILE),
+                requireFingerprint(buildFingerprint));
     }
 
     public static Optional<SingleInstanceCoordinator> current() {

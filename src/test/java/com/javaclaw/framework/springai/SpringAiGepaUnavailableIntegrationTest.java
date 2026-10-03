@@ -61,7 +61,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class SpringAiGepaUnavailableIntegrationTest {
     @Test
     void 长答复完成主Run并持久化v2未评估事件() throws Exception {
-        String answer = "answer".repeat(2_100);
+        // The decision protocol bounds userMessage at 12,000 chars; the resulting
+        // JSON encoding of the text node exceeds GEPA's 12,000-char evaluation input limit.
+        String answer = "answer".repeat(1_999) + "extra";
         AtomicInteger auxiliaryCalls = new AtomicInteger();
         ModelTaskGateway auxiliary = request -> {
             auxiliaryCalls.incrementAndGet();
@@ -69,7 +71,18 @@ class SpringAiGepaUnavailableIntegrationTest {
         };
         ChatModel model = new ChatModel() {
             @Override public ChatResponse call(Prompt prompt) {
-                return new ChatResponse(List.of(new Generation(new AssistantMessage(answer))),
+                var decisionArgs = JsonNodeFactory.instance.objectNode()
+                        .put("decision", "CLAIM_DONE")
+                        .put("userMessage", answer);
+                decisionArgs.set("evidenceRefs", JsonNodeFactory.instance.arrayNode());
+                decisionArgs.set("unmetCriterionIds", JsonNodeFactory.instance.arrayNode());
+                String arguments = decisionArgs.toString();
+                AssistantMessage decision = AssistantMessage.builder().content("")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "decision-call", "function",
+                                HarnessDecisionToolCallback.NAME, arguments)))
+                        .build();
+                return new ChatResponse(List.of(new Generation(decision)),
                         ChatResponseMetadata.builder().model("test:model")
                                 .usage(new DefaultUsage(3, 4)).build());
             }

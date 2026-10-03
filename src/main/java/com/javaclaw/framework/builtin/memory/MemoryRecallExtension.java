@@ -6,11 +6,17 @@ import com.javaclaw.framework.spi.ExtensionDependency;
 import com.javaclaw.framework.spi.DeferredContextSource;
 import com.javaclaw.framework.spi.FixedContextSource;
 import com.javaclaw.framework.spi.OnDemandContributions;
+import com.javaclaw.framework.spi.FrameworkTool;
 
 import java.util.List;
 import java.util.Objects;
 
 public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
+    /** Only the host-created recall implementation may receive its read-only approval exemption. */
+    public static boolean isTrustedRecallTool(FrameworkTool tool) {
+        return tool != null && tool.getClass() == MemoryRecallTool.class;
+    }
+
     public MemoryRecallExtension(MemoryRecallGateway recall) {
         this(recall, null);
     }

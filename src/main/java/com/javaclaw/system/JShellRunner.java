@@ -61,6 +61,13 @@ public final class JShellRunner {
                              String lastValue, List<String> problems) {
     }
 
+    /** Structural validation outcome; localized report lines are for display only. */
+    public record CheckResult(boolean valid, List<String> lines) {
+        public CheckResult {
+            lines = List.copyOf(lines);
+        }
+    }
+
     // ==================== 执行 ====================
 
     /**
@@ -173,12 +180,19 @@ public final class JShellRunner {
      * @return 检查报告行列表；首行为总结，后续为每个片段一行
      */
     public static List<String> check(String code) {
+        return checkResult(code).lines();
+    }
+
+    public static CheckResult checkResult(String code) {
         List<String> report = new ArrayList<>();
         if (code == null || code.isBlank()) {
             report.add("（空代码）");
-            return report;
+            return new CheckResult(false, report);
         }
-        try (JShell shell = JShell.builder().build()) {
+        boolean valid = false;
+        // Structure checks never evaluate code, so a local analysis engine avoids
+        // launching a remote JShell process or opening a loopback transport.
+        try (JShell shell = JShell.builder().executionEngine("local").build()) {
             SourceCodeAnalysis analysis = shell.sourceCodeAnalysis();
             String remaining = code;
             int index = 0;
@@ -211,10 +225,11 @@ public final class JShellRunner {
                     ? "结构检查通过：共 " + index + " 个片段（注：仅检查语法结构，类型/引用错误需运行测试发现）"
                     : "结构检查发现问题：");
             report.addAll(lines);
+            valid = ok;
         } catch (Exception e) {
             report.add("结构检查失败：" + e.getMessage());
         }
-        return report;
+        return new CheckResult(valid, report);
     }
 
     // ==================== 内部求值 ====================

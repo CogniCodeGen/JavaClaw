@@ -29,7 +29,8 @@ class EntryThreadMappingTest {
     @Test void scheduleUsesOneThreadAndDistinctIdempotentTurnsAcrossTriggers() {
         var agents = new CapturingLifecycleClient();
         var runner = new FrameworkScheduledTaskRunner(agents, workspace(), Runnable::run);
-        runner.run(new ScheduledRunControl("daily"), ToolCallOrigin.SCHEDULED, "first", callbacks);
+        runner.run(new ScheduledRunControl("daily"), ToolCallOrigin.SCHEDULED,
+                "scheduler context\n\nfirst", "first", callbacks);
         runner.run(new ScheduledRunControl("daily"), ToolCallOrigin.SCHEDULED, "second", callbacks);
         runner.run(new ScheduledRunControl("other"), ToolCallOrigin.SCHEDULED, "third", callbacks);
         assertEquals(3, outcomes.size());
@@ -37,6 +38,8 @@ class EntryThreadMappingTest {
         assertEquals(agents.requests.get(0).scope(), agents.requests.get(1).scope());
         assertNotEquals(agents.requests.get(0).scope(), agents.requests.get(2).scope());
         assertNotEquals(agents.requests.get(0).idempotencyKey(), agents.requests.get(1).idempotencyKey());
+        assertEquals("first", agents.requests.getFirst().attributes()
+                .get("framework.taskOriginalRequest").asText());
         runner.shutdown();
     }
 

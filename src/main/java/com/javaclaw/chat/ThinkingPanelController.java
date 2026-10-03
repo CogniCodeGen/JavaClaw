@@ -1,6 +1,11 @@
 package com.javaclaw.chat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.loop.model.LoopStatus;
+import com.javaclaw.chat.ThinkingPanelViewModel.PanelStatus;
+import com.javaclaw.chat.ThinkingContentRenderer.StageState;
+import com.javaclaw.chat.ThinkingContentRenderer.ToolState;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -11,7 +16,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
-import java.util.Set;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -21,9 +26,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@link ThinkingPanelViewModel} 状态和动态渲染命令；关闭后停止计时，重复关闭无副作用。</p>
  */
 public final class ThinkingPanelController implements AutoCloseable {
-
-    private static final Set<String> STATUS_TYPES = Set.of(
-            "thinking", "planning", "executing", "replying", "idle");
 
     @FXML private VBox root;
     @FXML private VBox contentBox;
@@ -38,7 +40,7 @@ public final class ThinkingPanelController implements AutoCloseable {
 
     private final ThinkingPanelViewModel viewModel;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ChangeListener<String> statusTypeListener =
+    private final ChangeListener<PanelStatus> statusTypeListener =
             (observable, previous, current) -> applyStatusStyle(current);
     private ThinkingContentRenderer renderer;
     private Timeline elapsedTicker;
@@ -92,30 +94,30 @@ public final class ThinkingPanelController implements AutoCloseable {
         followLatest = true;
         scrollPane.setVvalue(1.0);
         viewModel.setEmpty(false);
-        setStatus("thinking", "思考中...");
+        setStatus(PanelStatus.THINKING, "思考中...");
         updateMetrics(0, 0, "¥0.00");
         streamStartMillis = System.currentTimeMillis();
         startElapsedTicker();
     }
 
     public void endStream() {
-        endStream("处理完成", "已完成");
+        endStream("处理完成", ThinkingContentRenderer.StreamEnd.COMPLETED);
     }
 
     public void endStreamCancelled() {
-        endStream("已取消", "已停止");
+        endStream("已取消", ThinkingContentRenderer.StreamEnd.CANCELLED);
     }
 
     public void endStreamFailed() {
-        endStream("失败", "失败");
+        endStream("失败", ThinkingContentRenderer.StreamEnd.FAILED);
     }
 
-    private void endStream(String panelStatus, String agentStatus) {
+    private void endStream(String panelStatus, ThinkingContentRenderer.StreamEnd end) {
         if (closed.get()) return;
-        setStatus("idle", panelStatus);
+        setStatus(PanelStatus.IDLE, panelStatus);
         stopElapsedTicker();
         refreshElapsedLabel();
-        renderer.finish(agentStatus);
+        renderer.finish(end);
     }
 
     public void reset() {
@@ -126,16 +128,16 @@ public final class ThinkingPanelController implements AutoCloseable {
         viewModel.setEmpty(true);
         viewModel.setElapsed("0.0s");
         viewModel.setMetrics(0, 0, "¥0.00");
-        viewModel.setStatus("idle", "等待中");
+        viewModel.setStatus(PanelStatus.IDLE, "等待中");
     }
 
-    public void setStatus(String type, String text) {
+    void setStatus(PanelStatus type, String text) {
         if (closed.get()) return;
-        viewModel.setStatus(normalizeStatus(type), text);
+        viewModel.setStatus(type, text);
     }
 
-    public void recordPipelineProgress(
-            String stageId, String label, String status, String detail) {
+    void recordPipelineProgress(
+            String stageId, String label, StageState status, String detail) {
         ensureOpen();
         renderer.recordPipelineProgress(stageId, label, status, detail);
     }
@@ -148,26 +150,26 @@ public final class ThinkingPanelController implements AutoCloseable {
 
     public void appendThinking(String chunk) {
         ensureOpen();
-        setStatus("thinking", "思考中...");
+        setStatus(PanelStatus.THINKING, "思考中...");
         renderer.appendThinking(chunk);
     }
 
     public void updatePlan(String hint) {
         ensureOpen();
-        setStatus("planning", "规划中...");
+        setStatus(PanelStatus.PLANNING, "规划中...");
         renderer.updatePlan(hint);
     }
 
     public void appendSubAgentThinking(String agentName, String thinking) {
         ensureOpen();
-        setStatus("executing", "智能体执行中...");
+        setStatus(PanelStatus.EXECUTING, "智能体执行中...");
         renderer.appendSubAgentThinking(agentName, thinking);
     }
 
     /** A reply stream is still in progress; only a ToolResult marks it complete. */
     public void markSubAgentReplying(String agentName) {
         ensureOpen();
-        setStatus("executing", "智能体返回结果中...");
+        setStatus(PanelStatus.EXECUTING, "智能体返回结果中...");
         renderer.markSubAgentReplying(agentName);
     }
 
@@ -178,13 +180,13 @@ public final class ThinkingPanelController implements AutoCloseable {
     void appendSubAgentReply(
             String agentName, String chunk, ChatInlineImageRenderer inlineImages) {
         ensureOpen();
-        setStatus("executing", "智能体返回结果中...");
+        setStatus(PanelStatus.EXECUTING, "智能体返回结果中...");
         renderer.appendSubAgentReply(agentName, chunk, inlineImages);
     }
 
     public void markSubAgentResult(String agentName, String briefResult) {
         ensureOpen();
-        setStatus("executing", "智能体已完成");
+        setStatus(PanelStatus.EXECUTING, "智能体已完成");
         renderer.markSubAgentResult(agentName, briefResult);
     }
 
@@ -193,8 +195,14 @@ public final class ThinkingPanelController implements AutoCloseable {
         renderer.completeSubAgentIfPresent(agentName);
     }
 
+    void completeSubAgentIfPresent(String agentName,
+            com.javaclaw.framework.api.ToolExecutionStatus executionStatus) {
+        ensureOpen();
+        renderer.completeSubAgentIfPresent(agentName, executionStatus);
+    }
+
     public void setReplying() {
-        setStatus("replying", "回复中...");
+        setStatus(PanelStatus.REPLYING, "回复中...");
     }
 
     public void updateMetrics(long tokensIn, long tokensOut, String costText) {
@@ -202,17 +210,24 @@ public final class ThinkingPanelController implements AutoCloseable {
         viewModel.setMetrics(tokensIn, tokensOut, costText);
     }
 
-    public void appendToolCall(String name, String input, String status) {
+    void appendToolCall(String name, String input, ToolState status) {
+        appendToolCall(name, "", input, status);
+    }
+
+    void appendToolCall(String name, String invocationId, String input, ToolState status) {
         ensureOpen();
-        String normalized = status == null ? "running" : status.toLowerCase(java.util.Locale.ROOT);
-        String summary = switch (normalized) {
-            case "ok", "done", "completed", "success" -> "工具已完成";
-            case "error", "failed", "failure" -> "工具执行失败";
-            case "waiting" -> "等待工具授权...";
-            default -> "执行工具中...";
+        String summary = switch (status == null ? ToolState.RUNNING : status) {
+            case SUCCEEDED -> "工具已完成";
+            case FAILED -> "工具执行失败";
+            case WAITING -> "等待工具授权...";
+            case UNCERTAIN -> "工具结果待核验";
+            case REOBSERVE -> "等待重新观察";
+            case UNKNOWN -> "工具状态未知";
+            case STOPPED -> "工具已停止";
+            case RUNNING -> "执行工具中...";
         };
-        setStatus("executing", summary);
-        renderer.appendToolCall(name, input, status);
+        setStatus(PanelStatus.EXECUTING, summary);
+        renderer.appendToolCall(name, invocationId, input, status);
     }
 
     public void appendToolResult(String name, String result) {
@@ -220,15 +235,49 @@ public final class ThinkingPanelController implements AutoCloseable {
     }
 
     void appendToolResult(String name, String result, ChatInlineImageRenderer inlineImages) {
+        appendToolResult(name, "", result, null,
+                com.javaclaw.framework.api.ToolExecutionStatus.UNKNOWN, inlineImages);
+    }
+
+    void appendToolResult(String name, String invocationId, String result,
+            JsonNode output, com.javaclaw.framework.api.ToolExecutionStatus executionStatus,
+            ChatInlineImageRenderer inlineImages) {
         ensureOpen();
-        setStatus("executing", "工具已完成");
-        renderer.appendToolResult(name, result, inlineImages);
+        String summary = switch (ThinkingContentRenderer.resultKind(executionStatus)) {
+            case FAILED -> "工具执行失败";
+            case UNCERTAIN -> "工具结果待核验";
+            case REOBSERVE -> "等待重新观察";
+            case PENDING -> "等待工具授权...";
+            case SUCCEEDED -> "工具已完成";
+            case UNKNOWN -> "工具状态未知";
+        };
+        setStatus(PanelStatus.EXECUTING, summary);
+        renderer.appendToolResult(name, invocationId, result, output, executionStatus, inlineImages);
+    }
+
+    void updateToolReceipt(String name, EffectReceiptV1.Status receiptStatus) {
+        updateToolReceipt(name, "", receiptStatus, "");
+    }
+
+    void updateToolReceipt(String name, String invocationId,
+            EffectReceiptV1.Status receiptStatus, String reason) {
+        updateToolReceipt(name, invocationId, receiptStatus, reason, null);
+    }
+
+    void updateToolReceipt(String name, String invocationId,
+            EffectReceiptV1.Status receiptStatus, String reason, JsonNode metadata) {
+        ensureOpen();
+        renderer.updateToolReceipt(name, invocationId, receiptStatus, reason, metadata);
     }
 
     public void appendToolFailure(String name, String detail) {
+        appendToolFailure(name, "", detail);
+    }
+
+    void appendToolFailure(String name, String invocationId, String detail) {
         ensureOpen();
-        setStatus("executing", "工具执行失败");
-        renderer.appendToolFailure(name, detail);
+        setStatus(PanelStatus.EXECUTING, "工具执行失败");
+        renderer.appendToolFailure(name, invocationId, detail);
     }
 
     @Override
@@ -271,17 +320,14 @@ public final class ThinkingPanelController implements AutoCloseable {
         viewModel.setElapsed((seconds / 60) + "m " + (seconds % 60) + "s");
     }
 
-    private void applyStatusStyle(String type) {
-        String normalized = normalizeStatus(type);
+    private void applyStatusStyle(PanelStatus type) {
+        String token = (type == null ? PanelStatus.IDLE : type)
+                .name().toLowerCase(Locale.ROOT);
         statusTag.getStyleClass().removeAll(
                 "tp-status-tag-idle", "tp-status-tag-thinking",
                 "tp-status-tag-planning", "tp-status-tag-executing",
                 "tp-status-tag-replying");
-        statusTag.getStyleClass().add("tp-status-tag-" + normalized);
-    }
-
-    private static String normalizeStatus(String type) {
-        return STATUS_TYPES.contains(type) ? type : "idle";
+        statusTag.getStyleClass().add("tp-status-tag-" + token);
     }
 
     private void ensureOpen() {

@@ -66,7 +66,10 @@ public final class ScheduleTaskCell extends ListCell<Task> {
         if (task.builtin()) showTag("系统内置", "jc-badge-stopped");
         else if (active) showTag(task.runtimeState() == RuntimeState.RUNNING ? "运行中" : "排队中",
                 "jc-badge-running");
-        else if ("失败".equals(task.lastRunStatus())) showTag("⚠", "jc-badge-fail");
+        else if (task.executionStatus()
+                == com.javaclaw.application.schedule.ScheduleExecutionStatus.FAILURE) {
+            showTag("⚠", "jc-badge-fail");
+        }
         else hideTag();
         triggerLabel.setText("⏱ " + task.describeTrigger());
         nextLabel.setText(nextText(task));

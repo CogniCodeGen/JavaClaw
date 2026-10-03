@@ -34,7 +34,7 @@ public interface BehaviorSettingsApplicationService {
 
     record GeneralSettings(
             boolean minimizeToTrayOnClose,
-            boolean taskRiskAutoApproveEnabled) {
+            boolean computerAppAccessEnabled) {
     }
 
     record Snapshot(

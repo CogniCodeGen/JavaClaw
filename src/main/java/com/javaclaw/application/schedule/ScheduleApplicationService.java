@@ -1,5 +1,6 @@
 package com.javaclaw.application.schedule;
 
+import com.javaclaw.schedule.ExecutionPolicy;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -53,12 +54,20 @@ public interface ScheduleApplicationService {
         }
     }
 
-    record History(String time, String status, String duration, String note) {
+    record History(String time, String status, String duration, String note,
+                   com.javaclaw.framework.api.TaskResult taskResult) {
+        public History(String time, String status, String duration, String note) {
+            this(time, status, duration, note, null);
+        }
         public History {
             time = text(time);
             status = text(status);
             duration = text(duration);
             note = text(note);
+        }
+
+        public ScheduleExecutionStatus executionStatus() {
+            return ScheduleExecutionStatus.fromStored(status);
         }
     }
 
@@ -90,7 +99,24 @@ public interface ScheduleApplicationService {
             RuntimeState runtimeState,
             LocalDateTime nextFireTime,
             boolean manuallyRunnable,
-            List<History> history) {
+            List<History> history,
+            ExecutionPolicy executionPolicy) {
+        public Task(String id, String name, String description, String triggerType,
+                    int intervalMinutes, int intervalValue, String intervalUnit,
+                    String dailyTime, String cronExpression, String onceDateTime,
+                    String prompt, boolean enabled, long version, String lastRunTime,
+                    String lastRunStatus, String lastDuration, int runCount, int failCount,
+                    boolean notifyEnabled, String notifyChannel, boolean unattendedToolsAuthorized,
+                    boolean builtin, String triggerSummary, String sourceModule,
+                    RuntimeState runtimeState, LocalDateTime nextFireTime,
+                    boolean manuallyRunnable, List<History> history) {
+            this(id, name, description, triggerType, intervalMinutes, intervalValue, intervalUnit,
+                    dailyTime, cronExpression, onceDateTime, prompt, enabled, version, lastRunTime,
+                    lastRunStatus, lastDuration, runCount, failCount, notifyEnabled, notifyChannel,
+                    unattendedToolsAuthorized, builtin, triggerSummary, sourceModule, runtimeState,
+                    nextFireTime, manuallyRunnable, history, ExecutionPolicy.RECURRING);
+        }
+
         public Task {
             id = text(id);
             name = text(name);
@@ -109,10 +135,15 @@ public interface ScheduleApplicationService {
             sourceModule = text(sourceModule);
             runtimeState = runtimeState == null ? RuntimeState.PAUSED : runtimeState;
             history = List.copyOf(history == null ? List.of() : history);
+            executionPolicy = executionPolicy == null ? ExecutionPolicy.RECURRING : executionPolicy;
         }
 
         public boolean active() {
             return runtimeState == RuntimeState.RUNNING || runtimeState == RuntimeState.QUEUED;
+        }
+
+        public ScheduleExecutionStatus executionStatus() {
+            return ScheduleExecutionStatus.fromStored(lastRunStatus);
         }
 
         public String describeTrigger() {
@@ -160,7 +191,19 @@ public interface ScheduleApplicationService {
             boolean notifyEnabled,
             String notifyChannel,
             boolean unattendedToolsAuthorized,
-            boolean draft) {
+            boolean draft,
+            ExecutionPolicy executionPolicy) {
+        public SaveCommand(String id, String name, String description, String triggerType,
+                           int intervalValue, String intervalUnit, String dailyTime,
+                           String cronExpression, String onceDateTime, String prompt,
+                           boolean enabled, long version, boolean notifyEnabled,
+                           String notifyChannel, boolean unattendedToolsAuthorized,
+                           boolean draft) {
+            this(id, name, description, triggerType, intervalValue, intervalUnit, dailyTime,
+                    cronExpression, onceDateTime, prompt, enabled, version, notifyEnabled,
+                    notifyChannel, unattendedToolsAuthorized, draft, ExecutionPolicy.RECURRING);
+        }
+
         public SaveCommand {
             id = text(id);
             name = text(name);
@@ -172,6 +215,7 @@ public interface ScheduleApplicationService {
             onceDateTime = text(onceDateTime);
             prompt = text(prompt);
             notifyChannel = text(notifyChannel);
+            executionPolicy = executionPolicy == null ? ExecutionPolicy.RECURRING : executionPolicy;
         }
     }
 

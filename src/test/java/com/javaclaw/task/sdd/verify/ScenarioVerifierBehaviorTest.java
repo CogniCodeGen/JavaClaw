@@ -8,6 +8,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -66,29 +68,61 @@ class ScenarioVerifierBehaviorTest {
     }
 
     @Test
-    void outputPredicatesHandleContentNullOutputAndBuildBannerSelfHealing() {
+    void outputPredicatesMatchLiteralContentWithoutInferringBuildSuccess() {
         ScenarioVerifier unavailable = new ScenarioVerifier(workDirectory.toString(), null, null);
         assertFalse(unavailable.verify(scenario(
                 Criterion.OUTPUT_CONTAINS, "build ||| ready")).passed());
 
+        Set<Criterion> authorized = Set.of(
+                new Criterion(Criterion.OUTPUT_CONTAINS, "contains ||| ready"),
+                new Criterion(Criterion.OUTPUT_CONTAINS, "contains-ok ||| ready"),
+                new Criterion(Criterion.OUTPUT_CONTAINS, "contains ||| absent"),
+                new Criterion(Criterion.OUTPUT_CONTAINS, "null-output ||| ready"),
+                new Criterion(Criterion.OUTPUT_CONTAINS, "build-ok ||| build success"),
+                new Criterion(Criterion.OUTPUT_CONTAINS, "build-fail ||| BUILD SUCCESSFUL"));
         ScenarioVerifier output = new ScenarioVerifier(workDirectory.toString(),
                 (command, cwd) -> switch (command) {
                     case "contains" -> new CommandRunner.Result(1, "prefix ready suffix");
+                    case "contains-ok" -> new CommandRunner.Result(0, "prefix ready suffix");
                     case "null-output" -> new CommandRunner.Result(0, null);
                     case "build-ok" -> new CommandRunner.Result(0, "quiet");
                     default -> new CommandRunner.Result(2, "BUILD SUCCESSFUL");
-                }, null);
+                }, null, authorized);
 
+        assertFalse(output.verify(scenario(
+                Criterion.OUTPUT_CONTAINS, "contains ||| ready")).passed(),
+                "命令失败时，正文命中不能伪造通过");
         assertTrue(output.verify(scenario(
-                Criterion.OUTPUT_CONTAINS, "contains ||| ready")).passed());
+                Criterion.OUTPUT_CONTAINS, "contains-ok ||| ready")).passed());
         assertFalse(output.verify(scenario(
                 Criterion.OUTPUT_CONTAINS, "contains ||| absent")).passed());
         assertFalse(output.verify(scenario(
                 Criterion.OUTPUT_CONTAINS, "null-output ||| ready")).passed());
-        assertTrue(output.verify(scenario(
-                Criterion.OUTPUT_CONTAINS, "build-ok ||| build success")).passed());
         assertFalse(output.verify(scenario(
-                Criterion.OUTPUT_CONTAINS, "build-fail ||| BUILD SUCCESSFUL")).passed());
+                Criterion.OUTPUT_CONTAINS, "build-ok ||| build success")).passed(),
+                "退出码成功不能伪造用户要求的输出内容");
+        assertTrue(output.verify(scenario(
+                Criterion.COMMAND_EXIT_ZERO, "build-ok")).passed(),
+                "构建成功应由明确的退出码判据表达");
+        assertFalse(output.verify(scenario(
+                Criterion.OUTPUT_CONTAINS, "build-fail ||| BUILD SUCCESSFUL")).passed(),
+                "失败命令打印成功横幅也不能通过");
+    }
+
+    @Test
+    void untrustedOutputPredicateNeverRunsItsCommand() {
+        AtomicInteger calls = new AtomicInteger();
+        ScenarioVerifier verifier = new ScenarioVerifier(workDirectory.toString(),
+                (command, cwd) -> {
+                    calls.incrementAndGet();
+                    return new CommandRunner.Result(0, "完成");
+                }, null);
+
+        VerificationOutcome result = verifier.verify(scenario(
+                Criterion.OUTPUT_CONTAINS, "echo 完成 ||| 完成"));
+
+        assertFalse(result.passed());
+        assertEquals(0, calls.get());
     }
 
     @Test

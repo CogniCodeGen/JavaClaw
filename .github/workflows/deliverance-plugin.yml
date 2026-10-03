@@ -101,11 +101,13 @@ jobs:
           "-Dtest=ArchitectureRulesTest,PluginDescriptorLoaderTest,ServicePluginRegistrarTest,DeliveranceRuntimeManagerTest,ServicePluginProtocolSourceTest"
           test
       - name: Verify API artifact and built-in Runner entry
+        shell: bash
         run: |
           mvn --batch-mode --no-transfer-progress -DskipTests package
-          test -f target/javaclaw-3.0.0-SNAPSHOT-service-plugin-api.jar
-          test ! -e target/javaclaw-3.0.0-SNAPSHOT-service-plugin-runner.jar
-          jar tf target/javaclaw-3.0.0-SNAPSHOT.jar > "$RUNNER_TEMP/host-entries.txt"
+          HOST_FINAL_NAME="$(mvn --batch-mode --no-transfer-progress -q -Dstyle.color=never help:evaluate -Dexpression=project.build.finalName -DforceStdout)"
+          test -f "target/$HOST_FINAL_NAME-service-plugin-api.jar"
+          test ! -e "target/$HOST_FINAL_NAME-service-plugin-runner.jar"
+          jar tf "target/$HOST_FINAL_NAME.jar" > "$RUNNER_TEMP/host-entries.txt"
           grep -qx 'com/javaclaw/service/runner/ServicePluginProcessMain.class' "$RUNNER_TEMP/host-entries.txt"
           grep -qx 'com/javaclaw/service/api/ServicePlugin.class' "$RUNNER_TEMP/host-entries.txt"
           ! grep -q 'service-plugin/javaclaw-service-plugin-runner.jar' "$RUNNER_TEMP/host-entries.txt"

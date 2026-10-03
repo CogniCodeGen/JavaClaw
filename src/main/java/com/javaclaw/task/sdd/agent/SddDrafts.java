@@ -1,6 +1,5 @@
 package com.javaclaw.task.sdd.agent;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
@@ -19,7 +18,6 @@ public final class SddDrafts {
     private SddDrafts() {}
 
     /** 阶段 1-2：提案。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ProposalDraft {
         @JsonPropertyDescription("为什么做：动机、要解决的问题、不做会怎样。回到用户需求的本质，剥离表层措辞。")
         @JsonProperty(required = true)
@@ -34,14 +32,12 @@ public final class SddDrafts {
     }
 
     /** 阶段 3：规格（能力 → 需求 → 场景 + 验收谓词）。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class SpecDraft {
         @JsonPropertyDescription("受本次变更影响的能力列表。能力名用简洁 kebab-case 或中文短名（将作为目录名）。")
         @JsonProperty(required = true)
         public List<CapabilityDraft> capabilities;
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class CapabilityDraft {
         @JsonPropertyDescription("能力名（目录名），如 chess-rule、login-flow。")
         @JsonProperty(required = true)
@@ -52,7 +48,6 @@ public final class SddDrafts {
         public List<RequirementDraft> requirements;
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class RequirementDraft {
         @JsonPropertyDescription("需求标题：描述【做什么/对外行为】，不写实现。")
         @JsonProperty(required = true)
@@ -63,7 +58,6 @@ public final class SddDrafts {
         public List<ScenarioDraft> scenarios;
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ScenarioDraft {
         @JsonPropertyDescription("场景标题。")
         @JsonProperty(required = true)
@@ -78,29 +72,41 @@ public final class SddDrafts {
         @JsonPropertyDescription("Then：期望可观测结果。")
         public String then;
 
-        @JsonPropertyDescription("验收谓词类型，五选一并【优先选确定性的前三类】：" +
+        @JsonPropertyDescription("验收谓词类型，四选一并优先选择前两类。不得生成 output_contains；" +
                 "artifact_exists（产物文件存在，predicate=工作目录相对路径）；" +
                 "command_exit_zero（命令成功退出，predicate=命令文本，如 'mvn -q compile'）；" +
-                "output_contains（命令输出含关键词，predicate 形如 '命令 ||| 期望子串'）；" +
                 "external_check（外部检查，如 URL 200）；freeform（难以结构化的描述性标准）。")
         @JsonProperty(required = true)
-        public String criterionType;
+        public CriterionKind criterionType;
 
-        @JsonPropertyDescription("验收谓词内容：按 criterionType 的约定填写（路径 / 命令 / '命令 ||| 子串' / 描述）。")
+        @JsonPropertyDescription("验收谓词内容：按 criterionType 的约定填写（路径 / 命令 / 描述）。")
         @JsonProperty(required = true)
         public String criterionPredicate;
     }
 
     /** 阶段 5：任务清单。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class TaskPlanDraft {
         @JsonPropertyDescription("有序实现项列表。每项细粒度（约 2–5 分钟可完成）、相互尽量独立、按依赖排序。")
         @JsonProperty(required = true)
         public List<TaskItemDraft> tasks;
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    /** Whether this change needs a separate technical design document. */
+    public static class DesignDraft {
+        @JsonPropertyDescription("是否存在需要单独说明的非平凡技术权衡。")
+        @JsonProperty(required = true)
+        public boolean required;
+
+        @JsonPropertyDescription("required=true 时的 design.md Markdown 正文；否则填空字符串。")
+        @JsonProperty(required = true)
+        public String content;
+    }
+
     public static class TaskItemDraft {
+        @JsonPropertyDescription("任务类别：IMPLEMENTATION 表示代码、配置、测试或构建动作；PROCESS_META 表示方案展示、文档流程或评审等待。")
+        @JsonProperty(required = true)
+        public TaskKind kind;
+
         @JsonPropertyDescription("动作描述：具体可执行，如『在 Board 类新增 move(from,to) 方法』。")
         @JsonProperty(required = true)
         public String action;
@@ -113,8 +119,25 @@ public final class SddDrafts {
         public String criterion;
     }
 
+    public enum TaskKind { IMPLEMENTATION, PROCESS_META }
+
+    public enum CriterionKind {
+        ARTIFACT_EXISTS, COMMAND_EXIT_ZERO, EXTERNAL_CHECK, FREEFORM
+    }
+
+    public enum ExecutionDisposition { DONE, SPLIT }
+
+    public static class ExecutionDispositionDraft {
+        @JsonPropertyDescription("DONE 表示本实现项已执行并可进入独立验收；SPLIT 表示必须拆成更小实现项。")
+        @JsonProperty(required = true)
+        public ExecutionDisposition kind;
+
+        @JsonPropertyDescription("SPLIT 时填写 2–5 个具体子项；DONE 时填空列表。")
+        @JsonProperty(required = true)
+        public List<String> subtasks;
+    }
+
     /** critic 对单个描述性场景的判定。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class CriticVerdictDraft {
         @JsonPropertyDescription("该场景是否在工作目录的现实产物中成立。务必以实际核查（inspect_list/inspect_read）为据，" +
                 "证据不足时判 false，绝不默认通过。")
@@ -127,11 +150,20 @@ public final class SddDrafts {
     }
 
     /** 验收补做：未通过场景 → 补做动作。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class RemediationDraft {
         @JsonPropertyDescription("针对未通过的验收场景，给出补做的实现项动作列表（保留已完成工作，只补缺口）。" +
                 "若确实无法给出可行补做，填空列表。")
         @JsonProperty(required = true)
-        public List<String> fixes;
+        public List<RemediationItemDraft> fixes;
+    }
+
+    public static class RemediationItemDraft {
+        @JsonPropertyDescription("补做项类别：IMPLEMENTATION 为真实实现；PROCESS_META 为流程或评审动作。")
+        @JsonProperty(required = true)
+        public TaskKind kind;
+
+        @JsonPropertyDescription("具体可执行的补做动作。")
+        @JsonProperty(required = true)
+        public String action;
     }
 }

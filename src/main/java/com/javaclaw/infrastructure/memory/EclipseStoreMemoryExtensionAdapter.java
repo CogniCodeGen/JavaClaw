@@ -187,9 +187,6 @@ public final class EclipseStoreMemoryExtensionAdapter
         MemoryGraphScope scope = MemoryGraphScope.thread(request.scope());
         boolean userTurn = java.util.Set.of("chat", "plan").contains(request.source().kind())
                 && !request.attributes().containsKey("memory.originThreadId");
-        if (userTurn) {
-            memory.rememberExplicitPreference(scope, runId.value(), userInput);
-        }
         CorrectionTurnContext context = userTurn ? memory.prepareCorrectionTurn(scope, userInput, previousReply)
                 : memory.inScope(scope).prepareCorrectionTurn(userInput, previousReply);
         if (!context.hasCorrections()) return null;

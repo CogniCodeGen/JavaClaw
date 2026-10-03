@@ -62,8 +62,9 @@ public final class AgentConfig {
     public static final String DESKTOP_AGENT_NAME = "桌面自动化专家";
 
     public static final String DESKTOP_AGENT_DESCRIPTION =
-            "操作其他桌面软件（IDE、编辑器等任意 GUI 程序）。启动程序、枚举/激活窗口、截取界面交视觉模型理解、" +
-            "用键鼠点击与输入控制目标程序。跨平台（macOS/Windows/Linux 自动适配，缺原生能力时降级为整屏截图+视觉定位）。" +
+            "通过目标绑定会话观察和操作 Windows 11 或 macOS 14 应用窗口。" +
+            "设置中的电脑应用访问开关开启且系统权限就绪时，可直接使用会话能力，前台接管也由此开关授权。" +
+            "后台优先，失败时可前台接管；支持实时预览和按需截图。" +
             "不处理网页（由 Web 专家负责）、不做本地文件读写（由系统操作专家负责）。";
 
     public static final String COMMAND_AGENT_NAME = "命令行专家";
@@ -106,7 +107,7 @@ public final class AgentConfig {
     /**
      * 重新加载配置（工作区切换时调用）
      */
-    public void reload() {
+    public synchronized void reload() {
         load();
         log.info("智能体配置已重新加载: {}", persistence.description());
     }
@@ -125,6 +126,13 @@ public final class AgentConfig {
      */
     public synchronized void save() {
         persistence.save(properties);
+    }
+
+    /** Save a permission-bearing setting and fail closed if the database rejects it. */
+    public synchronized void saveChecked() {
+        if (!persistence.save(properties)) {
+            throw new IllegalStateException("智能体配置未能保存到数据库");
+        }
     }
 
     /** 后台保存工具审核模式；按单键 upsert，避免覆盖同一时刻由设置页保存的其他配置。 */
@@ -635,22 +643,6 @@ public final class AgentConfig {
         return v > 0 ? v : DEFAULT_SDD_EXEC_MAX_ITERS;
     }
 
-    /**
-     * 是否启用托管任务高风险工具的"目录内自动放行"。
-     *
-     * <p>开启后，托管任务执行期间遇到目录作用域高风险工具（文件写/移动/复制/删除、命令执行），
-     * 由风险评估智能体判定其影响范围；若完全限于任务设置的工作目录内则自动放行，不再弹人工确认。
-     * 关闭则回退为一律人工确认。默认开启。</p>
-     */
-    public boolean isTaskRiskAutoApproveEnabled() {
-        return Boolean.parseBoolean(properties.getProperty(KEY_TASK_RISK_AUTOAPPROVE,
-                String.valueOf(DEFAULT_TASK_RISK_AUTOAPPROVE)));
-    }
-
-    public void setTaskRiskAutoApproveEnabled(boolean value) {
-        properties.setProperty(KEY_TASK_RISK_AUTOAPPROVE, String.valueOf(value));
-    }
-
     // ==================== RAG 知识库配置 ====================
 
     public boolean isRagEnabled() { return rag.enabled(); }
@@ -689,6 +681,16 @@ public final class AgentConfig {
 
     public void setTrayMinimizeOnClose(boolean value) {
         properties.setProperty(KEY_TRAY_MINIMIZE_ON_CLOSE, String.valueOf(value));
+    }
+
+    /** 用户明确开启电脑应用访问后，智能体可免去逐目标会话授权；默认关闭。 */
+    public synchronized boolean isComputerAppAccessEnabled() {
+        return Boolean.parseBoolean(properties.getProperty(
+                KEY_COMPUTER_APP_ACCESS_ENABLED, "false"));
+    }
+
+    public synchronized void setComputerAppAccessEnabled(boolean value) {
+        properties.setProperty(KEY_COMPUTER_APP_ACCESS_ENABLED, String.valueOf(value));
     }
 
     /** 界面风格主题 ID（emerald/midnight/carbon/sapphire/ocean/plum/terracotta/honey/graphite，默认 emerald，按工作区记忆） */

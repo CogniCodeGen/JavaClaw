@@ -11,17 +11,19 @@ class ThinkingPanelViewModelTest {
     @Test
     void exposesDeterministicPageStateTransitions() {
         ThinkingPanelViewModel model = new ThinkingPanelViewModel();
-        assertEquals("idle", model.statusTypeProperty().get());
+        assertEquals(ThinkingPanelViewModel.PanelStatus.IDLE,
+                model.statusTypeProperty().get());
         assertEquals("等待中", model.statusTextProperty().get());
         assertTrue(model.emptyProperty().get());
 
         model.setEmpty(false);
-        model.setStatus("executing", "知识专家 思考中...");
+        model.setStatus(ThinkingPanelViewModel.PanelStatus.EXECUTING, "知识专家 思考中...");
         model.setElapsed("1.2s");
         model.setMetrics(120, 48, "¥0.03");
 
         assertFalse(model.emptyProperty().get());
-        assertEquals("executing", model.statusTypeProperty().get());
+        assertEquals(ThinkingPanelViewModel.PanelStatus.EXECUTING,
+                model.statusTypeProperty().get());
         assertEquals("知识专家 思考中...", model.statusTextProperty().get());
         assertEquals("1.2s", model.elapsedProperty().get());
         assertEquals(120, model.tokensInProperty().get());

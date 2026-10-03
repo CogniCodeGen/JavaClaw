@@ -23,8 +23,8 @@ public final class PlanModePrompts {
 
     /** 首轮专家选择 JSON 解析失败时的修正重试提示 */
     public static String expertSelectionRetry(Collection<String> expertNames) {
-        return "你的回复中未包含有效的专家选择 JSON。请严格按以下格式输出：\n"
-                + "```json\n{\"experts\": [\"专家名称1\", \"专家名称2\"], \"topic\": \"讨论主题\"}\n```\n"
+        return "上一轮未提供符合 Schema 的单个完整 JSON 对象。请只输出："
+                + "{\"experts\": [\"专家名称1\", \"专家名称2\"], \"topic\": \"讨论主题\"}。"
                 + "可选专家：" + String.join(", ", expertNames);
     }
 

@@ -862,6 +862,11 @@
 .tp-tool-status-error { -fx-text-fill: #EF4444; }
 .tp-tool-status-running { -fx-text-fill: #D49A47; }
 
+.tp-tool-effect-status {
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-neutral-600;
+}
+
 /* ==================== 管线进度（发送 → 首字之间的步骤可视化） ==================== */
 
 .tp-pipeline-section {

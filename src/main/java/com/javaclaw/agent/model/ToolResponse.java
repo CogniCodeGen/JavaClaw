@@ -1,10 +1,12 @@
 package com.javaclaw.agent.model;
 
+import com.javaclaw.framework.spi.ToolEffectCapture;
+
 /**
- * 结构化工具响应 — 统一所有工具方法的返回格式
+ * 面向用户和模型的旧式工具展示文案。
  *
- * <p>为智能体提供一致的工具执行结果格式，包含明确的状态标识，
- * 使模型能准确判断工具调用是否成功，并据此决定后续动作。</p>
+ * <p>执行状态由 {@link ToolEffectCapture} 独立采集，并由调用网关写入
+ * 结构化 ToolExecutionResultV1；返回字符串绝不可用于控制流或效果验收。</p>
  *
  * <p>输出格式示例：
  * <pre>
@@ -19,12 +21,6 @@ package com.javaclaw.agent.model;
  */
 public final class ToolResponse {
 
-    /** 状态标识 */
-    private static final String STATUS_SUCCESS = "成功";
-    private static final String STATUS_ERROR = "失败";
-    private static final String STATUS_TIMEOUT = "超时";
-    private static final String STATUS_PENDING = "待审";
-
     private ToolResponse() {
         // 工具类不可实例化
     }
@@ -37,7 +33,7 @@ public final class ToolResponse {
      * @return 格式化的成功响应
      */
     public static String success(String toolName, String message) {
-        return format(toolName, STATUS_SUCCESS, message);
+        return format(toolName, ToolEffectCapture.Signal.SUCCESS, message);
     }
 
     /**
@@ -48,7 +44,7 @@ public final class ToolResponse {
      * @return 格式化的失败响应
      */
     public static String error(String toolName, String message) {
-        return format(toolName, STATUS_ERROR, message);
+        return format(toolName, ToolEffectCapture.Signal.ERROR, message);
     }
 
     /**
@@ -58,7 +54,17 @@ public final class ToolResponse {
      * {@code [成功] 提案已提交} 误读成“目标对象已创建”。</p>
      */
     public static String pending(String toolName, String message) {
-        return format(toolName, STATUS_PENDING, message);
+        return format(toolName, ToolEffectCapture.Signal.PENDING, message);
+    }
+
+    /** An input may have been delivered; do not confuse this with user approval. */
+    public static String uncertain(String toolName, String message) {
+        return format(toolName, ToolEffectCapture.Signal.UNCERTAIN, message);
+    }
+
+    /** No input was delivered; the target needs a fresh observation before acting. */
+    public static String reobserve(String toolName, String message) {
+        return format(toolName, ToolEffectCapture.Signal.REOBSERVE, message);
     }
 
     /**
@@ -74,7 +80,7 @@ public final class ToolResponse {
         if (hint != null && !hint.isEmpty()) {
             message += "，" + hint;
         }
-        return format(toolName, STATUS_TIMEOUT, message);
+        return format(toolName, ToolEffectCapture.Signal.TIMEOUT, message);
     }
 
     /**
@@ -98,24 +104,18 @@ public final class ToolResponse {
     }
 
     /**
-     * 判断工具响应是否为成功状态
-     *
-     * @param response 工具响应字符串
-     * @return true 表示成功
-     */
-    public static boolean isSuccess(String response) {
-        return response != null && response.contains("[" + STATUS_SUCCESS + "]");
-    }
-
-    /** 是否为已受理、待用户审阅/确认后生效的结果。 */
-    public static boolean isPending(String response) {
-        return response != null && response.contains("[" + STATUS_PENDING + "]");
-    }
-
-    /**
      * 统一格式化
      */
-    private static String format(String toolName, String status, String message) {
-        return String.format("[%s][%s] %s", toolName, status, message);
+    private static String format(String toolName, ToolEffectCapture.Signal signal, String message) {
+        ToolEffectCapture.note(toolName, signal);
+        String displayStatus = switch (signal) {
+            case SUCCESS -> "成功";
+            case ERROR -> "失败";
+            case TIMEOUT -> "超时";
+            case PENDING -> "待审";
+            case UNCERTAIN -> "结果未知";
+            case REOBSERVE -> "待观察";
+        };
+        return String.format("[%s][%s] %s", toolName, displayStatus, message);
     }
 }

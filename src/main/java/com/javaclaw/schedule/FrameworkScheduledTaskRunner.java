@@ -52,6 +52,16 @@ public final class FrameworkScheduledTaskRunner implements ScheduledTaskRunner {
             ToolCallOrigin origin,
             String prompt,
             ConversationCallbacks callbacks) {
+        run(control, origin, prompt, prompt, callbacks);
+    }
+
+    @Override
+    public void run(
+            ScheduledRunControl control,
+            ToolCallOrigin origin,
+            String prompt,
+            String originalPrompt,
+            ConversationCallbacks callbacks) {
         Objects.requireNonNull(control, "control");
         TerminalCallbackGuard terminal = new TerminalCallbackGuard(callbacks);
         CountDownLatch done = new CountDownLatch(1);
@@ -66,7 +76,10 @@ public final class FrameworkScheduledTaskRunner implements ScheduledTaskRunner {
             ToolCallOrigin effectiveOrigin = origin == null ? ToolCallOrigin.SCHEDULED : origin;
             var request = requests.text(prompt, "schedule:" + control.taskId(), "schedule",
                             InvocationSource.schedule(control.taskId()), PermissionSet.UNRESTRICTED,
-                            "schedule:" + control.taskId() + ":trigger:" + control.runId());
+                            "schedule:" + control.taskId() + ":trigger:" + control.runId())
+                    .withAttribute("framework.taskOriginalRequest",
+                            com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode(
+                                    originalPrompt == null ? "" : originalPrompt));
             var existing = agents.activeTurn(request.scope()).orElse(null);
             if (existing != null) {
                 boolean safeToResume = existing.state() == com.javaclaw.framework.api.RunState.PAUSED

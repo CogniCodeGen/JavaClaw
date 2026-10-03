@@ -1,7 +1,9 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.framework.api.BudgetExceededException;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.framework.api.TurnPausedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +11,7 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.text.NumberFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -34,6 +37,7 @@ final class ChatTurnOutcomeHandler {
             boolean plan,
             ChatSession target,
             TurnMetrics metrics,
+            TaskResult taskResult,
             Runnable finishUi) {
         AssistantMessageView rendered = renderer.message();
         if (plan) renderer.finishPlanAgent();
@@ -42,6 +46,7 @@ final class ChatTurnOutcomeHandler {
             if (text == null && !plan) {
                 text = "[模型未返回有效回复]";
             }
+            text = TaskResultPresentation.append(text, taskResult, latestUserRequest(target));
             if (text == null || text.isBlank()) {
                 renderer.removePendingMessage();
             } else {
@@ -136,8 +141,8 @@ final class ChatTurnOutcomeHandler {
         if (plan) renderer.finishPlanAgent();
         try {
             String partial = renderer.currentText(plan);
-            if (partial != null && !partial.isBlank() && target != null) {
-                String stoppedText = partial + "\n\n> ⏹ 已停止";
+            String stoppedText = cancellationText(partial, cancelled, latestUserRequest(target));
+            if (!stoppedText.isBlank() && target != null) {
                 renderer.showFinalReply(stoppedText);
                 renderer.renderInlineReplyImages();
                 ChatMessage message = message(stoppedText, DeliveryState.CANCELLED, metrics);
@@ -151,9 +156,40 @@ final class ChatTurnOutcomeHandler {
         }
     }
 
+    /** The terminal Run cause and task acceptance are independent facts. */
+    static String cancellationText(String partial, ConversationOutcome.Cancelled cancelled,
+            String userRequest) {
+        boolean hasPartial = partial != null && !partial.isBlank();
+        CancellationReason reason = cancelled.reason();
+        boolean showReason = reason == CancellationReason.APPROVAL_DENIED
+                || reason == CancellationReason.RUN_TIMEOUT
+                || reason == CancellationReason.TASK_SUPERSEDED;
+        if (!hasPartial && cancelled.taskResult() == null && !showReason) return "";
+        String banner = switch (reason) {
+            case APPROVAL_DENIED -> "> ⛔ 授权未通过，任务已停止";
+            case RUN_TIMEOUT -> "> ⏱ 运行超时，本轮已停止";
+            case TASK_SUPERSEDED -> "> ⏹ 任务已被新请求替换，本轮已停止";
+            default -> "> ⏹ 已停止";
+        };
+        String text = (hasPartial ? partial + "\n\n" : "") + banner;
+        return TaskResultPresentation.append(text, cancelled.taskResult(), userRequest);
+    }
+
     void loopDetected(String warning) {
         log.warn("循环检测触发: {}", warning);
         renderer.appendLoopWarning(warning);
+    }
+
+    private static String latestUserRequest(ChatSession session) {
+        if (session == null) return "";
+        List<ChatMessage> messages = session.getMessages();
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            ChatMessage message = messages.get(index);
+            if (message.getRole() == ChatMessage.Role.USER) {
+                return message.getContent();
+            }
+        }
+        return "";
     }
 
     private static ChatMessage message(String text, DeliveryState state, TurnMetrics metrics) {
@@ -200,19 +236,6 @@ final class ChatTurnOutcomeHandler {
         if (cause instanceof javax.net.ssl.SSLException) {
             return new FailurePresentation(false, "SSL 连接失败，请检查 API 地址");
         }
-        String lower = message.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("429") || lower.contains("rate limit")) {
-            return new FailurePresentation(false, "请求频率超限，请稍后再试");
-        }
-        if (lower.contains("quota")) {
-            return new FailurePresentation(false, "API 额度不足，请检查账户余额");
-        }
-        if (lower.contains("model") && lower.contains("not found")) {
-            return new FailurePresentation(false, "模型名称不存在");
-        }
-        if (lower.contains("503") || lower.contains("service unavailable")) {
-            return new FailurePresentation(false, "模型服务暂时不可用");
-        }
         return new FailurePresentation(false, message);
     }
 
@@ -224,15 +247,12 @@ final class ChatTurnOutcomeHandler {
     }
 
     private static String pausedMessage(TurnPausedException paused) {
-        String detail = paused.getMessage();
-        if (detail == null || detail.isBlank()) return "需核对运行状态后恢复";
-        String contextPrefix = "planner selected an unauthorized context source: ";
-        if (detail.startsWith(contextPrefix)) {
-            String sourceId = detail.substring(contextPrefix.length()).trim();
-            return "上下文规划选择了不可用的来源 " + sourceId
+        if (paused.reason() == TurnPausedException.Reason.UNAUTHORIZED_CONTEXT_SOURCE) {
+            return "上下文规划选择了不可用的来源 " + paused.contextSourceId()
                     + "，请重新发起请求；若持续出现，请检查来源权限";
         }
-        return detail;
+        String detail = paused.getMessage();
+        return detail == null || detail.isBlank() ? "需核对运行状态后恢复" : detail;
     }
 
     private static boolean isHttpUnauthorized(Throwable error) {
@@ -255,22 +275,7 @@ final class ChatTurnOutcomeHandler {
     }
 
     private static String budgetMessage(BudgetExceededException budget) {
-        BudgetExceededException.Kind kind = budget.kind();
-        String lower = budget.getMessage().toLowerCase(Locale.ROOT);
-        if (kind == BudgetExceededException.Kind.UNKNOWN) {
-            if (lower.contains("model input token")) {
-                kind = BudgetExceededException.Kind.MODEL_INPUT_TOKENS;
-            } else if (lower.contains("model output token")) {
-                kind = BudgetExceededException.Kind.MODEL_OUTPUT_TOKENS;
-            } else if (lower.contains("model cost")) {
-                kind = BudgetExceededException.Kind.MODEL_COST;
-            } else if (lower.contains("repeated tool-call")) {
-                kind = BudgetExceededException.Kind.REPEATED_TOOL_CALLS;
-            } else if (lower.contains("tool call")) {
-                kind = BudgetExceededException.Kind.TOOL_CALLS;
-            }
-        }
-        return switch (kind) {
+        return switch (budget.kind()) {
             case MODEL_INPUT_TOKENS -> "本轮模型累计输入已达到安全上限"
                     + tokenLimitDetail(budget) + "。请缩小任务范围，或在新一轮中继续。";
             case MODEL_OUTPUT_TOKENS -> "本轮模型累计输出已达到安全上限"

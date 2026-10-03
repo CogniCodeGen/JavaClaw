@@ -3,10 +3,10 @@ package com.javaclaw.task.sdd.spec;
 import java.util.List;
 
 /**
- * 类型化模型 → markdown 渲染器（{@link SpecParser} 的逆向）。
+ * 类型化模型 → 供阅读的 Markdown 投影；裁决使用独立结构化快照。
  *
- * <p>渲染格式与 {@code SKILL.md} 约定一致，且与 {@link SpecParser} 严格对称以保证
- * 写出→读回 round-trip 稳定。验收谓词以 {@code [type] predicate} 形式内联，便于解析复原。</p>
+ * <p>渲染格式与 {@code SKILL.md} 约定一致；提案、任务和验收准则的权威状态
+ * 存在版本化 JSON 快照中，Markdown 仅供阅读。</p>
  *
  * @author JavaClaw
  */

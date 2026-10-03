@@ -29,6 +29,16 @@ public final class BudgetExceededException extends RuntimeException {
         return numeric(Kind.MODEL_INPUT_TOKENS, "model input token budget exceeded", actual, limit);
     }
 
+    /** A provider call was not sent because its approximate prompt floor exceeds the remaining budget. */
+    public static BudgetExceededException modelInputPreflight(
+            long used, long remaining, long promptTokenFloor, long limit) {
+        return new BudgetExceededException(Kind.MODEL_INPUT_TOKENS,
+                "model input token budget cannot admit the next prompt: used=" + used
+                        + ", remaining=" + remaining + ", approximatePromptFloor="
+                        + promptTokenFloor + ", limit=" + limit + "; provider was not called",
+                Long.toString(used), Long.toString(limit));
+    }
+
     public static BudgetExceededException modelOutputTokens(long actual, long limit) {
         return numeric(Kind.MODEL_OUTPUT_TOKENS, "model output token budget exceeded", actual, limit);
     }

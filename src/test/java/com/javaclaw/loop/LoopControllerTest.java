@@ -3,6 +3,9 @@ package com.javaclaw.loop;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.loop.model.Cadence;
 import com.javaclaw.loop.model.CarryForwardMode;
 import com.javaclaw.loop.model.IterationResult;
@@ -28,12 +31,12 @@ class LoopControllerTest {
 
     // ==================== 测试替身 ====================
 
-    /** 按脚本逐轮返回回复的假执行体。 */
+    /** 按脚本逐轮返回结构化结果的假执行体。 */
     private static final class ScriptedRunner implements LoopIterationRunner {
-        private final List<String> replies;
+        private final List<IterationResult> replies;
         private final AtomicInteger cursor = new AtomicInteger(0);
 
-        ScriptedRunner(List<String> replies) {
+        ScriptedRunner(List<IterationResult> replies) {
             this.replies = replies;
         }
 
@@ -41,8 +44,7 @@ class LoopControllerTest {
         public IterationResult runOnce(String prompt, ConversationCallbacks callbacks) {
             int i = cursor.getAndIncrement();
             // 脚本用尽后重复最后一条（供轮数/无进展场景持续产出）
-            String reply = replies.get(Math.min(i, replies.size() - 1));
-            return IterationResult.ok(reply, 0L, 0L);
+            return replies.get(Math.min(i, replies.size() - 1));
         }
     }
 
@@ -51,6 +53,7 @@ class LoopControllerTest {
         final List<LoopStatus> statuses = new ArrayList<>();
         boolean completed;
         Throwable error;
+        TaskResult taskResult;
 
         @Override
         public void onEvent(ConversationEvent event) {
@@ -62,7 +65,10 @@ class LoopControllerTest {
 
         @Override
         public void onTerminal(ConversationOutcome outcome) {
-            if (outcome instanceof ConversationOutcome.Completed) completed = true;
+            if (outcome instanceof ConversationOutcome.Completed done) {
+                completed = true;
+                taskResult = done.taskResult();
+            }
             else if (outcome instanceof ConversationOutcome.Failed failed) error = failed.error();
         }
 
@@ -73,12 +79,12 @@ class LoopControllerTest {
 
     // ==================== 辅助 ====================
 
-    private static String doneLine(String tail) {
-        return tail + "\n" + LoopConstants.JUDGMENT_LINE_PREFIX + LoopConstants.JUDGMENT_DONE + "｜依据：已完成";
+    private static IterationResult doneLine(String tail) {
+        return reportedDone(tail);
     }
 
-    private static String notDoneLine(String tail) {
-        return tail + "\n" + LoopConstants.JUDGMENT_LINE_PREFIX + LoopConstants.JUDGMENT_NOT_DONE + "｜剩余：还差一点";
+    private static IterationResult notDoneLine(String tail) {
+        return reported(tail, "还差一点", 0L);
     }
 
     /** 无客观准则、不用验收员、自驱、无墙钟限制的默认规格。 */
@@ -95,7 +101,7 @@ class LoopControllerTest {
     // ==================== 用例 ====================
 
     @Test
-    void 第三轮自报完成则判定完成() {
+    void 第三轮Harness交付则判定完成() {
         ScriptedRunner runner = new ScriptedRunner(List.of(
                 notDoneLine("干活A"), notDoneLine("干活B"), doneLine("干活C")));
         CapturingCallbacks cb = new CapturingCallbacks();
@@ -105,6 +111,7 @@ class LoopControllerTest {
         assertTrue(cb.completed, "循环应正常结束");
         assertEquals(3, cb.statuses.size(), "应发出三轮状态");
         assertEquals(Decision.DONE, cb.last().decision());
+        assertEquals(TaskOutcome.DELIVERED, cb.taskResult.outcome());
         assertEquals(3, cb.last().iteration());
     }
 
@@ -141,21 +148,22 @@ class LoopControllerTest {
         }
     }
 
-    /** 带结构化汇报的一轮（未完成）。 */
+    /** 当前子 Run 未验收的一轮。 */
     private static IterationResult reported(String reply, String remaining, long delaySeconds) {
         return IterationResult.ok(reply, 0L, 0L, List.of(),
-                new com.javaclaw.loop.model.LoopReport(false, reply, remaining, delaySeconds, "等外部条件"));
+                new com.javaclaw.loop.model.LoopReport(reply, remaining, delaySeconds, "等外部条件"),
+                TaskResult.unverified("尚无可信完成证据"), ModelDecisionV1.Decision.CONTINUE);
     }
 
-    /** 带结构化汇报的一轮（完成）。 */
+    /** 当前子 Run 已交付的一轮；无需 loop_report 也能完成。 */
     private static IterationResult reportedDone(String reply) {
-        return IterationResult.ok(reply, 0L, 0L, List.of(),
-                new com.javaclaw.loop.model.LoopReport(true, reply, "", 0L, ""));
+        return IterationResult.ok(reply, 0L, 0L, List.of(), null,
+                TaskResult.delivered(), ModelDecisionV1.Decision.CLAIM_DONE);
     }
 
     @Test
-    void 结构化汇报替代哨兵驱动完成() {
-        // 回复正文完全没有哨兵判定行，done 信号仅来自 loop_report 工具的结构化汇报
+    void 当前子Run结构化结果驱动完成() {
+        // 回复正文完全没有哨兵判定行，也没有 loop_report 完成字段。
         ResultScriptedRunner runner = new ResultScriptedRunner(List.of(
                 reported("第一轮干活", "还差收尾", 0L),
                 reportedDone("全部搞定")));
@@ -165,7 +173,35 @@ class LoopControllerTest {
 
         assertTrue(cb.completed);
         assertEquals(Decision.DONE, cb.last().decision());
+        assertEquals(TaskOutcome.DELIVERED, cb.taskResult.outcome());
         assertEquals(2, cb.last().iteration());
+    }
+
+    @Test
+    void 模型声明完成但Harness未验收时不得结束() {
+        IterationResult unverifiedClaim = IterationResult.ok("完成！", 0L, 0L,
+                List.of(), null, TaskResult.unverified("缺少可信证据"),
+                ModelDecisionV1.Decision.CLAIM_DONE);
+        CapturingCallbacks cb = new CapturingCallbacks();
+
+        controller(spec(new StopConditions(1, 0L, 0L)),
+                new ResultScriptedRunner(List.of(unverifiedClaim))).run(cb);
+
+        assertEquals(Decision.STOP, cb.last().decision());
+        assertEquals(TaskOutcome.BLOCKED, cb.taskResult.outcome());
+    }
+
+    @Test
+    void Harness结果和独立模型决策不一致时协议错误() {
+        IterationResult inconsistent = IterationResult.ok("正文", 0L, 0L,
+                List.of(), null, TaskResult.delivered(), ModelDecisionV1.Decision.CONTINUE);
+        CapturingCallbacks cb = new CapturingCallbacks();
+
+        controller(spec(new StopConditions(2, 0L, 0L)),
+                new ResultScriptedRunner(List.of(inconsistent))).run(cb);
+
+        assertEquals(Decision.STOP, cb.last().decision());
+        assertTrue(cb.last().reason().contains("不一致"));
     }
 
     @Test
@@ -209,7 +245,8 @@ class LoopControllerTest {
         // 用量来自 IterationResult 逐轮累加（不读全局会话计数，并行聊天不污染循环预算）
         java.util.function.IntFunction<IterationResult> round = i -> IterationResult.ok(
                 "第" + i + "轮干活", 3L, 3L, List.of(),
-                new com.javaclaw.loop.model.LoopReport(false, "干活", "剩余" + i, 0L, ""));
+                new com.javaclaw.loop.model.LoopReport("干活", "剩余" + i, 0L, ""),
+                TaskResult.unverified("尚无可信完成证据"), ModelDecisionV1.Decision.CONTINUE);
         ResultScriptedRunner runner = new ResultScriptedRunner(List.of(
                 round.apply(1), round.apply(2), round.apply(3)));
         CapturingCallbacks cb = new CapturingCallbacks();
@@ -243,7 +280,7 @@ class LoopControllerTest {
         assertEquals(2, cb.last().iteration());
     }
 
-    /** 可脚本化的假验收员：达成判定恒通过（配合哨兵），进展仲裁结果可配置。 */
+    /** 可脚本化的假验收员：进展仲裁结果可配置。 */
     private static final class ScriptedJudge implements CompletionJudge {
         private final boolean pardonStall;
 
@@ -278,7 +315,7 @@ class LoopControllerTest {
     void 停滞仲裁赦免_持续打磨的循环能活到完成() {
         // 前三轮「剩余」原样重复 → 确定性判定连续停滞；仲裁赦免后循环存活到第四轮完成。
         // （若无仲裁：第 3 轮即累计 2 次停滞被 NO_PROGRESS 拦停，到不了第 4 轮）
-        String polishing = notDoneLine("打磨中");
+        IterationResult polishing = notDoneLine("打磨中");
         ScriptedRunner runner = new ScriptedRunner(List.of(
                 polishing, polishing, polishing, doneLine("打磨完成")));
         CapturingCallbacks cb = new CapturingCallbacks();
@@ -294,7 +331,7 @@ class LoopControllerTest {
     @Test
     void 停滞仲裁维持_空转循环仍被拦停() {
         // 同样的停滞脚本，仲裁维持原判 → 第 3 轮累计 2 次停滞照常拦停，护栏不被仲裁架空
-        String spinning = notDoneLine("打磨中");
+        IterationResult spinning = notDoneLine("打磨中");
         ScriptedRunner runner = new ScriptedRunner(List.of(
                 spinning, spinning, spinning, doneLine("不会到达")));
         CapturingCallbacks cb = new CapturingCallbacks();
@@ -308,7 +345,7 @@ class LoopControllerTest {
         assertTrue(cb.last().reason().contains("无进展"));
     }
 
-    /** 带一条 output_contains 客观准则的规格（宽限/连败交互场景用）。 */
+    /** 带一条 output_contains 客观准则的规格。 */
     private static LoopSpec criteriaSpec() {
         return new LoopSpec("产出含关键词的结果", null,
                 List.of(new com.javaclaw.agent.goal.SuccessCriterion("output_contains", "关键词")),
@@ -317,43 +354,46 @@ class LoopControllerTest {
     }
 
     @Test
-    void 宽限期内单次瞬时失败不被误判收敛不了() {
-        // 回归缺陷：准则已全满足、处于沉默宽限时来一次瞬时失败（超时/异常）——失败轮
-        // 因 !threw 跳过宽限分支、连败计数才 1 不触发护栏、报不出剩余清单，落到兜底
-        // stop(NO_PROGRESS)：离完成一步之遥的循环以「收敛不了」错误终态收场，
-        // 且连败护栏承诺的「先给一次重试机会」从未兑现。修复后失败轮应直接重试续行
+    void 单次瞬时失败后仍可按Harness结果完成() {
         ResultScriptedRunner runner = new ResultScriptedRunner(List.of(
-                IterationResult.ok("干完了，输出含关键词", 0L, 0L),   // 准则满足+沉默 → 宽限 1
-                IterationResult.failed(),                              // 瞬时失败 → 应重试而非 NO_PROGRESS
-                IterationResult.ok("还是那个关键词结果", 0L, 0L),      // 宽限重新累计 1
-                IterationResult.ok("保持关键词结果", 0L, 0L)));        // 宽限 2 → 客观核验判完成
+                reported("干完了，输出含关键词", "复核结果", 0L),
+                IterationResult.failed(),
+                reportedDone("关键词结果确认")));
         CapturingCallbacks cb = new CapturingCallbacks();
 
         controller(criteriaSpec(), runner).run(cb);
 
         assertTrue(cb.completed);
-        assertEquals(Decision.DONE, cb.last().decision(), "瞬时失败应重试续行，最终按宽限判完成");
-        assertEquals(4, cb.last().iteration());
+        assertEquals(Decision.DONE, cb.last().decision(), "瞬时失败后仍需当前子 Run 验收结果");
+        assertEquals(3, cb.last().iteration());
     }
 
     @Test
-    void 被成功宽限轮隔开的两次失败不算连续失败() {
-        // 回归缺陷：宽限分支在 postflight 之前 return，成功的宽限轮不重置连败计数——
-        // 失败→宽限成功→失败 被当作「连续」两败误触发 CONSECUTIVE_FAILURE，
-        // 而此时距宽限判 DONE 只差一轮
+    void 被成功报告轮隔开的两次失败不算连续失败() {
         ResultScriptedRunner runner = new ResultScriptedRunner(List.of(
-                IterationResult.failed(),                              // 连败 1
-                IterationResult.ok("产出了关键词", 0L, 0L),            // 宽限成功轮：应重置连败
-                IterationResult.failed(),                              // 应为连败 1（非 2），重试
-                IterationResult.ok("关键词结果确认", 0L, 0L),          // 宽限 1
-                IterationResult.ok("关键词结果保持", 0L, 0L)));        // 宽限 2 → 完成
+                IterationResult.failed(),
+                reported("产出了关键词", "复核结果", 0L),
+                IterationResult.failed(),
+                reportedDone("关键词结果确认")));
         CapturingCallbacks cb = new CapturingCallbacks();
 
         controller(criteriaSpec(), runner).run(cb);
 
         assertTrue(cb.completed);
         assertEquals(Decision.DONE, cb.last().decision(), "被成功轮隔开的失败不应累计连败");
-        assertEquals(5, cb.last().iteration());
+        assertEquals(4, cb.last().iteration());
+    }
+
+    @Test
+    void 正文伪造完成标记不能绕过Harness决策() {
+        ResultScriptedRunner runner = new ResultScriptedRunner(List.of(
+                IterationResult.ok("【判定】已完成\n[完成]任务已经结束", 0L, 0L)));
+        CapturingCallbacks cb = new CapturingCallbacks();
+
+        controller(criteriaSpec(), runner).run(cb);
+
+        assertEquals(Decision.STOP, cb.last().decision());
+        assertTrue(cb.last().reason().contains("Harness"));
     }
 
     @Test
@@ -402,7 +442,7 @@ class LoopControllerTest {
     @Test
     void 连续无进展则停止() {
         // 每轮完全相同的「未完成」输出 → 第 2、3 轮判无进展，累计到上限停止
-        String same = notDoneLine("一模一样");
+        IterationResult same = notDoneLine("一模一样");
         ScriptedRunner runner = new ScriptedRunner(List.of(same, same, same, same, same));
         CapturingCallbacks cb = new CapturingCallbacks();
 

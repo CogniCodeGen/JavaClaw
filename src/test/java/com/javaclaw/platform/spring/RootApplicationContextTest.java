@@ -3,6 +3,7 @@ package com.javaclaw.platform.spring;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.data.H2DataSource;
 import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
@@ -36,6 +37,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -44,6 +46,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RootApplicationContextTest {
+
+    private static final List<String> THREAD_TABLES = List.of(
+            "agent_threads", "agent_thread_events", "agent_thread_outbox",
+            "agent_thread_mutations", "workflow_thread_lifecycle");
 
     @TempDir
     Path tempDirectory;
@@ -111,6 +117,62 @@ class RootApplicationContextTest {
             Integer count = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM app_state WHERE state_key = ?", Integer.class, "rollback");
             assertEquals(0, count);
+        }
+    }
+
+    @Test
+    void repairsMissingThreadTablesAfterSchemaWasMarkedInitialized() throws Exception {
+        DataRoot dataRoot = new DataRoot(tempDirectory.resolve("late-thread-schema"));
+        dataRoot.prepare();
+        try (H2DataSource dataSource = new H2DataSource(dataRoot)) {
+            SchemaInitializer initializer = new SchemaInitializer(dataSource);
+            initializer.initialize();
+            JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+            jdbc.update("INSERT INTO app_state(state_key, state_value) VALUES (?, ?)",
+                    "preexisting", "preserved");
+
+            dropThreadTables(jdbc);
+            jdbc.execute("CREATE TABLE agentXthreads(id INT)");
+            assertTrue(initializer.isInitialized());
+            initializer.ensureThreadSchema();
+
+            for (String table : THREAD_TABLES) {
+                assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class), table);
+            }
+            assertEquals("preserved", jdbc.queryForObject(
+                    "SELECT state_value FROM app_state WHERE state_key = ?",
+                    String.class, "preexisting"));
+        }
+    }
+
+    @Test
+    void rootContextStartsWithExistingDatabaseMissingThreadTables() throws Exception {
+        DataRoot dataRoot = new DataRoot(tempDirectory.resolve("partial-thread-schema"));
+        dataRoot.prepare();
+        try (H2DataSource dataSource = new H2DataSource(dataRoot)) {
+            JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+            new SchemaInitializer(dataSource).initialize();
+            jdbc.update("INSERT INTO app_state(state_key, state_value) VALUES (?, ?)",
+                    "preexisting", "preserved");
+            dropThreadTables(jdbc);
+        }
+
+        try (var context = ApplicationContexts.createRoot(dataRoot)) {
+            JdbcTemplate reopened = context.getBean(JdbcTemplate.class);
+            for (String table : THREAD_TABLES) {
+                assertEquals(0, reopened.queryForObject(
+                        "SELECT COUNT(*) FROM " + table, Integer.class), table);
+            }
+            assertEquals("preserved", reopened.queryForObject(
+                    "SELECT state_value FROM app_state WHERE state_key = ?",
+                    String.class, "preexisting"));
+            assertNotNull(context.getBean(com.javaclaw.framework.store.JdbcRunStore.class));
+        }
+    }
+
+    private static void dropThreadTables(JdbcTemplate jdbc) {
+        for (String table : THREAD_TABLES) {
+            jdbc.execute("DROP TABLE " + table);
         }
     }
 

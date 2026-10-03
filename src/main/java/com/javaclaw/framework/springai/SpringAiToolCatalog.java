@@ -60,6 +60,13 @@ final class SpringAiToolCatalog {
             Set<String> requiredNames,
             Set<String> explicitGroups,
             StepContextPolicy policy) {
+        List<ToolCallback> control = callbacks.stream()
+                .filter(HarnessDecisionToolCallback.class::isInstance).toList();
+        if (control.size() != 1) {
+            throw new IllegalStateException("exactly one trusted harness decision callback is required");
+        }
+        List<ToolCallback> business = callbacks.stream()
+                .filter(callback -> !(callback instanceof HarnessDecisionToolCallback)).toList();
         if (policy == null) {
             return new ToolCatalogProjection(callbacks,
                     callbacks.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum(),
@@ -68,7 +75,7 @@ final class SpringAiToolCatalog {
         List<ToolCallback> selected = new ArrayList<>();
         Set<String> foundRequired = new HashSet<>();
         int characters = 0;
-        for (ToolCallback callback : callbacks) {
+        for (ToolCallback callback : business) {
             String name = callback.getToolDefinition().name();
             if (!requiredNames.contains(name)) continue;
             int next = schemaCharacters(callback);
@@ -78,13 +85,14 @@ final class SpringAiToolCatalog {
             characters += next;
         }
         Set<String> missing = new LinkedHashSet<>(requiredNames);
+        missing.remove(HarnessDecisionToolCallback.NAME);
         missing.removeAll(foundRequired);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(
                     "recovery tool is absent from the locked execution plan: " + missing);
         }
 
-        List<ToolCallback> optional = new ArrayList<>(callbacks);
+        List<ToolCallback> optional = new ArrayList<>(business);
         optional.removeIf(callback -> foundRequired.contains(callback.getToolDefinition().name()));
         optional.sort(Comparator.comparingInt((ToolCallback callback) ->
                 priority(callback, explicitGroups)));
@@ -95,7 +103,9 @@ final class SpringAiToolCatalog {
             selected.add(callback);
             characters += next;
         }
-        return new ToolCatalogProjection(selected, characters, callbacks.size());
+        selected.addAll(control);
+        return new ToolCatalogProjection(selected,
+                characters + schemaCharacters(control.getFirst()), callbacks.size());
     }
 
     static Set<String> preferredGroups(

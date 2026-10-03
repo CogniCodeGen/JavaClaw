@@ -15,6 +15,7 @@ import com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
+import com.javaclaw.memory.model.PreferenceProposal;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.*;
@@ -304,7 +305,10 @@ class MemoryGraphIsolationTest {
         try (var fixture = fixture(ignored -> empty(), false)) {
             path = fixture.path;
             var source = thread("deleted");
-            fixture.memory.rememberExplicitPreference(source, "turn", "我喜欢使用简洁的中文回答。");
+            fixture.memory.rememberTurn(source, null, "turn", 1,
+                    "我喜欢使用简洁的中文回答。", "已记录", null, true);
+            fixture.memory.rememberPreferenceProposal(source, "turn",
+                    new PreferenceProposal("我喜欢使用简洁的中文回答。", .99));
             assertTrue(fixture.memory.recall(thread("other"), "继续", 8).contains("我喜欢使用简洁的中文回答"));
             var stale = fixture.memory.inScope(source).store();
             fixture.memory.deleteThread(source);
@@ -321,6 +325,58 @@ class MemoryGraphIsolationTest {
             assertThrows(IllegalStateException.class, () -> memory.inScope(thread("deleted")));
             assertEquals(1, memory.facts().size());
             assertFalse(memory.scopes().contains(thread("deleted")));
+        }
+    }
+
+    @Test void preferenceProposalRequiresCommittedTurnAndVerbatimUserEvidence() throws Exception {
+        try (var fixture = fixture(ignored -> empty(), false)) {
+            var source = thread("preference-evidence");
+            var proposal = new PreferenceProposal("I prefer concise answers", .99);
+            fixture.memory.rememberPreferenceProposal(source, "turn", proposal);
+            assertTrue(fixture.memory.facts().isEmpty());
+
+            fixture.memory.rememberTurn(source, null, "turn", 1,
+                    "I prefer concise answers", "Understood", null, true);
+            fixture.memory.rememberPreferenceProposal(source, "turn",
+                    new PreferenceProposal("I prefer verbose answers", .99));
+            fixture.memory.rememberPreferenceProposal(source, "turn",
+                    new PreferenceProposal("I prefer concise answers", .5));
+            fixture.memory.rememberTerminal(source, null, "failed-turn", 2,
+                    "I prefer verbose answers", "", null, true,
+                    source.threadId(), "failed-turn", MemoryTurnStatus.FAILED);
+            fixture.memory.rememberPreferenceProposal(source, "failed-turn",
+                    new PreferenceProposal("I prefer verbose answers", .99));
+            assertTrue(fixture.memory.facts().isEmpty());
+
+            fixture.memory.rememberPreferenceProposal(source, "turn", proposal);
+            fixture.memory.rememberPreferenceProposal(source, "turn", proposal);
+            assertEquals(1, fixture.memory.facts().size());
+            assertEquals("I prefer concise answers", fixture.memory.facts().getFirst().text);
+            assertEquals(List.of("preference-evidence:turn"),
+                    fixture.memory.facts().getFirst().evidenceKeys);
+        }
+    }
+
+    @Test void distillerPromotesStructuredPreferenceProposalFromCommittedTurn() throws Exception {
+        var output = JsonNodeFactory.instance.objectNode();
+        output.putArray("facts");
+        output.putArray("entities");
+        var claims = output.putArray("preferenceClaims");
+        claims.addObject()
+                .put("sourceQuote", "I prefer concise answers")
+                .put("confidence", .99);
+        claims.addObject()
+                .put("sourceQuote", "I prefer verbose answers")
+                .put("confidence", .99);
+        try (var fixture = fixture(ignored -> new ModelTaskResult(
+                output, "test", 0, 0, false, Map.of()), false)) {
+            var source = thread("structured-preference");
+            fixture.memory.rememberTurn(source, RunId.random(), "turn", 1,
+                    "I prefer concise answers", "Understood", null, true);
+            await(() -> fixture.memory.facts().size() == 1);
+            assertEquals("I prefer concise answers", fixture.memory.facts().getFirst().text);
+            assertEquals(List.of("structured-preference:turn"),
+                    fixture.memory.facts().getFirst().evidenceKeys);
         }
     }
 

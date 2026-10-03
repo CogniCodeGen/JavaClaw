@@ -1,5 +1,6 @@
 package com.javaclaw.schedule;
 
+import com.javaclaw.framework.api.TaskResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.javaclaw.platform.json.JsonCodec;
@@ -24,24 +25,19 @@ import java.util.Objects;
 public final class ScheduledTaskStore {
 
     enum ExecutionStatus {
-        SUCCESS("成功"), FAILURE("失败"), CANCELLED("已取消");
+        SUCCESS, FAILURE, CANCELLED
+    }
 
-        private final String label;
-
-        ExecutionStatus(String label) {
-            this.label = label;
-        }
-
-        String label() {
-            return label;
+    record ExecutionResult(ExecutionStatus status, String duration, String note,
+                           TaskResult taskResult) {
+        ExecutionResult(ExecutionStatus status, String duration, String note) {
+            this(status, duration, note, null);
         }
     }
 
-    record ExecutionResult(ExecutionStatus status, String duration, String note) { }
-
     private static final String COLUMNS = """
             id, name, description, trigger_type, interval_minutes, interval_value,
-            interval_unit, daily_time, cron_expression, once_date_time, prompt,
+            interval_unit, daily_time, cron_expression, once_date_time, prompt, execution_policy,
             enabled, version, last_run_time, last_run_status, last_duration, run_count,
             fail_count, notify_enabled, notify_channel, exec_records_json,
             unattended_authorized
@@ -86,17 +82,18 @@ public final class ScheduledTaskStore {
         String sql = """
                 INSERT INTO scheduled_tasks(
                     workspace_id, id, name, description, trigger_type, interval_minutes, interval_value,
-                    interval_unit, daily_time, cron_expression, once_date_time, prompt,
+                    interval_unit, daily_time, cron_expression, once_date_time, prompt, execution_policy,
                     enabled, version, last_run_time, last_run_status, last_duration, run_count,
                     fail_count, notify_enabled, notify_channel, exec_records_json,
                     unattended_authorized, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
         try {
             jdbc.update(sql, workspaceId, task.getId(), task.getName(), task.getDescription(),
                     task.getTriggerType(), task.getIntervalMinutes(), task.getIntervalValue(),
                     task.getIntervalUnit(), task.getDailyTime(), task.getCronExpression(),
-                    task.getOnceDateTime(), task.getPrompt(), task.isEnabled(), task.getVersion(),
+                    task.getOnceDateTime(), task.getPrompt(), task.getExecutionPolicy().name(),
+                    task.isEnabled(), task.getVersion(),
                     task.getLastRunTime(), task.getLastRunStatus(), task.getLastDuration(),
                     task.getRunCount(), task.getFailCount(), task.isNotifyEnabled(),
                     task.getNotifyChannel(), encode(task.getExecRecords()),
@@ -114,6 +111,7 @@ public final class ScheduledTaskStore {
                 UPDATE scheduled_tasks SET
                     name = ?, description = ?, trigger_type = ?, interval_minutes = ?, interval_value = ?,
                     interval_unit = ?, daily_time = ?, cron_expression = ?, once_date_time = ?, prompt = ?,
+                    execution_policy = ?,
                     enabled = ?, notify_enabled = ?, notify_channel = ?, unattended_authorized = ?,
                     version = version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE workspace_id = ? AND id = ? AND version = ?
@@ -123,7 +121,8 @@ public final class ScheduledTaskStore {
                 int changed = jdbc.update(sql, task.getName(), task.getDescription(),
                         task.getTriggerType(), task.getIntervalMinutes(), task.getIntervalValue(),
                         task.getIntervalUnit(), task.getDailyTime(), task.getCronExpression(),
-                        task.getOnceDateTime(), task.getPrompt(), task.isEnabled(),
+                        task.getOnceDateTime(), task.getPrompt(), task.getExecutionPolicy().name(),
+                        task.isEnabled(),
                         task.isNotifyEnabled(), task.getNotifyChannel(),
                         task.isUnattendedToolsAuthorized(), workspaceId, task.getId(), task.getVersion());
                 if (changed != 1) throw new ScheduleConflictException(task.getId());
@@ -172,7 +171,8 @@ public final class ScheduledTaskStore {
                 String note = safeNote(result.note());
                 String now = LocalDateTime.now().format(ScheduledTask.FORMATTER);
                 task.addExecRecord(new ScheduledTask.ExecRecord(
-                        now, result.status().label(), result.duration(), note));
+                        now, result.status().name(), result.duration(), note,
+                        result.taskResult()));
                 int changed = jdbc.update(update, task.getLastRunTime(), task.getLastRunStatus(),
                         task.getLastDuration(), task.getRunCount(), task.getFailCount(),
                         encode(task.getExecRecords()),
@@ -204,6 +204,7 @@ public final class ScheduledTaskStore {
         task.setCronExpression(rs.getString("cron_expression"));
         task.setOnceDateTime(rs.getString("once_date_time"));
         task.setPrompt(rs.getString("prompt"));
+        task.setExecutionPolicy(ExecutionPolicy.valueOf(rs.getString("execution_policy")));
         task.setEnabled(rs.getBoolean("enabled"));
         task.setVersion(rs.getLong("version"));
         task.setLastRunTime(rs.getString("last_run_time"));

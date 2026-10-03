@@ -15,6 +15,7 @@ import com.javaclaw.application.tool.ToolInvocation;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.plugin.PluginToolGateway;
+import com.javaclaw.platform.data.ApplicationHome;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
@@ -35,7 +36,7 @@ import java.util.stream.Stream;
 /**
  * 插件宿主生命周期控制器：发现、授权、启停、卸载、持久化和资源回收。
  *
- * <p>插件 jar 放在运行目录下的全局 {@code plugins/}（与 {@code skills/} 同级、同为全局约定）；
+ * <p>插件 jar 放在便携应用根下的全局 {@code plugins/}；技能仓库位于 {@code data/skills/}。
  * 启用态与能力授权按工作区持久化到 H2 {@code plugin_state} 表。每个插件由一个
  * {@link PluginRuntime} 容器托管，所有线程与资源经容器统一管理与回收。</p>
  *
@@ -49,8 +50,9 @@ public final class PluginManager implements PluginToolGateway {
 
     private static final Logger log = LoggerFactory.getLogger(PluginManager.class);
 
-    /** 插件根目录（全局，{user.dir}/plugins） */
+    /** 插件根目录（全局，{ApplicationHome}/plugins） */
     private final Path pluginsDir;
+    private final ApplicationHome managedHome;
 
     /** id → 容器，按发现顺序保序 */
     private final Map<String, PluginRuntime> plugins = new LinkedHashMap<>();
@@ -92,8 +94,7 @@ public final class PluginManager implements PluginToolGateway {
             UserInteractionPort interactionPort,
             CredentialCipher credentials,
             com.fasterxml.jackson.databind.ObjectMapper json) {
-        this(ProjectAccessPolicy.requireProjectFilePath(
-                        ProjectAccessPolicy.projectRoot().resolve("plugins")),
+        this(com.javaclaw.platform.data.ApplicationHome.resolve().pluginsDirectory(),
                 store, taskExecutor, agentClient, agentCallbacksExecutor, toolPipeline,
                 storageFactory, interactionPort, credentials, json);
     }
@@ -126,8 +127,7 @@ public final class PluginManager implements PluginToolGateway {
             com.fasterxml.jackson.databind.ObjectMapper json,
             ServicePluginProcessManager servicePlugins,
             ServicePluginContributionRegistry serviceContributions) {
-        this(ProjectAccessPolicy.requireProjectFilePath(
-                        ProjectAccessPolicy.projectRoot().resolve("plugins")),
+        this(com.javaclaw.platform.data.ApplicationHome.resolve().pluginsDirectory(),
                 store, taskExecutor, agentClient, agentCallbacksExecutor, toolPipeline,
                 storageFactory, interactionPort, credentials, json,
                 servicePlugins, serviceContributions);
@@ -164,6 +164,11 @@ public final class PluginManager implements PluginToolGateway {
             ServicePluginContributionRegistry serviceContributions) {
         this.pluginsDir = Objects.requireNonNull(pluginsDir, "pluginsDir")
                 .toAbsolutePath().normalize();
+        ApplicationHome resolvedHome = ApplicationHome.resolve();
+        // Explicit roots remain available to tests; the production root is checked against the
+        // launcher-derived portable home on every filesystem operation.
+        this.managedHome = this.pluginsDir.equals(resolvedHome.pluginsDirectory())
+                ? resolvedHome : null;
         this.store = Objects.requireNonNull(store, "store");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.agentClient = Objects.requireNonNull(agentClient, "agentClient");
@@ -377,7 +382,7 @@ public final class PluginManager implements PluginToolGateway {
         return approved;
     }
 
-    /** @return 插件根目录（全局 {user.dir}/plugins），供 UI「打开插件目录 / 从文件安装」使用。 */
+    /** @return 应用内插件根目录，供 UI「打开插件目录 / 从文件安装」使用。 */
     public Path pluginsDir() {
         return pluginsDir;
     }
@@ -406,12 +411,12 @@ public final class PluginManager implements PluginToolGateway {
             PluginDescriptor d = descriptors.load(jar);
             if (!PluginApiCompatibility.isCompatible(d)) {
                 log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主 {} 不兼容；"
-                                + "请使用 JavaClaw Plugin API 3.x 重新编译",
+                                + "请使用 JavaClaw Plugin API 4.0 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
                 return null;
             }
             Path destDir = pluginsDir.resolve(d.id()).toAbsolutePath().normalize();
-            if (!PathGuard.isInside(pluginsDir, destDir)) {
+            if (!isManagedPluginPath(destDir)) {
                 log.warn("从文件安装失败：插件 id 导致目标目录越界：{}", d.id());
                 return null;
             }
@@ -447,7 +452,7 @@ public final class PluginManager implements PluginToolGateway {
         if (rt == null) return false;
         disable(id);
         Path dir = rt.jarPath().getParent();
-        if (!PathGuard.isInside(pluginsDir, dir)) {
+        if (!isManagedPluginPath(dir)) {
             log.error("拒绝卸载插件[{}]的越界目录：{}", id, dir);
             return false;
         }
@@ -598,9 +603,15 @@ public final class PluginManager implements PluginToolGateway {
 
     private void ensureDir() {
         try {
-            Files.createDirectories(pluginsDir);
+            if (managedHome != null) managedHome.requireDirectory(pluginsDir);
+            else {
+                if (Files.isSymbolicLink(pluginsDir)) {
+                    throw new IOException("插件目录不能是符号链接: " + pluginsDir);
+                }
+                Files.createDirectories(pluginsDir);
+            }
         } catch (IOException e) {
-            log.error("创建插件目录失败 {}：{}", pluginsDir, e.toString());
+            throw new IllegalStateException("创建应用内插件目录失败: " + pluginsDir, e);
         }
     }
 
@@ -609,6 +620,10 @@ public final class PluginManager implements PluginToolGateway {
      * 逐子目录解析描述符，为新插件建立容器（DISCOVERED）。
      */
     private void discover() {
+        if (!isManagedPluginPath(pluginsDir)) {
+            log.error("插件目录不再位于应用根内: {}", pluginsDir);
+            return;
+        }
         directoryScanner.scan().forEach(this::discoverOne);
     }
 
@@ -616,13 +631,17 @@ public final class PluginManager implements PluginToolGateway {
         Path pluginDir = candidate.directory();
         Path jar = candidate.jar();
         try {
+            if (!isManagedPluginPath(jar)) {
+                log.warn("拒绝从应用目录外加载插件: {}", jar);
+                return;
+            }
             PluginDescriptor d = candidate.descriptor();
             if (plugins.containsKey(d.id()) || servicePluginCatalog.contains(d.id())) {
                 return;   // 已发现/已启用，跳过
             }
             if (!PluginApiCompatibility.isCompatible(d)) {
                 log.warn("插件[{}]apiVersion={} 与宿主 {} 不兼容，已拒绝加载；"
-                                + "请使用 JavaClaw Plugin API 3.x 重新编译",
+                                + "请使用 JavaClaw Plugin API 4.0 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
                 Path warningKey = jar.toAbsolutePath().normalize();
                 if (incompatiblePluginWarnings.add(warningKey) && interactionPort != null) {
@@ -630,7 +649,7 @@ public final class PluginManager implements PluginToolGateway {
                             "插件需要升级",
                             "“" + d.name() + "”使用 Plugin API " + d.apiVersion()
                                     + "，当前宿主为 " + PluginDescriptor.HOST_API_VERSION
-                                    + "。已拒绝加载，请用 Plugin API 3.x 重新编译。"));
+                                    + "。已拒绝加载，请用 Plugin API 4.0 重新编译。"));
                 }
                 return;
             }
@@ -646,6 +665,19 @@ public final class PluginManager implements PluginToolGateway {
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());
         }
+    }
+
+    private boolean isManagedPluginPath(Path path) {
+        if (!path.toAbsolutePath().normalize().startsWith(pluginsDir)) return false;
+        if (managedHome != null) {
+            try {
+                managedHome.requireManaged(path);
+                return true;
+            } catch (IOException invalid) {
+                return false;
+            }
+        }
+        return !Files.isSymbolicLink(pluginsDir) && PathGuard.isInside(pluginsDir, path);
     }
 
     /** 后台线程自动恢复上次已启用、且授权充分的插件（不阻塞启动、不弹窗）。 */

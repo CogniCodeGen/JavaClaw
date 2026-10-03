@@ -1,5 +1,8 @@
 package com.javaclaw.task.sdd.spec;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -9,36 +12,38 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * OpenSpec 真相层的读写入口。
  *
  * <p>JavaClaw 自身的 SDD 状态存储在全局 H2 {@code sdd_spec_docs} 表中，并按
  * {@code workspace_id} 隔离。{@code workDir} 只作为任务实际执行/验证的项目目录标识，
- * 不再承载应用状态文件。</p>
+ * 不再承载应用状态文件。验收规格与任务进度以版本化 JSON 快照为准，Markdown 仅供阅读。</p>
  */
 public final class SpecStore {
 
     private static final Logger log = LoggerFactory.getLogger(SpecStore.class);
-
-    private static final Pattern TASK_CHECKBOX =
-            Pattern.compile("^(\\s*[-*]\\s*\\[)([ xX])(\\]\\s*(\\d+)[.、].*)$");
+    private static final String TASKS_STATE = "tasks.json";
+    private static final String SPEC_STATE = "specs.json";
+    private static final String PROPOSAL_STATE = "proposal.json";
 
     private final String workDir;
     private final JdbcTemplate jdbc;
+    private final ObjectMapper json;
     private final String workspaceId;
     private final com.javaclaw.task.sdd.SddThreadGuard owner;
 
-    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId) {
-        this(workDir, jdbc, workspaceId, null);
+    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId,
+                     ObjectMapper json) {
+        this(workDir, jdbc, workspaceId, null, json);
     }
 
-    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId, String ownerThreadId) {
+    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId,
+                     String ownerThreadId, ObjectMapper json) {
         this.workDir = normalizeWorkDir(workDir);
         this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId);
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.owner = new com.javaclaw.task.sdd.SddThreadGuard(jdbc, workspaceId, ownerThreadId);
     }
 
@@ -52,7 +57,12 @@ public final class SpecStore {
 
     /** 写 proposal.md。 */
     public boolean writeProposal(String slug, String title, Proposal proposal) {
-        return write(slug, SpecPaths.PROPOSAL_FILE, SpecRenderer.renderProposal(title, proposal));
+        if (proposal == null || proposal.why() == null || proposal.whatChanges() == null)
+            return false;
+        ObjectNode state = json.createObjectNode().put("version", 1);
+        state.set("proposal", json.valueToTree(proposal));
+        return write(slug, SpecPaths.PROPOSAL_FILE, SpecRenderer.renderProposal(title, proposal))
+                && write(slug, PROPOSAL_STATE, state.toString());
     }
 
     /** 写 design.md（markdown 原文；null/空白时跳过）。 */
@@ -61,60 +71,91 @@ public final class SpecStore {
         return write(slug, SpecPaths.DESIGN_FILE, designMd);
     }
 
-    /** 写 tasks.md（覆盖；每次重新拆解都重写）。 */
+    /** 同写可读 tasks.md 与权威 tasks.json。 */
     public boolean writeTasks(String slug, List<TaskItem> tasks) {
-        return write(slug, SpecPaths.TASKS_FILE, SpecRenderer.renderTasks(tasks));
+        if (tasks == null) return false;
+        if (tasks.stream().anyMatch(task -> task == null || task.index() < 1
+                || task.action() == null || task.action().isBlank())) return false;
+        for (int i = 0; i < tasks.size(); i++) {
+            if (tasks.get(i).index() != i + 1) return false;
+        }
+        ObjectNode state = json.createObjectNode().put("version", 1);
+        state.set("tasks", json.valueToTree(tasks));
+        return write(slug, SpecPaths.TASKS_FILE, SpecRenderer.renderTasks(tasks))
+                && write(slug, TASKS_STATE, state.toString());
     }
 
-    /** 写各能力的 changes/{slug}/specs/{能力}/spec.md。 */
+    /** 同写各能力的可读 spec.md 与权威 specs.json。 */
     public boolean writeCapabilitySpecs(String slug, List<Capability> capabilities) {
-        if (capabilities == null) return false;
+        if (capabilities == null || capabilities.isEmpty()
+                || capabilities.stream().anyMatch(cap -> !validCapability(cap))) return false;
         boolean ok = true;
         for (Capability cap : capabilities) {
             ok &= write(slug, changeSpecPath(cap.name()), SpecRenderer.renderCapabilitySpec(cap));
         }
-        return ok;
+        if (!ok) return false;
+        ObjectNode state = json.createObjectNode().put("version", 1);
+        state.set("capabilities", json.valueToTree(capabilities));
+        return write(slug, SPEC_STATE, state.toString());
     }
 
     // ==================== 读取（折叠为派生视图） ====================
 
     /**
-     * 读出整个变更并折叠为 {@link OpenSpecChange}。任一文档缺失则对应字段为空，
+     * 读出整个变更并折叠为 {@link OpenSpecChange}。结构化快照缺失则对应控制字段为空，
      * 不影响其余部分（支持半成品 change：只有 proposal、尚无 tasks 等）。
      */
     public OpenSpecChange readChange(String slug, String id, String title) {
-        Proposal proposal = null;
-        String proposalMd = read(slug, SpecPaths.PROPOSAL_FILE);
-        if (proposalMd != null) proposal = SpecParser.parseProposal(proposalMd);
+        Proposal proposal = readProposalState(slug);
 
         String design = read(slug, SpecPaths.DESIGN_FILE);
-        List<TaskItem> tasks = SpecParser.parseTasks(read(slug, SpecPaths.TASKS_FILE));
+        List<TaskItem> tasks = readTaskState(slug);
         List<Capability> capabilities = readChangeCapabilities(slug);
 
         return new OpenSpecChange(id, slug, title, proposal, capabilities, design, tasks);
     }
 
-    private List<Capability> readChangeCapabilities(String slug) {
-        if (!available()) return List.of();
-        String prefix = SpecPaths.SPECS_DIR + "/";
-        String suffix = "/" + SpecPaths.SPEC_FILE;
+    private Proposal readProposalState(String slug) {
+        String state = read(slug, PROPOSAL_STATE);
+        if (state == null) return null;
         try {
-            return owner.ifAlive(() -> jdbc.query("""
-                            SELECT doc_path, doc_text
-                            FROM sdd_spec_docs
-                            WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path LIKE ?
-                            ORDER BY doc_path
-                            """,
-                    (row, index) -> {
-                        String path = row.getString("doc_path");
-                        if (!path.startsWith(prefix) || !path.endsWith(suffix)) return null;
-                        String name = path.substring(prefix.length(), path.length() - suffix.length());
-                        return SpecParser.parseCapabilitySpec(row.getString("doc_text"), name);
-                    }, workspaceId, workDir, slug, prefix + "%" + suffix).stream()
-                    .filter(java.util.Objects::nonNull)
-                    .toList(), List.of());
-        } catch (DataAccessException e) {
-            log.warn("[Spec] 从 H2 列举能力规格失败 slug={}: {}", slug, e.getMessage());
+            JsonNode root = json.readTree(state);
+            JsonNode value = root == null ? null : root.path("proposal");
+            if (root == null || !root.isObject() || root.size() != 2
+                    || !root.path("version").isIntegralNumber()
+                    || root.path("version").intValue() != 1
+                    || value == null || !value.isObject() || value.size() != 3
+                    || !value.path("why").isTextual()
+                    || !value.path("whatChanges").isTextual()
+                    || !value.path("outOfScope").isTextual()
+                            && !value.path("outOfScope").isNull()) return null;
+            return json.treeToValue(value, Proposal.class);
+        } catch (Exception invalid) {
+            log.warn("[Spec] 结构化提案快照无效 slug={}", slug, invalid);
+            return null;
+        }
+    }
+
+    private List<Capability> readChangeCapabilities(String slug) {
+        String state = read(slug, SPEC_STATE);
+        if (state == null) return List.of();
+        try {
+            JsonNode root = json.readTree(state);
+            if (root == null || !root.isObject() || root.size() != 2
+                    || !root.path("version").isIntegralNumber()
+                    || root.path("version").intValue() != 1
+                    || !root.path("capabilities").isArray()
+                    || root.path("capabilities").isEmpty()) return List.of();
+            List<Capability> parsed = new ArrayList<>();
+            for (JsonNode value : root.path("capabilities")) {
+                if (!validCapabilityNode(value)) return List.of();
+                Capability capability = json.treeToValue(value, Capability.class);
+                if (!validCapability(capability)) return List.of();
+                parsed.add(capability);
+            }
+            return List.copyOf(parsed);
+        } catch (Exception invalid) {
+            log.warn("[Spec] 结构化规格快照无效 slug={}", slug, invalid);
             return List.of();
         }
     }
@@ -153,25 +194,21 @@ public final class SpecStore {
     // ==================== tasks.md 勾选回写 ====================
 
     /**
-     * 把指定编号的实现项勾选为完成（{@code [ ]} → {@code [x]}），写回 H2。
+     * 把指定编号的实现项标记为完成，写回结构化快照并更新 Markdown 投影。
      */
     public boolean checkTask(String slug, int index) {
-        String md = read(slug, SpecPaths.TASKS_FILE);
-        if (md == null) return false;
-        String[] lines = md.split("\n", -1);
+        List<TaskItem> tasks = readTaskState(slug);
+        List<TaskItem> updated = new ArrayList<>(tasks.size());
         boolean changed = false;
-        for (int i = 0; i < lines.length; i++) {
-            Matcher m = TASK_CHECKBOX.matcher(lines[i]);
-            if (m.matches() && Integer.parseInt(m.group(4)) == index) {
-                if (m.group(2).isBlank()) {
-                    lines[i] = m.group(1) + "x" + m.group(3);
-                    changed = true;
-                }
-                break;
+        for (TaskItem task : tasks) {
+            if (task.index() == index && !task.done()) {
+                updated.add(new TaskItem(task.index(), task.action(), task.files(), task.criterion(), true));
+                changed = true;
+            } else {
+                updated.add(task);
             }
         }
-        if (!changed) return false;
-        return write(slug, SpecPaths.TASKS_FILE, String.join("\n", lines));
+        return changed && writeTasks(slug, updated);
     }
 
     /**
@@ -274,6 +311,73 @@ public final class SpecStore {
 
     private static String changeSpecPath(String capability) {
         return SpecPaths.SPECS_DIR + "/" + capability + "/" + SpecPaths.SPEC_FILE;
+    }
+
+    private List<TaskItem> readTaskState(String slug) {
+        String state = read(slug, TASKS_STATE);
+        if (state == null) return List.of();
+        try {
+            JsonNode root = json.readTree(state);
+            if (root == null || !root.isObject() || root.size() != 2
+                    || !root.path("version").isIntegralNumber()
+                    || root.path("version").intValue() != 1 || !root.path("tasks").isArray()) {
+                return List.of();
+            }
+            List<TaskItem> tasks = new ArrayList<>();
+            for (JsonNode item : root.path("tasks")) {
+                if (!item.isObject() || !item.path("index").isIntegralNumber()
+                        || !item.path("action").isTextual() || !item.path("done").isBoolean()
+                        || !item.path("files").isArray()
+                        || !item.path("criterion").isNull()
+                        && !item.path("criterion").isTextual()) return List.of();
+                for (JsonNode file : item.path("files")) {
+                    if (!file.isTextual()) return List.of();
+                }
+                TaskItem task = json.treeToValue(item, TaskItem.class);
+                if (task.index() != tasks.size() + 1
+                        || task.action() == null || task.action().isBlank()) return List.of();
+                tasks.add(task);
+            }
+            return List.copyOf(tasks);
+        } catch (Exception invalid) {
+            log.warn("[Spec] 结构化任务快照无效 slug={}", slug, invalid);
+            return List.of();
+        }
+    }
+
+    private static boolean validCapabilityNode(JsonNode cap) {
+        if (!cap.isObject() || !cap.path("name").isTextual()
+                || !cap.path("requirements").isArray()) return false;
+        for (JsonNode req : cap.path("requirements")) {
+            if (!req.isObject() || !req.path("title").isTextual()
+                    || !req.path("scenarios").isArray()) return false;
+            for (JsonNode scenario : req.path("scenarios")) {
+                if (!scenario.isObject() || !scenario.path("title").isTextual()
+                        || !scenario.path("given").isTextual()
+                        || !scenario.path("when").isTextual()
+                        || !scenario.path("then").isTextual()
+                        || !scenario.path("criterion").isObject()
+                        || !scenario.path("criterion").path("type").isTextual()
+                        || !scenario.path("criterion").path("predicate").isTextual()) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean validCapability(Capability cap) {
+        if (cap == null || cap.name() == null || cap.name().isBlank()
+                || cap.name().contains("/") || cap.name().contains("\\")
+                || cap.requirements().isEmpty()) return false;
+        for (Requirement req : cap.requirements()) {
+            if (req == null || req.title() == null || req.title().isBlank()
+                    || req.scenarios().isEmpty()) return false;
+            for (Scenario scenario : req.scenarios()) {
+                if (scenario == null || scenario.title() == null || scenario.title().isBlank()
+                        || scenario.criterion() == null || scenario.criterion().type() == null
+                        || scenario.criterion().predicate() == null) return false;
+            }
+        }
+        return true;
     }
 
     private static String archivedSpecPath(String capability) {

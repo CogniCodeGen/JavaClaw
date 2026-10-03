@@ -12,6 +12,10 @@ import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.conversation.Placement;
+import com.javaclaw.application.chat.ChatHistoryApplicationService;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.SessionSnapshot;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
@@ -19,6 +23,8 @@ import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.diagnostics.TraceRecorder;
+import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ThreadClient;
 import com.javaclaw.loop.model.Decision;
 import com.javaclaw.loop.model.LoopStatus;
 import com.javaclaw.platform.data.DataRoot;
@@ -49,6 +55,7 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -128,6 +135,36 @@ class ChatTurnControllerBehaviorTest {
             rootContext.close();
             rootContext = null;
         }
+    }
+
+    @Test
+    void 首条消息发出后立即更新顶栏和侧栏标题() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        String title = "打开日历查看本周安排";
+        runFx(() -> {
+            composer.replaceInput(title);
+            turns.sendFromComposer();
+        });
+
+        assertEquals(title, sessions.currentSession().getTitle());
+        ChatStatusController status = field(sessions, "status", ChatStatusController.class);
+        ChatHeaderController header = field(status, "header", ChatHeaderController.class);
+        ChatHeaderViewModel headerModel = field(header, "viewModel", ChatHeaderViewModel.class);
+        assertEquals(title, callFx(() -> headerModel.titleProperty().get()));
+        SidebarController sidebar = field(sessions, "sidebar", SidebarController.class);
+        SidebarSessionListController list = field(
+                sidebar, "sessionListController", SidebarSessionListController.class);
+        javafx.scene.control.ListView<SidebarSessionItem> items = field(
+                list, "sessionList", javafx.scene.control.ListView.class);
+        assertTrue(callFx(() -> items.getItems().stream()
+                .filter(SidebarSessionItem.Conversation.class::isInstance)
+                .map(SidebarSessionItem.Conversation.class::cast)
+                .anyMatch(item -> item.id().equals(sessions.currentSession().getId())
+                        && title.equals(item.title()))));
+
+        drainFxQueue();
+        runFx(() -> chat.fail(new IllegalStateException("上游无回复")));
+        assertEquals(title, sessions.currentSession().getTitle());
     }
 
     @Test
@@ -254,6 +291,191 @@ class ChatTurnControllerBehaviorTest {
     }
 
     @Test
+    void 工具调用结果与效果收据分别展示() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        startChat(chat, "查看桌面会话");
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolStarted("desktop_session_observe", "observe-1", "{}"));
+            chat.event(new ConversationEvent.ToolResult("desktop_session_observe",
+                    "[desktop_session_observe][失败] 桌面会话不存在或不属于当前工作区与运行来源",
+                    "observe-1", com.fasterxml.jackson.databind.node.NullNode.getInstance()));
+            var receipt = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                    .objectNode().put("invocationId", "observe-1")
+                    .put("tool", "desktop_session_observe").put("status", "FAILED");
+            chat.event(new ConversationEvent.Custom("core.tool.receipt", receipt));
+        });
+        drainFxQueue();
+
+        Label status = callFx(() -> sections.lookupAll(".tp-tool-status").stream()
+                .map(Label.class::cast).findFirst().orElseThrow());
+        assertEquals("失败", callFx(status::getText));
+        assertTrue(callFx(() -> status.getStyleClass().contains("tp-tool-status-error")));
+        assertTrue(callFx(() -> renderedText(sections).contains("效果未获确认")));
+        assertEquals("工具执行失败", panel.viewModel().statusTextProperty().get());
+
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolStarted("desktop_session_snapshot", "snapshot-1", "{}"));
+            chat.event(new ConversationEvent.ToolResult("desktop_session_snapshot",
+                    "[desktop_session_snapshot][超时] 操作在 30 秒内未完成",
+                    "snapshot-1", com.fasterxml.jackson.databind.node.NullNode.getInstance()));
+            var receipt = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                    .objectNode().put("invocationId", "snapshot-1")
+                    .put("tool", "desktop_session_snapshot").put("status", "UNKNOWN");
+            chat.event(new ConversationEvent.Custom("core.tool.receipt", receipt));
+        });
+        drainFxQueue();
+        assertEquals("工具结果待核验", panel.viewModel().statusTextProperty().get());
+        assertTrue(callFx(() -> sections.lookupAll(".tp-tool-status").stream()
+                .map(Label.class::cast).anyMatch(label -> "调用结果不确定".equals(label.getText()))));
+        assertTrue(callFx(() -> sections.lookupAll(".tp-tool-effect-status").stream()
+                .map(Label.class::cast).anyMatch(label -> "效果未知".equals(label.getText()))));
+        runFx(chat::complete);
+        assertTrue(callFx(() -> renderedText(sections).contains("效果未知")));
+    }
+
+    @Test
+    void 同名工具的交错收据按调用编号归属() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        startChat(chat, "查看桌面会话");
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolStarted("desktop_session_click", "first", "{}"));
+            chat.event(new ConversationEvent.ToolStarted("desktop_session_click", "second", "{}"));
+            chat.event(new ConversationEvent.ToolResult("desktop_session_click", "first-output",
+                    "first", com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode("first-output")));
+            chat.event(new ConversationEvent.ToolResult("desktop_session_click", "second-output",
+                    "second", com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode("second-output")));
+            chat.event(new ConversationEvent.Custom("core.tool.receipt",
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                            .put("tool", "desktop_session_click")
+                            .put("invocationId", "second").put("status", "UNKNOWN")
+                            .set("metadata", com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                                    .objectNode().put("desktopStatus", "UNKNOWN"))));
+            chat.event(new ConversationEvent.Custom("core.tool.receipt",
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                            .put("tool", "desktop_session_click")
+                            .put("invocationId", "first").put("status", "ACCEPTED")
+                            .set("metadata", com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                                    .objectNode().put("desktopStatus", "VERIFIED"))));
+        });
+        drainFxQueue();
+
+        callFx(() -> {
+            var rows = sections.lookupAll(".tp-tool-row");
+            assertEquals(2, rows.size());
+            Node first = rows.stream().filter(row -> renderedText(row).contains("first-output"))
+                    .findFirst().orElseThrow();
+            Node second = rows.stream().filter(row -> renderedText(row).contains("second-output"))
+                    .findFirst().orElseThrow();
+            assertTrue(renderedText(first).contains("输入已派发·效果待核验"));
+            assertFalse(renderedText(first).contains("目标已验证"));
+            assertFalse(renderedText(first).contains("输入可能已派发"));
+            assertTrue(renderedText(second).contains("输入可能已派发·效果待核验"));
+            assertFalse(renderedText(second).contains("输入已派发·效果待核验"));
+            return null;
+        });
+    }
+
+    @Test
+    void 带编号的收据不会误落在同名旧卡片且可信桌面状态优先() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        startChat(chat, "查看桌面会话");
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+        var json = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolResult("desktop_session_click",
+                    "[desktop_session_click][成功] 后台点击已完成"));
+            chat.event(new ConversationEvent.Custom("core.tool.receipt", json.objectNode()
+                    .put("tool", "desktop_session_click")
+                    .put("invocationId", "missing-click")
+                    .put("status", "UNKNOWN")
+                    .set("metadata", json.objectNode().put("desktopStatus", "UNKNOWN"))));
+            chat.event(new ConversationEvent.ToolStarted("desktop_session_click", "click-2", "{}"));
+            chat.event(new ConversationEvent.ToolResult("desktop_session_click",
+                    "[desktop_session_click][待观察] 后台未派发输入",
+                    "click-2", json.textNode("后台未派发输入")));
+            chat.event(new ConversationEvent.Custom("core.tool.receipt", json.objectNode()
+                    .put("tool", "desktop_session_click")
+                    .put("invocationId", "click-2")
+                    .put("status", "FAILED")
+                    .set("metadata", json.objectNode()
+                            .put("desktopStatus", "UNSUPPORTED")
+                            .put("nextStep", "OBSERVE"))));
+        });
+        drainFxQueue();
+
+        callFx(() -> {
+            var rows = sections.lookupAll(".tp-tool-row");
+            assertEquals(2, rows.size());
+            Node legacy = rows.stream().filter(row -> renderedText(row).contains("后台点击已完成"))
+                    .findFirst().orElseThrow();
+            Node recent = rows.stream().filter(row -> renderedText(row).contains("后台未派发输入"))
+                    .findFirst().orElseThrow();
+            assertFalse(renderedText(legacy).contains("效果证据："));
+            assertTrue(renderedText(recent).contains("未执行·待观察"));
+            assertTrue(renderedText(recent).contains("输入未派发"));
+            return null;
+        });
+    }
+
+    @Test
+    void 目录调用折叠展示明确的列表激活与错误结果() throws Exception {
+        FakeConversationMode chat = install(new FakeConversationMode("chat", true));
+        startChat(chat, "查看桌面会话");
+        ThinkingPanelController panel = field(turns, "thinking", ThinkingPanelController.class);
+        VBox sections = field(panel, "dynamicSectionsHost", VBox.class);
+        var json = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+        runFx(() -> {
+            chat.event(new ConversationEvent.ToolStarted("framework_tool_catalog", "catalog-1", "activate"));
+            var activated = json.objectNode().put("action", "activate").put("success", true);
+            activated.putArray("activated").add("desktop_session_click").add("desktop_session_observe");
+            chat.event(new ConversationEvent.ToolResult("framework_tool_catalog", activated.toString(),
+                    "catalog-1", activated));
+            chat.event(new ConversationEvent.Custom("core.tool.receipt", json.objectNode()
+                    .put("tool", "framework_tool_catalog")
+                    .put("invocationId", "catalog-1").put("status", "UNKNOWN")));
+            chat.event(new ConversationEvent.ToolStarted("framework_tool_catalog", "catalog-2", "list"));
+            var listed = json.objectNode().put("action", "list").put("total", 1);
+            listed.putArray("tools").add(json.objectNode().put("name", "desktop_session_observe"));
+            chat.event(new ConversationEvent.ToolResult("framework_tool_catalog", listed.toString(),
+                    "catalog-2", listed));
+            chat.event(new ConversationEvent.ToolStarted("framework_tool_catalog", "catalog-3", "activate"));
+            var failed = json.objectNode().put("success", false)
+                    .put("error", "unknown or unauthorized tool name: desktop_session_control");
+            chat.event(new ConversationEvent.ToolResult("framework_tool_catalog", failed.toString(),
+                    "catalog-3", failed));
+        });
+        drainFxQueue();
+
+        callFx(() -> {
+            var rows = sections.lookupAll(".tp-tool-row");
+            assertEquals(1, rows.size());
+            Node row = rows.iterator().next();
+            assertTrue(renderedText(row).contains("工具准备"));
+            Label details = (Label) row.lookup(".tp-detail-text");
+            assertFalse(details.isManaged());
+            Label toggle = (Label) row.lookup(".tp-detail-toggle");
+            toggle.getOnMouseClicked().handle(null);
+            assertTrue(details.isManaged());
+            assertTrue(renderedText(row).contains("已激活 2 项"));
+            assertTrue(renderedText(row).contains("已列出 1 项"));
+            assertTrue(renderedText(row).contains("unknown or unauthorized tool name"));
+            assertTrue(renderedText(row).contains("第 1 次结果："));
+            assertTrue(renderedText(row).contains("第 2 次结果："));
+            assertTrue(renderedText(row).contains("第 3 次结果："));
+            assertFalse(renderedText(row).contains("结果未知"));
+            return null;
+        });
+    }
+
+    @Test
     void 工具图片只留在右侧明细而最终回复引用的图片进入聊天记录() throws Exception {
         Path image = ProjectAccessPolicy.projectRoot().resolve(
                 "src/main/resources/images/javaclaw-app-icon-capabilities.png");
@@ -359,6 +581,46 @@ class ChatTurnControllerBehaviorTest {
             plan.complete();
         });
         assertFalse(lastMessage(ChatMessage.Role.ASSISTANT).getContent().contains("不应出现"));
+    }
+
+    @Test
+    void 旧聊天记录在缺少Thread时恢复且重复加载不重复创建() throws Exception {
+        String workspace = kernel.current().context().workspaceId();
+        String legacyId = "legacy-chat-without-thread";
+        String title = "旧会话标题";
+        String content = "旧会话消息";
+        LocalDateTime createdAt = LocalDateTime.now().plusMinutes(1);
+        ChatHistoryApplicationService history = rootContext.getBean(ChatHistoryApplicationService.class);
+        ThreadClient threads = rootContext.getBean(ThreadClient.class);
+        var jdbc = rootContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+
+        history.saveMessages(workspace, legacyId, List.of(new MessageSnapshot(
+                MessageRole.USER, content, createdAt, List.of(), false, null, null)));
+        history.saveSessions(workspace, List.of(new SessionSnapshot(legacyId, title, createdAt)));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_threads WHERE workspace_id=? AND thread_id=?",
+                Integer.class, workspace, legacyId));
+
+        runFx(sessions::reloadWorkspace);
+        assertEquals(legacyId, sessions.currentSession().getId());
+        assertEquals(title, sessions.currentSession().getTitle());
+        assertEquals(List.of(content), sessions.currentSession().getMessages().stream()
+                .map(ChatMessage::getContent).toList());
+        assertEquals(title, threads.get(new RunScope(workspace, "local-user", legacyId)).title());
+        assertEquals(1, threads.events(new RunScope(workspace, "local-user", legacyId), 0)
+                .stream().filter(event -> event.type().equals("thread/started")).count());
+
+        runFx(sessions::reloadWorkspace);
+        assertEquals(legacyId, sessions.currentSession().getId());
+        assertEquals(List.of(content), sessions.currentSession().getMessages().stream()
+                .map(ChatMessage::getContent).toList());
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_threads WHERE workspace_id=? AND thread_id=?",
+                Integer.class, workspace, legacyId));
+        assertEquals(1, threads.events(new RunScope(workspace, "local-user", legacyId), 0)
+                .stream().filter(event -> event.type().equals("thread/started")).count());
+        assertEquals(List.of(content), history.messages(workspace, legacyId).stream()
+                .map(MessageSnapshot::content).toList());
     }
 
     @Test

@@ -16,8 +16,8 @@ public enum SddTaskState {
     RUNNING("运行中"),
     /** 已暂停/取消运行（可恢复——从 change 目录首个未勾 task 续跑）。 */
     PAUSED("已暂停"),
-    /** 验收通过并归档。 */
-    COMPLETED("已完成"),
+    /** 编排和原有 SDD 验收阶段结束；用户任务验收见 TaskResult。 */
+    COMPLETED("编排结束"),
     /** 多轮未收敛或无法自动推进，等人工介入（非失败终态）。 */
     NEEDS_HUMAN("待人工"),
     /** 编排过程异常失败。 */

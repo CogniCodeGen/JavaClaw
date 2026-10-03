@@ -103,7 +103,7 @@ public final class SddOrchestrator {
 
     /** 预算耗尽的统一收束：停为待人工（非失败），调高预算后可续跑。 */
     private SddOutcome budgetStop() {
-        progress.log("token 预算已耗尽，停止推进");
+        progress.log(SddProgress.LogKind.WARN, "token 预算已耗尽，停止推进");
         return SddOutcome.needsHuman("token 预算已耗尽，需人工介入：调高预算后可续跑");
     }
 
@@ -133,7 +133,9 @@ public final class SddOrchestrator {
             // 阶段 3：规格
             progress.phase("规格");
             List<Capability> caps = agents.specify(ctx, proposal);
-            store.writeCapabilitySpecs(slug, caps);
+            if (!store.writeCapabilitySpecs(slug, caps)) {
+                return SddOutcome.needsHuman("结构化规格缺失或无有效验收场景，无法进入实现阶段");
+            }
             log.info("[SDD] {} 规格产出 {} 个能力", slug, caps.size());
             if (overBudget()) return budgetStop();
 
@@ -163,6 +165,9 @@ public final class SddOrchestrator {
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             if (change.tasks().isEmpty()) {
                 return SddOutcome.needsHuman("OpenSpec 尚未生成实现任务，无法进入实现阶段");
+            }
+            if (change.allScenarios().isEmpty()) {
+                return SddOutcome.needsHuman("缺少结构化验收场景，无法进入实现阶段");
             }
             return implementAndAccept(slug, change.proposal(), change.capabilities(), change.design());
         } catch (Exception e) {
@@ -205,11 +210,11 @@ public final class SddOrchestrator {
             store.writeProposal(slug, ctx.title(), proposal);
             ReviewGate.Decision d = gate.reviewProposal(ctx, proposal);
             if (d.approved()) {
-                progress.log("提案已确认（第 " + round + " 轮）");
+                progress.log(SddProgress.LogKind.OK, "提案已确认（第 " + round + " 轮）");
                 return proposal;
             }
             feedback = d.feedback();
-            progress.log("提案被驳回：" + nz(feedback));
+            progress.log(SddProgress.LogKind.WARN, "提案被驳回：" + nz(feedback));
         }
         return null;
     }
@@ -221,15 +226,16 @@ public final class SddOrchestrator {
         for (int round = 1; round <= maxReviewRounds && !cancelled; round++) {
             progress.phase("任务拆解");
             List<TaskItem> tasks = agents.planTasks(ctx, proposal, caps, design, feedback);
-            store.writeTasks(slug, tasks);
+            if (!store.writeTasks(slug, tasks)) return false;
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             ReviewGate.Decision d = gate.reviewPlan(ctx, change);
             if (d.approved()) {
-                progress.log("计划已确认（第 " + round + " 轮，共 " + tasks.size() + " 项）");
+                progress.log(SddProgress.LogKind.OK,
+                        "计划已确认（第 " + round + " 轮，共 " + tasks.size() + " 项）");
                 return true;
             }
             feedback = d.feedback();
-            progress.log("计划被驳回：" + nz(feedback));
+            progress.log(SddProgress.LogKind.WARN, "计划被驳回：" + nz(feedback));
         }
         return false;
     }
@@ -254,6 +260,9 @@ public final class SddOrchestrator {
             progress.phase("验收");
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             List<Scenario> scenarios = change.allScenarios();
+            if (scenarios.isEmpty()) {
+                return SddOutcome.needsHuman("结构化验收场景缺失，不能将空场景视为通过");
+            }
             VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, jdbc, json, workspaceId,
                     store.ownerThreadId());
             cache.syncFingerprint(cache.fingerprint());
@@ -264,7 +273,7 @@ public final class SddOrchestrator {
                 if (overBudget()) return budgetStop();
                 Scenario sc = scenarios.get(i);
                 String ck = VerifyCache.key(sc);
-                String cached = cache.reuse(ck);
+                String cached = verifier.cacheEligible(sc) ? cache.reuse(ck) : null;
                 if (cached != null) {
                     reused++;
                     outcomes.add(VerificationOutcome.pass(sc, true, "缓存命中（源码未变，上次已通过）：" + cached));
@@ -274,7 +283,7 @@ public final class SddOrchestrator {
                 log.info("[SDD] {} 验收 {}/{}: {}", slug, i + 1, scenarios.size(), sc.title());
                 VerificationOutcome o = verifier.verify(sc);
                 outcomes.add(o);
-                if (o.passed()) cache.recordPass(ck, o.detail());
+                if (o.passed() && verifier.cacheEligible(sc)) cache.recordPass(ck, o.detail());
             }
             cache.save();
             if (reused > 0) {
@@ -286,13 +295,17 @@ public final class SddOrchestrator {
 
             if (failed.isEmpty()) {
                 progress.phase("归档");
-                store.archive(slug, completionStamp);
+                if (!store.archive(slug, completionStamp)) {
+                    return SddOutcome.needsHuman("验收已通过，但规格归档失败，需检查结构化快照");
+                }
                 progress.progress(100);
-                progress.log("全部 " + scenarios.size() + " 个验收场景通过，已归档完成");
+                progress.log(SddProgress.LogKind.OK,
+                        "全部 " + scenarios.size() + " 个验收场景通过，已归档完成");
                 return SddOutcome.completed("验收通过（" + scenarios.size() + " 场景），已归档进 specs/");
             }
 
-            progress.log("验收未通过：" + failed.size() + "/" + scenarios.size() + " 场景未达标，进入第 "
+            progress.log(SddProgress.LogKind.WARN,
+                    "验收未通过：" + failed.size() + "/" + scenarios.size() + " 场景未达标，进入第 "
                     + replan + " 轮补做");
             // 保留已完成工作，按未过场景追加补做项
             List<String> fixes = agents.remediate(ctx, failed, change);
@@ -300,7 +313,9 @@ public final class SddOrchestrator {
                 return SddOutcome.needsHuman("验收未通过且智能体无法给出补做项（"
                         + failed.size() + " 场景未达标），需人工介入");
             }
-            store.appendTasks(slug, fixes);
+            if (!store.appendTasks(slug, fixes)) {
+                return SddOutcome.needsHuman("补做任务未能写入结构化快照");
+            }
             progress.log("已追加 " + fixes.size() + " 个补做项");
         }
         return cancelled ? SddOutcome.cancelled()
@@ -322,10 +337,13 @@ public final class SddOrchestrator {
         int lastFailedIndex = -1;
         while (!cancelled && !overBudget() && guard++ < maxLoopIters) {
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
+            if (change.tasks().isEmpty()) {
+                return SddOutcome.needsHuman("结构化实现任务缺失，不能按 Markdown 状态继续");
+            }
             progress.progress(change.progressPercent());
             TaskItem next = change.nextPendingTask().orElse(null);
             if (next == null) {
-                progress.log("所有实现项已完成");
+                progress.log(SddProgress.LogKind.OK, "所有实现项已完成");
                 return null;
             }
             List<TaskItem> done = change.tasks().stream().filter(TaskItem::done).toList();
@@ -347,12 +365,15 @@ public final class SddOrchestrator {
                             + "」连续 " + sameItemFailures + " 次失败（" + e.getMessage()
                             + "），已停为待人工；已完成项不受影响，可续跑重试");
                 }
-                progress.log("⚠ 实现项 #" + next.index() + " 执行失败，自动重试一次：" + e.getMessage());
+                progress.log(SddProgress.LogKind.WARN,
+                        "⚠ 实现项 #" + next.index() + " 执行失败，自动重试一次：" + e.getMessage());
                 continue;
             }
 
             if (r.wantsSplit()) {
-                store.splitTask(slug, next.index(), r.splitInto());
+                if (!store.splitTask(slug, next.index(), r.splitInto())) {
+                    return SddOutcome.needsHuman("拆解结果未能写入结构化任务快照");
+                }
                 progress.log("实现项 #" + next.index() + "「" + next.action()
                         + "」过大，懒拆解为 " + r.splitInto().size() + " 个子项");
                 continue;
@@ -362,13 +383,16 @@ public final class SddOrchestrator {
             // 未达标只记警告并仍勾选推进——真正的权威门是综合场景核验（会触发补做），
             // 故此处不"屏蔽重做"也不卡死循环。
             String fileCheck = checkDeclaredFiles(next);
-            store.checkTask(slug, next.index());
-            progress.log("✓ 完成实现项 #" + next.index() + "「" + next.action() + "」"
+            if (!store.checkTask(slug, next.index())) {
+                return SddOutcome.needsHuman("实现项完成状态未能写入结构化任务快照");
+            }
+            progress.log(SddProgress.LogKind.OK,
+                    "✓ 完成实现项 #" + next.index() + "「" + next.action() + "」"
                     + (fileCheck.isEmpty() ? "" : "（注意：" + fileCheck + "）"));
         }
         if (guard >= maxLoopIters) {
             log.warn("[SDD] {} 实现循环达迭代上限 {}，提前退出本轮", slug, maxLoopIters);
-            progress.log("实现循环达迭代上限，转入验收");
+            progress.log(SddProgress.LogKind.WARN, "实现循环达迭代上限，转入验收");
         }
         return null;
     }

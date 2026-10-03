@@ -503,7 +503,9 @@ public class CommandLineTools {
                     "请将此任务转交给 system_expert。");
         }
 
-        boolean highRisk = isHighRiskCommand(trimmedCmd);
+        // A free-form command can execute code through shells, build systems, aliases and
+        // scripts. Its apparent words never establish a read-only authorization level.
+        boolean highRisk = true;
         com.javaclaw.config.ToolReviewMode reviewMode = settings.getToolReviewMode();
         boolean manualReview = reviewMode == com.javaclaw.config.ToolReviewMode.MANUAL;
 
@@ -523,8 +525,7 @@ public class CommandLineTools {
         if (origin.isManagedTask()) {
             String dirForMatch = effectiveWorkDir.endsWith(File.separator)
                     ? effectiveWorkDir : effectiveWorkDir + File.separator;
-            // 描述格式经单一来源拼装：只读命令免确认通道靠 ToolConfirmationManager 反解析
-            // 此描述还原命令文本，自拼字面量会让格式失配后解析静默失灵
+            // Command and directory are carried separately into the approval request.
             String confirmDesc = ToolConfirmationManager.buildCommandDescription(trimmedCmd, dirForMatch);
             // AUTO（全自动审核）下高风险命令仍会弹人工确认（刻意的人工底线，见下方分支
             // 同一考量）——对显式选择全自动的用户这是行为收紧，须在弹窗里说明缘由与
@@ -540,8 +541,12 @@ public class CommandLineTools {
             // 其余命令保持统一路径（AUTO 放行是用户对注册表工具可预期的授权）
             boolean confirmed = highRisk
                     ? ToolConfirmationManager.requestHighRiskCommandConfirmation(
-                            origin, "cmd_execute", confirmDesc).isAllow()
-                    : ToolConfirmationManager.requestConfirmation(origin, "cmd_execute", confirmDesc);
+                            origin, "cmd_execute", confirmDesc,
+                            trimmedCmd, effectiveWorkDir).isAllow()
+                    : ToolConfirmationManager.requestConfirmationOutcome(origin,
+                            "cmd_execute", confirmDesc,
+                            java.util.Map.of("command", trimmedCmd,
+                                    "workDir", effectiveWorkDir)).isAllow();
             return confirmed
                     ? SecurityCheck.allow()
                     : SecurityCheck.deny("用户拒绝执行命令：" + trimmedCmd);
@@ -564,7 +569,8 @@ public class CommandLineTools {
             // 上不封顶；同 jshell 保持 CONFIRM 级的考量）
             ToolConfirmationManager.ConfirmOutcome outcome =
                     ToolConfirmationManager.requestHighRiskCommandConfirmation(
-                            origin, "cmd_execute", confirmDesc);
+                            origin, "cmd_execute", confirmDesc,
+                            trimmedCmd, effectiveWorkDir);
             if (!outcome.isAllow()) {
                 return SecurityCheck.deny("用户拒绝执行该高风险命令");
             }

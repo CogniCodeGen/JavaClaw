@@ -8,7 +8,8 @@ import java.util.List;
  * 循环任务规格：一次循环的全部输入。
  *
  * <p>由服务层组装——{@code goalPrompt} 来自用户，{@code criteria} 由 {@code GoalManager}
- * 对目标分解得到（可能为空，表示纯描述性目标，只能靠执行体自评 + 验收员）。</p>
+ * 对目标分解并经宿主策略过滤得到（可能为空）。模型提出的 {@code output_contains}
+ * 在装配时一律删除；只有独立的用户结构化内容条件才可加入此类准则。</p>
  *
  * @param goalPrompt     目标原文
  * @param workDir        工作目录绝对路径（命令/文件类准则核验的基准；可为 null）

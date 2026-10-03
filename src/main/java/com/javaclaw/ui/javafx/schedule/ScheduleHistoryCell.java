@@ -31,14 +31,22 @@ public final class ScheduleHistoryCell extends ListCell<History> {
             return;
         }
         timeLabel.setText(history.time());
-        statusLabel.setText(history.status());
+        statusLabel.setText(ScheduleOutcomePresentation.label(history.executionStatus(), history.taskResult()));
         durationLabel.setText(history.duration());
         noteLabel.setText(history.note().isBlank() ? "—" : history.note());
         statusLabel.getStyleClass().removeAll("jc-badge-ok", "jc-badge-fail", "jc-badge-stopped");
-        statusLabel.getStyleClass().add("失败".equals(history.status()) ? "jc-badge-fail"
-                : "已取消".equals(history.status()) ? "jc-badge-stopped" : "jc-badge-ok");
+        statusLabel.getStyleClass().add(history.executionStatus()
+                    == com.javaclaw.application.schedule.ScheduleExecutionStatus.FAILURE ? "jc-badge-fail"
+                : history.executionStatus()
+                    == com.javaclaw.application.schedule.ScheduleExecutionStatus.CANCELLED ? "jc-badge-stopped"
+                : history.taskResult() != null
+                    && history.taskResult().outcome() == com.javaclaw.framework.api.TaskOutcome.VERIFIED_COMPLETE
+                    ? "jc-badge-ok" : "jc-badge-stopped");
         noteLabel.getStyleClass().remove("schedule-failure-text");
-        if ("失败".equals(history.status())) noteLabel.getStyleClass().add("schedule-failure-text");
+        if (history.executionStatus()
+                == com.javaclaw.application.schedule.ScheduleExecutionStatus.FAILURE) {
+            noteLabel.getStyleClass().add("schedule-failure-text");
+        }
         setGraphic(root);
     }
 }

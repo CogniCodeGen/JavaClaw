@@ -2,11 +2,17 @@ package com.javaclaw.framework.springai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.ToolArgumentValidationException;
 import com.javaclaw.framework.core.ToolInvocationGateway;
 import com.javaclaw.framework.core.ToolInvocationRequest;
 import com.javaclaw.framework.core.ToolInvocationResult;
+import com.javaclaw.framework.api.ToolExecutionStatus;
+import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.spi.FrameworkTool;
+import com.javaclaw.framework.spi.RunStore;
 import com.javaclaw.framework.spi.ToolExecutionContext;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -14,6 +20,7 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
 import java.util.Objects;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
@@ -73,10 +80,17 @@ final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.Gr
     public String call(String toolInput, ToolContext ignored) {
         try {
             JsonNode arguments = json.readTree(toolInput);
-            ToolInvocationResult result = journal == null
-                    ? invoke(tool, arguments, reasoning, gateway, UUID.randomUUID().toString())
-                    : journal.invoke(tool, arguments, gateway);
-            return json.writeValueAsString(result.output());
+            if (journal != null) {
+                return json.writeValueAsString(journal.invokeForModel(tool, arguments, gateway));
+            }
+            ToolInvocationResult result = invoke(
+                    tool, arguments, reasoning, gateway, UUID.randomUUID().toString());
+            return json.writeValueAsString(modelVisibleResult(result));
+        } catch (ToolArgumentValidationException invalid) {
+            // Production calls use ModelStepJournal, which persists this feedback first.
+            // Keep standalone callbacks recoverable without masking any other failure.
+            if (journal != null) throw invalid;
+            return modelVisibleResult(invalidArgumentsResult(tool, invalid)).toString();
         } catch (CompletionException failure) {
             throw propagate(failure);
         } catch (RuntimeException failure) {
@@ -84,6 +98,59 @@ final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.Gr
         } catch (Exception failure) {
             throw new IllegalStateException("tool callback failed", failure);
         }
+    }
+
+    static ObjectNode modelVisibleResult(ToolInvocationResult result) {
+        ObjectNode modelResult = JsonNodeFactory.instance.objectNode();
+        modelResult.put("status", result.status().name());
+        modelResult.set("data", result.output());
+        modelResult.put("errorCode", result.errorCode());
+        modelResult.put("displayMessage", result.displayMessage());
+        modelResult.putArray("evidenceRefs");
+        return modelResult;
+    }
+
+    static ObjectNode modelVisibleResult(ToolInvocationResult result,
+            RunStore runs, RunId runId, String invocationId) {
+        ObjectNode modelResult = modelVisibleResult(result);
+        if (result.status() == ToolExecutionStatus.SUCCEEDED) {
+            var refs = modelResult.withArray("evidenceRefs");
+            HarnessDecisionEvidence.currentInvocationRefs(runs, runId, invocationId)
+                    .forEach(refs::add);
+        }
+        return modelResult;
+    }
+
+    static ObjectNode invalidArgumentsFeedback(
+            FrameworkTool tool, ToolArgumentValidationException invalid) {
+        var descriptor = tool.descriptor();
+        ObjectNode feedback = JsonNodeFactory.instance.objectNode()
+                .put("error", "invalid_tool_arguments")
+                .put("tool", descriptor.name())
+                .put("executed", false)
+                .put("message", "The tool call was rejected before execution. Retry using the input schema; "
+                        + "do not claim that the requested operation was completed.");
+        var issues = feedback.putArray("issues");
+        for (var issue : invalid.issues()) {
+            issues.addObject().put("path", issue.path())
+                    .put("code", issue.code())
+                    .put("message", issue.message());
+        }
+        var schema = descriptor.inputSchema();
+        var required = feedback.putArray("requiredProperties");
+        schema.path("required").forEach(value -> {
+            if (value.isTextual()) required.add(value.asText());
+        });
+        var allowed = feedback.putArray("allowedProperties");
+        schema.path("properties").fieldNames().forEachRemaining(allowed::add);
+        return feedback;
+    }
+
+    static ToolInvocationResult invalidArgumentsResult(
+            FrameworkTool tool, ToolArgumentValidationException invalid) {
+        return new ToolInvocationResult(invalidArgumentsFeedback(tool, invalid),
+                Duration.ZERO, ToolExecutionStatus.FAILED,
+                "INVALID_TOOL_ARGUMENTS", "Tool arguments were rejected before execution");
     }
 
     static ToolInvocationResult invoke(

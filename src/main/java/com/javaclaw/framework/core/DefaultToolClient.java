@@ -21,11 +21,14 @@ import com.javaclaw.framework.api.AgentStep;
 import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.api.RunState;
 import com.javaclaw.framework.spi.RunStore;
+import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.framework.spi.ToolEffectPolicy;
 
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -46,7 +49,8 @@ public final class DefaultToolClient implements ToolClient {
         this(gateway, compiler, clock, (challenge, request) ->
                 CompletableFuture.failedFuture(new ToolApprovalRequiredException(
                         challenge.tool(), challenge.arguments(), challenge.fingerprint(),
-                        challenge.kind(), challenge.description())));
+                        challenge.kind(), challenge.description(),
+                        challenge.trustedContextRead())));
     }
 
     public DefaultToolClient(
@@ -136,7 +140,11 @@ public final class DefaultToolClient implements ToolClient {
                         .map(event -> new ToolCallEvent(event.type(), event.schemaVersion(), event.producer(), event.payload()))
                         .toList();
                 return CompletableFuture.completedFuture(new ToolCallOutcome(step.output().path("modelOutput"),
-                        java.time.Duration.ofMillis(step.output().path("durationMillis").asLong()), replay));
+                        java.time.Duration.ofMillis(step.output().path("durationMillis").asLong()), replay,
+                        com.javaclaw.framework.api.ToolExecutionStatus.fromCode(
+                                step.output().path("status").asText("")),
+                        step.output().path("errorCode").asText(""),
+                        step.output().path("displayMessage").asText("")));
             }
         }
         ExecutionPlan plan;
@@ -151,6 +159,7 @@ public final class DefaultToolClient implements ToolClient {
                 || (ownedTurn != null && ownedTurn.cancelled())
                 || (runs != null && runs.find(runId).map(value -> value.snapshot().state() != RunState.RUNNING).orElse(true));
         RunControl control = new RunControl(plan.descriptor().budget(), clock);
+        restoreEffectAttempts(control, runId);
         ToolContext context = new ToolContext(runId, request.scope(),
                 plan.descriptor().permissions(), cancellation,
                 control.deadline(), effectiveOwner);
@@ -169,9 +178,19 @@ public final class DefaultToolClient implements ToolClient {
             }
             List<ToolCallEvent> events = new java.util.concurrent.CopyOnWriteArrayList<>();
             ReasoningEventSink durable = runs == null ? null : StepEvents.durableSink(runs, runId);
-            ReasoningEventSink sink = (type, version, producer, payload) -> {
-                if (durable != null) durable.emit(type, version, producer, payload);
-                events.add(new ToolCallEvent(type, version, producer, payload));
+            ReasoningEventSink sink = new ReasoningEventSink() {
+                @Override public void emit(String type, int version, String producer,
+                                           com.fasterxml.jackson.databind.JsonNode payload) {
+                    if (durable != null) durable.emit(type, version, producer, payload);
+                    events.add(new ToolCallEvent(type, version, producer, payload));
+                }
+
+                @Override public void toolStarted(com.fasterxml.jackson.databind.JsonNode step,
+                                                  com.fasterxml.jackson.databind.JsonNode started) {
+                    if (durable != null) durable.toolStarted(step, started);
+                    events.add(new ToolCallEvent("core.step.started", 1, "framework.core", step));
+                    events.add(new ToolCallEvent("core.tool.started", 1, "framework.core", started));
+                }
             };
             ToolExecutionContext execution = new ToolExecutionContext(
                     runId, invocationId, cancellation, control.deadline(), request.causationStepId());
@@ -199,7 +218,9 @@ public final class DefaultToolClient implements ToolClient {
                                 result, "tool invocation result");
                         if (ownedTurn != null) ownedTurn.complete(completed.output());
                         published.complete(new ToolCallOutcome(
-                                completed.output(), completed.duration(), events));
+                                completed.output(), completed.duration(), events,
+                                completed.status(), completed.errorCode(),
+                                completed.displayMessage()));
                     } catch (Throwable invalidResult) {
                         published.completeExceptionally(invalidResult);
                     }
@@ -212,6 +233,66 @@ public final class DefaultToolClient implements ToolClient {
             if (closeFailure != null) failure.addSuppressed(closeFailure);
             return CompletableFuture.failedFuture(failure);
         }
+    }
+
+    /**
+     * Direct TOOL nodes get a fresh control object per call. Restore durable effect identities
+     * so a graph retry with a new invocation ID cannot resend an uncertain side effect.
+     */
+    private void restoreEffectAttempts(RunControl control, RunId runId) {
+        if (runs == null) return;
+        for (var event : runs.eventsAfter(runId, 0)) {
+            var payload = event.payload();
+            if (event.type().equals("core.task.repair_requested")) {
+                control.enterTaskRepair();
+            } else if (event.type().equals("core.tool.started")
+                    && event.producer().equals("framework.core")) {
+                String fingerprint = payload.path("fingerprint").asText("");
+                if (!fingerprint.isBlank()) {
+                    String key = payload.path("effectKey").asText(fingerprint);
+                    String invocationId = payload.path("invocationId").asText(fingerprint);
+                    String tool = payload.path("tool").asText("");
+                    ToolEffectPolicy policy;
+                    try { policy = ToolEffectPolicy.valueOf(
+                            payload.path("effectPolicy").asText("LEGACY")); }
+                    catch (IllegalArgumentException unknown) { policy = ToolEffectPolicy.LEGACY; }
+                    if (!payload.has("effectPolicy") && desktopInput(tool))
+                        policy = ToolEffectPolicy.OBSERVATION_GATED;
+                    String resourceKey = payload.path("resourceKey").asText("");
+                    if (policy == ToolEffectPolicy.OBSERVATION_GATED
+                            && resourceKey.isBlank() && desktopInput(tool))
+                        resourceKey = "desktop:unknown";
+                    control.restoreEffectStart(invocationId, fingerprint,
+                            key.isBlank() ? fingerprint : key,
+                            payload.path("idempotent").asBoolean(false), policy, resourceKey);
+                }
+            } else if (event.type().equals("core.tool.receipt")
+                    && event.producer().equals("framework.core")) {
+                String invocationId = payload.path("invocationId").asText(
+                        payload.path("fingerprint").asText(""));
+                if (!invocationId.isBlank()) {
+                    try {
+                        control.restoreEffectReceipt(invocationId,
+                                EffectReceiptV1.Status.valueOf(payload.path("status").asText("")),
+                                payload.path("metadata").path("delivery").asText(""));
+                    } catch (IllegalArgumentException ignored) {
+                        // Malformed or future receipt statuses do not grant retry permission.
+                    }
+                }
+            } else if (event.type().equals("core.effect.reconciled")
+                    && event.producer().equals("framework.core")
+                    && payload.path("outcome").asText("").equals("SATISFIED")) {
+                String invocationId = payload.path("actionInvocationId").asText("");
+                String targetId = payload.path("targetId").asText("");
+                if (!invocationId.isBlank() && !targetId.isBlank())
+                    control.restoreEffectReconciliation(invocationId, "desktop:" + targetId);
+            }
+        }
+    }
+
+    private static boolean desktopInput(String tool) {
+        return Set.of("desktop_session_click", "desktop_session_type",
+                "desktop_session_key", "desktop_session_scroll").contains(tool);
     }
 
     private static void awaitReady(ManagedTurn turn) {

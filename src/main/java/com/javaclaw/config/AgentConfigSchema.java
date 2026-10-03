@@ -46,6 +46,7 @@ final class AgentConfigSchema {
     static final String KEY_RETRY_MAX_BACKOFF = "retry.max.backoff.seconds";
     static final String KEY_FIRST_USE_GUIDANCE_DONE = "ui.first.use.guidance.done";
     static final String KEY_TRAY_MINIMIZE_ON_CLOSE = "ui.tray.minimize.on.close";
+    static final String KEY_COMPUTER_APP_ACCESS_ENABLED = "desktop.computer.app.access.enabled";
     static final String KEY_UI_THEME = "ui.theme";
     static final String KEY_UI_FONT_FAMILY = "ui.font.family";
     static final String KEY_UI_FONT_MONO = "ui.font.mono";
@@ -64,7 +65,6 @@ final class AgentConfigSchema {
     static final String KEY_SDD_EXEC_TIMEOUT = "task.sdd.exec.timeout.seconds";
     static final String KEY_SDD_STRUCTURED_TIMEOUT = "task.sdd.structured.timeout.seconds";
     static final String KEY_SDD_EXEC_MAX_ITERS = "task.sdd.exec.max.iters";
-    static final String KEY_TASK_RISK_AUTOAPPROVE = "task.risk.autoapprove.enabled";
     static final String KEY_GEPA_GOAL_ENABLED = "gepa.goal.auto.decompose";
     static final String KEY_GEPA_EVAL_INTERVAL = "gepa.eval.interval.tasks";
     static final String KEY_GEPA_EVAL_THRESHOLD = "gepa.eval.threshold";
@@ -138,7 +138,6 @@ final class AgentConfigSchema {
     static final int DEFAULT_SDD_EXEC_TIMEOUT = 900;
     static final int DEFAULT_SDD_STRUCTURED_TIMEOUT = 300;
     static final int DEFAULT_SDD_EXEC_MAX_ITERS = 12;
-    static final boolean DEFAULT_TASK_RISK_AUTOAPPROVE = true;
     static final boolean DEFAULT_GEPA_GOAL_ENABLED = true;
     static final int DEFAULT_GEPA_EVAL_INTERVAL = 3;
     static final double DEFAULT_GEPA_EVAL_THRESHOLD = 3.5;
@@ -194,6 +193,7 @@ final class AgentConfigSchema {
         put(target, KEY_RETRY_INITIAL_BACKOFF, DEFAULT_RETRY_INITIAL_BACKOFF);
         put(target, KEY_RETRY_MAX_BACKOFF, DEFAULT_RETRY_MAX_BACKOFF);
         put(target, KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
+        put(target, KEY_COMPUTER_APP_ACCESS_ENABLED, false);
         put(target, KEY_SCHEDULE_THREAD_POOL_SIZE, DEFAULT_SCHEDULE_THREAD_POOL_SIZE);
         put(target, KEY_GEPA_GOAL_ENABLED, DEFAULT_GEPA_GOAL_ENABLED);
         put(target, KEY_GEPA_EVAL_INTERVAL, DEFAULT_GEPA_EVAL_INTERVAL);
@@ -244,6 +244,7 @@ final class AgentConfigSchema {
         put(target, KEY_CONFIRMATION_TIMEOUT_DEFAULT, DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT);
         put(target, KEY_CONFIRMATION_TIMEOUT_MANAGED, DEFAULT_CONFIRMATION_TIMEOUT_MANAGED);
         put(target, KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
+        put(target, KEY_COMPUTER_APP_ACCESS_ENABLED, false);
     }
 
     static int integer(Properties source, String key, int fallback) {

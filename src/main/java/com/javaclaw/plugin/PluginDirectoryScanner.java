@@ -27,6 +27,10 @@ final class PluginDirectoryScanner {
     }
 
     List<Candidate> scan() {
+        if (Files.isSymbolicLink(pluginsDirectory)) {
+            log.warn("拒绝扫描符号链接插件根目录: {}", pluginsDirectory);
+            return List.of();
+        }
         if (!Files.isDirectory(pluginsDirectory)) return List.of();
         List<Candidate> candidates = new ArrayList<>();
         try (Stream<Path> entries = Files.list(pluginsDirectory)) {

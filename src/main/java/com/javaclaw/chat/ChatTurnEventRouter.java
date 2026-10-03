@@ -5,6 +5,8 @@ import com.javaclaw.agent.clarify.ClarifyPayload;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.loop.LoopConstants;
 import com.javaclaw.loop.model.LoopStatus;
+import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.chat.ThinkingContentRenderer.StageState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,8 +48,11 @@ final class ChatTurnEventRouter {
         switch (event) {
             case ConversationEvent.Thinking value -> renderer.appendThinking(value.chunk());
             case ConversationEvent.Reply value -> renderer.appendReply(value.chunk());
-            case ConversationEvent.ToolResult value -> renderer.appendSubAgent(
-                    value.toolName(), value.result(), ChatStreamRenderer.ChunkKind.RESULT);
+            case ConversationEvent.ToolStarted value -> renderer.appendToolCall(
+                    value.toolName(), value.invocationId(), value.input());
+            case ConversationEvent.ToolResult value -> renderer.appendToolResult(value);
+            case ConversationEvent.ToolFailed value -> renderer.appendToolFailure(
+                    value.toolName(), value.invocationId(), value.message());
             case ConversationEvent.SubAgentThinking value -> renderer.appendSubAgent(
                     value.agentName(), value.chunk(), ChatStreamRenderer.ChunkKind.THINKING);
             case ConversationEvent.SubAgentReply value -> renderer.appendSubAgent(
@@ -61,7 +66,7 @@ final class ChatTurnEventRouter {
             case ConversationEvent.Usage value -> usage.accept(value);
             case ConversationEvent.Progress value -> thinking.recordPipelineProgress(
                     value.stageId(), value.stageLabel(),
-                    value.status() == null ? "running" : value.status().name(), value.detail());
+                    stageState(value.status()), value.detail());
             case ConversationEvent.Custom value -> routeCustom(value);
             default -> log.debug("忽略未注册的 UI 事件投影: {}", event.getClass().getName());
         }
@@ -74,6 +79,14 @@ final class ChatTurnEventRouter {
             ClarifyPayload.fromJson(event.payload()).ifPresent(clarification);
         } else if (LoopConstants.EVENT_STATUS_KIND.equals(event.kind())) {
             LoopStatus.fromJson(event.payload()).ifPresent(renderer::updateLoopStatus);
+        } else if ("core.tool.receipt".equals(event.kind())) {
+            // A completed call only means the Java tool method returned. The trusted
+            // receipt describes what the operation actually established.
+            JsonNode payload = event.payload();
+            thinking.updateToolReceipt(payload.path("tool").asText(""),
+                    payload.path("invocationId").asText(""),
+                    receiptStatus(payload.path("status")),
+                    payload.path("reason").asText(""), payload.path("metadata"));
         } else if (event.kind().startsWith("core.step.")) {
             routePlanningStep(event.kind(), event.payload());
         } else {
@@ -100,13 +113,29 @@ final class ChatTurnEventRouter {
                 default -> "正在核对检索结果与工具候选";
             };
             planningSteps.add(id);
-            thinking.recordPipelineProgress(id, label, "running", detail);
+            thinking.recordPipelineProgress(id, label, StageState.RUNNING, detail);
         } else if (kind.equals("core.step.completed") || kind.equals("core.step.failed")) {
             if (!planningSteps.remove(id)) return;
             boolean failed = kind.equals("core.step.failed");
             String detail = failed ? payload.path("message").asText("") : null;
             thinking.recordPipelineProgress(id, "上下文规划",
-                    failed ? "error" : "done", detail);
+                    failed ? StageState.ERROR : StageState.DONE, detail);
         }
+    }
+
+    private static StageState stageState(ConversationEvent.Progress.Status status) {
+        if (status == null) return StageState.RUNNING;
+        return switch (status) {
+            case RUNNING -> StageState.RUNNING;
+            case DONE -> StageState.DONE;
+            case SKIPPED -> StageState.SKIPPED;
+            case ERROR -> StageState.ERROR;
+        };
+    }
+
+    private static EffectReceiptV1.Status receiptStatus(JsonNode status) {
+        if (!status.isTextual()) return null;
+        try { return EffectReceiptV1.Status.valueOf(status.asText()); }
+        catch (IllegalArgumentException unknown) { return null; }
     }
 }

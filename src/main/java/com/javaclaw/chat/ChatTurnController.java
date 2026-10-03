@@ -281,8 +281,9 @@ final class ChatTurnController {
         switch (outcome) {
             case ConversationOutcome.WaitingInput ignored -> outcomes.awaitInput(
                     plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
-            case ConversationOutcome.Completed ignored -> outcomes.complete(
-                    plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
+            case ConversationOutcome.Completed completed -> outcomes.complete(
+                    plan, target, metrics, completed.taskResult(),
+                    () -> finishUi(turn, CompletionKind.SUCCEEDED));
             case ConversationOutcome.Cancelled value -> {
                 if (turn != null) turn.deliveryState = DeliveryState.CANCELLED;
                 outcomes.cancel(value, plan, target, metrics,

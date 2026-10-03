@@ -3,10 +3,11 @@ package com.javaclaw.task.sdd;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.task.sdd.gate.AutoApproveReviewGate;
 import com.javaclaw.task.sdd.spec.Capability;
+import com.javaclaw.task.sdd.spec.Criterion;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.Proposal;
+import com.javaclaw.task.sdd.spec.Requirement;
 import com.javaclaw.task.sdd.spec.Scenario;
-import com.javaclaw.task.sdd.spec.SpecParser;
 import com.javaclaw.task.sdd.spec.SpecStore;
 import com.javaclaw.task.sdd.spec.TaskItem;
 import com.javaclaw.task.sdd.verify.ScenarioVerifier;
@@ -30,12 +31,14 @@ class SddOrchestratorStageTest {
     void 准备阶段落盘后实现阶段从OpenSpec继续且不重复准备() throws Exception {
         Path workDir = temp.resolve("workspace");
         Files.createDirectories(workDir);
+        Files.writeString(workDir.resolve("ready.txt"), "ready");
         SddTestDatabase database = new SddTestDatabase(temp.resolve("database"));
         String workspaceId = "stage-workspace";
         String id = "stage-test-" + System.nanoTime();
         TaskContext context = new TaskContext(id, "阶段恢复", "验证真实阶段边界",
                 workDir.toString(), "system");
-        SpecStore store = new SpecStore(workDir.toString(), database.jdbc(), workspaceId);
+        SpecStore store = new SpecStore(workDir.toString(), database.jdbc(), workspaceId,
+                database.json().mapper());
         AtomicInteger prepareCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SddAgents agents = new SddAgents() {
@@ -44,7 +47,9 @@ class SddOrchestratorStageTest {
                 return new Proposal("需要阶段恢复", "拆分准备和实现", "");
             }
             @Override public List<Capability> specify(TaskContext ctx, Proposal proposal) {
-                return List.of();
+                return List.of(new Capability("stage", List.of(new Requirement("ready",
+                        List.of(new Scenario("ready", "", "", "ready.txt exists",
+                                new Criterion(Criterion.ARTIFACT_EXISTS, "ready.txt")))))));
             }
             @Override public String design(TaskContext ctx, Proposal proposal, List<Capability> capabilities) {
                 return null;
@@ -79,7 +84,6 @@ class SddOrchestratorStageTest {
         assertEquals(0, executeCalls.get());
         String storedTasks = readTasksDocument(database.access(), workspaceId, workDir, context.slug());
         assertNotNull(storedTasks);
-        assertEquals(1, SpecParser.parseTasks(storedTasks).size());
         OpenSpecChange prepared = store.readChange(context.slug(), context.id(), context.title());
         assertEquals(1, prepared.tasks().size());
         assertFalse(SddTaskRunner.requiresPreparation(true, prepared));

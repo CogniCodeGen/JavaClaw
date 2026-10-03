@@ -7,7 +7,7 @@
 
     <groupId>com.javaclaw</groupId>
     <artifactId>javaclaw</artifactId>
-    <version>3.0.0-SNAPSHOT</version>
+    <version>4.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>JavaClaw</name>
@@ -34,7 +34,7 @@
         <!-- 0.30.0 的 autolink 扩展尚未同步到项目 Maven 镜像；0.29.0 与 0.30 core API 兼容。 -->
         <commonmark.autolink.version>0.29.0</commonmark.autolink.version>
         <eclipsestore.version>4.1.0</eclipsestore.version>
-        <h2.version>2.3.232</h2.version>
+        <h2.version>2.4.240</h2.version>
         <spring.version>7.0.8</spring.version>
         <archunit.version>1.4.2</archunit.version>
         <json-schema-validator.version>1.5.7</json-schema-validator.version>
@@ -49,8 +49,9 @@
         <coverage.controller.branch>0.60</coverage.controller.branch>
         <!-- JaCoCo prepare-agent 会在测试前覆盖该属性；空值保证直接运行 Surefire 也合法。 -->
         <jacocoArgLine></jacocoArgLine>
-        <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
-        <javaclaw.launch.data.dir>${project.basedir}/data</javaclaw.launch.data.dir>
+        <!-- 开发运行默认使用源码树；ui-test 仅在 target/ 下使用隔离的便携根。 -->
+        <javaclaw.launch.home>${project.basedir}</javaclaw.launch.home>
+        <javaclaw.launch.data.dir>${javaclaw.launch.home}/data</javaclaw.launch.data.dir>
         <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
         <javaclaw.fx.tests>false</javaclaw.fx.tests>
         <!-- 仅传给源码树中的 javafx:run。发行包不读取这些 Maven 属性，仍只接受签名运行时。 -->
@@ -352,7 +353,8 @@
                     <!-- Late evaluation is required because JaCoCo populates this property during initialize. -->
                     <argLine>@{jacocoArgLine} --add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
-                        <javaclaw.data.dir>${project.build.directory}/test-data</javaclaw.data.dir>
+                        <javaclaw.development.home>${project.build.directory}/test-home</javaclaw.development.home>
+                        <javaclaw.data.dir>${project.build.directory}/test-home/data</javaclaw.data.dir>
                         <javaclaw.fx.tests>${javaclaw.fx.tests}</javaclaw.fx.tests>
                     </systemPropertyVariables>
                 </configuration>
@@ -522,6 +524,7 @@
                          命名模块的定向导出，故需显式向 ALL-UNNAMED 开放（清单由 jdeps 对两个孵化 jar 实测得出）。
                          IDE 直跑（JavaFX 全在 classpath）不需要这三条参数。 -->
                     <options>
+                        <option>-Djavaclaw.development.home=${javaclaw.launch.home}</option>
                         <option>-Djavaclaw.data.dir=${javaclaw.launch.data.dir}</option>
                         <option>-Djavaclaw.ui.test=${javaclaw.launch.ui.test}</option>
                         <option>-Djavaclaw.service-plugin.allow-unsigned-development=${javaclaw.launch.allow.unsigned.service.plugin}</option>
@@ -544,7 +547,7 @@
         <profile>
             <id>ui-test</id>
             <properties>
-                <javaclaw.launch.data.dir>${project.build.directory}/ui-test-data</javaclaw.launch.data.dir>
+                <javaclaw.launch.home>${project.build.directory}/ui-test-home</javaclaw.launch.home>
                 <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
                 <javaclaw.fx.tests>true</javaclaw.fx.tests>
             </properties>

@@ -30,6 +30,8 @@ import com.javaclaw.framework.api.RunSnapshot;
 import com.javaclaw.framework.api.RunState;
 import com.javaclaw.framework.api.ToolApprovalChallenge;
 import com.javaclaw.framework.api.BudgetExceededException;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TurnPausedException;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -54,6 +56,68 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentConversationRunnerTest {
 
     @Test
+    void completedRunRequiresDurableTaskOutcomeRatherThanToolSuccessText() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("task-outcome");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        runner.start(request("task-outcome"), ToolCallOrigin.INTERACTIVE, callbacks);
+
+        run.emit("core.tool.completed", object().put("tool", "desktop_open")
+                .put("output", "[成功] 已查看日历本周日程"));
+        ObjectNode acceptance = object().put("outcome", "PARTIAL")
+                .put("stopReason", "日程观察失败");
+        acceptance.putArray("unmetCriteria").add("观察日历本周日程");
+        acceptance.putArray("evidenceRefs").add("receipt:open");
+        run.emit("core.task.outcome", acceptance);
+        run.emit("core.run.completed", object().set("output", object().put("text", "已打开日历")));
+        run.complete(RunState.COMPLETED, null);
+
+        ConversationOutcome.Completed completed = assertInstanceOf(
+                ConversationOutcome.Completed.class, callbacks.outcomes.getFirst());
+        assertEquals(TaskOutcome.PARTIAL, completed.taskResult().outcome());
+        assertEquals(List.of("观察日历本周日程"), completed.taskResult().unmetCriteria());
+    }
+
+    @Test
+    void oldCompletedRunWithoutOutcomeIsUnverified() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("historical");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("historical"), ToolCallOrigin.INTERACTIVE, callbacks);
+        run.complete(RunState.COMPLETED, null);
+        assertEquals(TaskOutcome.UNVERIFIED,
+                assertInstanceOf(ConversationOutcome.Completed.class,
+                        callbacks.outcomes.getFirst()).taskResult().outcome());
+    }
+
+    @Test
+    void approvalDenialRetainsBlockedTaskResultOnCancelledRun() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("denied");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("denied"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode result = object().put("outcome", "BLOCKED")
+                .put("stopReason", "RUN_CANCELLED: TOOL_APPROVAL_DENIED");
+        result.putArray("unmetCriteria").add("send email");
+        result.putArray("evidenceRefs");
+        run.emit("core.task.outcome", result);
+        ObjectNode terminal = object().put("code", "TOOL_APPROVAL_DENIED")
+                .put("detail", "user denied email_send");
+        terminal.set("taskResult", result);
+        run.emit("core.run.cancelled", terminal);
+        run.complete(RunState.CANCELLED, "user denied email_send");
+
+        ConversationOutcome.Cancelled cancelled = assertInstanceOf(
+                ConversationOutcome.Cancelled.class, callbacks.outcomes.getFirst());
+        assertEquals(CancellationReason.APPROVAL_DENIED, cancelled.reason());
+        assertEquals(TaskOutcome.BLOCKED, cancelled.taskResult().outcome());
+        assertFalse(cancelled.userInitiated());
+    }
+
+    @Test
     void projectsEverySupportedEventShapeAndCompletesExactlyOnce() {
         FakeAgentClient agents = new FakeAgentClient();
         TestRunHandle run = agents.enqueue("events");
@@ -64,6 +128,8 @@ class AgentConversationRunnerTest {
         assertTrue(runner.isRunning());
 
         run.emit("core.model.started", object());
+        run.emit("core.model.completed", object().put("inputTokens", 10130)
+                .put("outputTokens", 857));
         run.emit("core.tool.started", object().put("tool", "sys_file_read"));
         run.emit("core.tool.completed", object()
                 .put("tool", "text-tool").put("output", "plain"));
@@ -109,8 +175,347 @@ class AgentConversationRunnerTest {
         assertTrue(callbacks.events.stream().anyMatch(event ->
                 event instanceof ConversationEvent.Reply reply
                         && reply.chunk().equals("fallback reply")));
+        assertTrue(callbacks.events.stream().anyMatch(event ->
+                event instanceof ConversationEvent.Usage usage
+                        && usage.inputTokens() == 10130 && usage.outputTokens() == 857));
         assertEquals(2, callbacks.events.stream()
                 .filter(ConversationEvent.Custom.class::isInstance).count());
+    }
+
+    @Test
+    void budgetFailureReportsEveryChargedModelCallWithoutACompletionEvent() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("budget-usage");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("budget-usage"), ToolCallOrigin.INTERACTIVE, callbacks);
+
+        run.emit("core.model.usage", object().put("inputTokens", 100).put("outputTokens", 20));
+        run.emit("core.model_task.usage", object().put("inputTokens", 30).put("outputTokens", 4));
+        run.emit("core.model.usage", object().put("inputTokens", 40).put("outputTokens", 8));
+        run.emit("core.run.failed", object()
+                .put("errorType", BudgetExceededException.class.getName())
+                .put("message", "model input token budget exceeded")
+                .put("budgetKind", "MODEL_INPUT_TOKENS")
+                .put("budgetActual", "170")
+                .put("budgetLimit", "150"));
+        run.complete(RunState.FAILED, "model input token budget exceeded");
+
+        assertInstanceOf(BudgetExceededException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error());
+        assertEquals(170, callbacks.events.stream()
+                .filter(ConversationEvent.Usage.class::isInstance)
+                .map(ConversationEvent.Usage.class::cast)
+                .mapToLong(ConversationEvent.Usage::inputTokens).sum());
+        assertEquals(32, callbacks.events.stream()
+                .filter(ConversationEvent.Usage.class::isInstance)
+                .map(ConversationEvent.Usage.class::cast)
+                .mapToLong(ConversationEvent.Usage::outputTokens).sum());
+    }
+
+    @Test
+    void 预算暂停保留真实用量并交给中文预算提示() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("budget-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("budget-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode output = object().put("kind", "harness.budget_exhausted")
+                .put("budgetKind", "MODEL_INPUT_TOKENS")
+                .put("budgetActual", "259090").put("budgetLimit", "250000");
+
+        run.emit("core.run.paused", object().put("reason", "BUDGET_EXHAUSTED")
+                .set("output", output));
+        run.emit("core.run.paused", object().put("reason", "BUDGET_EXHAUSTED")
+                .set("output", output));
+
+        assertEquals(1, callbacks.outcomes.size());
+        BudgetExceededException failure = assertInstanceOf(BudgetExceededException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error());
+        assertEquals(BudgetExceededException.Kind.MODEL_INPUT_TOKENS, failure.kind());
+        assertEquals("259090", failure.actual());
+        assertEquals("250000", failure.limit());
+    }
+
+    @Test
+    void 旧预算暂停不再显示原始调度代码也不猜测用量() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("legacy-budget-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("legacy-budget-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+
+        run.emit("core.run.paused", object().put("reason", "BUDGET_EXHAUSTED"));
+
+        BudgetExceededException failure = assertInstanceOf(BudgetExceededException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error());
+        assertEquals(BudgetExceededException.Kind.UNKNOWN, failure.kind());
+        assertEquals("", failure.actual());
+        assertEquals("", failure.limit());
+    }
+
+    @Test
+    void completedPrimaryAggregateDoesNotCountAlreadyReportedUsageTwice() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("completed-usage");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("completed-usage"), ToolCallOrigin.INTERACTIVE, callbacks);
+
+        run.emit("core.model.usage", object().put("inputTokens", 100).put("outputTokens", 10));
+        run.emit("core.model_task.usage", object().put("inputTokens", 30).put("outputTokens", 4));
+        run.emit("core.model.completed", object().put("inputTokens", 100).put("outputTokens", 10));
+        run.emit("core.model.completed", object().put("inputTokens", 100).put("outputTokens", 10));
+        run.complete(RunState.COMPLETED, null);
+
+        assertEquals(130, callbacks.events.stream()
+                .filter(ConversationEvent.Usage.class::isInstance)
+                .map(ConversationEvent.Usage.class::cast)
+                .mapToLong(ConversationEvent.Usage::inputTokens).sum());
+        assertEquals(14, callbacks.events.stream()
+                .filter(ConversationEvent.Usage.class::isInstance)
+                .map(ConversationEvent.Usage.class::cast)
+                .mapToLong(ConversationEvent.Usage::outputTokens).sum());
+
+        TestRunHandle legacy = agents.enqueue("legacy-usage");
+        RecordingCallbacks legacyCallbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("legacy-usage"), ToolCallOrigin.INTERACTIVE, legacyCallbacks);
+        legacy.emit("core.model.completed", object().put("inputTokens", 50).put("outputTokens", 5));
+        legacy.complete(RunState.COMPLETED, null);
+        assertTrue(legacyCallbacks.events.stream().anyMatch(event ->
+                event instanceof ConversationEvent.Usage usage
+                        && usage.inputTokens() == 50 && usage.outputTokens() == 5));
+    }
+
+    @Test
+    void toolLifecycleKeepsInvocationIdAndStructuredOutput() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("tool-lifecycle");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("tool-lifecycle"), ToolCallOrigin.INTERACTIVE, callbacks);
+        run.emit("core.tool.started", object().put("tool", "framework_tool_catalog")
+                .put("invocationId", "catalog-1")
+                .set("arguments", object().put("action", "activate")));
+        ObjectNode output = object().put("action", "activate").put("success", true);
+        output.putArray("activated").add("desktop_session_observe");
+        run.emit("core.tool.completed", object().put("tool", "framework_tool_catalog")
+                .put("invocationId", "catalog-1").set("output", output));
+        run.emit("core.tool.failed", object().put("tool", "desktop_session_click")
+                .put("invocationId", "click-2").put("message", "target unavailable"));
+
+        assertTrue(callbacks.events.stream().anyMatch(event ->
+                event instanceof ConversationEvent.ToolStarted started
+                        && started.invocationId().equals("catalog-1")
+                        && started.input().contains("activate")));
+        assertTrue(callbacks.events.stream().anyMatch(event ->
+                event instanceof ConversationEvent.ToolResult result
+                        && result.invocationId().equals("catalog-1")
+                        && result.output().path("activated").size() == 1));
+        assertTrue(callbacks.events.stream().anyMatch(event ->
+                event instanceof ConversationEvent.ToolFailed failed
+                        && failed.invocationId().equals("click-2")
+                        && failed.message().equals("target unavailable")));
+    }
+
+    @Test
+    void unavailableToolPauseExplainsRejectedActionAndOfferedTools() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("tool-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("tool-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode output = object().put("kind", "tool.recovery_required")
+                .put("stepId", "model-step-3")
+                .put("unfinishedAction", "The requested tool batch was not executed");
+        output.putArray("requestedTools").add("desktop_session_observe");
+        output.putArray("offeredTools").add("desktop_session_click")
+                .add("desktop_session_key");
+        run.emit("core.run.paused", object().put("reason", "provider tool mismatch")
+                .set("output", output));
+
+        String message = assertInstanceOf(com.javaclaw.framework.api.TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertTrue(message.contains("请求工具：desktop_session_observe"));
+        assertTrue(message.contains("当步可用工具：desktop_session_click、desktop_session_key"));
+        assertTrue(message.contains("该批调用均未执行"));
+        assertTrue(message.contains("未完成动作：请求的工具调用尚未执行"));
+        assertTrue(message.contains("model-step-3"));
+    }
+
+    @Test
+    void uncertainEffectPauseShowsRecoveryCauseWithoutCallingItAModelOrPermissionFailure() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("effect-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("effect-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        String text = "先前操作可能已经生效，尚无可靠的操作结果证明；已暂停本次输入，请核验先前操作的结果。";
+        ObjectNode output = object().put("kind", "tool.effect_observation_required").put("text", text);
+        run.emit("core.run.paused", object().put("reason", "EFFECT_OBSERVATION_REQUIRED")
+                .set("output", output));
+        assertEquals(1, callbacks.outcomes.size());
+        assertEquals(text, assertInstanceOf(ConversationOutcome.Failed.class,
+                callbacks.outcomes.getFirst()).error().getMessage());
+    }
+
+    @Test
+    void contractRepairTimeoutIsPresentedWithoutInventingAHumanPrerequisite() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("contract-repair-timeout");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("contract-repair-timeout"), ToolCallOrigin.INTERACTIVE, callbacks);
+        var contract = new com.javaclaw.framework.api.TaskContractV3(3,
+                "打开QQ查看联系人", List.of(), true, false, "model",
+                List.of("MODEL_UNRELIABLE", "PLANNING_REPAIR_TIMEOUT"),
+                List.of("QQ application login status and account context"));
+        ObjectNode output = com.javaclaw.framework.core.TaskContractDiagnostics.pausedOutput(
+                new com.fasterxml.jackson.databind.ObjectMapper(), contract, true);
+        run.emit("core.run.paused", object().put("reason", "TASK_UNVERIFIED")
+                .set("output", output));
+
+        String message = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertTrue(message.contains("自动修复超时"));
+        assertFalse(message.contains("待明确"));
+        assertFalse(message.contains("login status"));
+        assertTrue(message.contains("执行后续操作前暂停"));
+    }
+
+    @Test
+    void protocolPauseRetainsViolationAndConcreteRejectionDetail() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("protocol-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("protocol-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode output = object().put("kind", "harness.protocol_violation")
+                .put("code", "PROTOCOL_ERROR")
+                .put("violationCode", "MODEL_DECISION_MISSING")
+                .put("reason", "The model did not submit a valid harness decision")
+                .put("decisionErrorCode", "UNKNOWN_EVIDENCE_REFERENCE")
+                .put("decisionErrorDetail", "evidenceRefs must identify trusted receipts");
+        run.emit("core.run.paused", object().put("reason", "PROTOCOL_ERROR")
+                .set("output", output));
+
+        String message = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertTrue(message.contains("模型未提交通过校验的回合决策"));
+        assertTrue(message.contains("PROTOCOL_ERROR / MODEL_DECISION_MISSING"));
+        assertTrue(message.contains("证据引用未对应有效的系统回执"));
+        assertTrue(message.contains("UNKNOWN_EVIDENCE_REFERENCE"));
+        assertTrue(message.contains("evidenceRefs must identify trusted receipts"));
+    }
+
+    @Test
+    void decisionRejectionTypesGetReadableExplanationsAndKeepDiagnosticCodes() {
+        Map<String, String> rejections = Map.of(
+                "UNKNOWN_CRITERION_ID", "决策引用了任务中不存在的验收条件",
+                "DECISION_SCHEMA_INVALID", "决策字段不符合规定格式",
+                "DECISION_JSON_INVALID", "决策内容无法解析为有效 JSON",
+                "FUTURE_DECISION_ERROR", "回合决策参数被拒绝");
+        rejections.forEach((code, explanation) -> {
+            FakeAgentClient agents = new FakeAgentClient();
+            TestRunHandle run = agents.enqueue(code);
+            RecordingCallbacks callbacks = new RecordingCallbacks();
+            new AgentConversationRunner(agents, Runnable::run)
+                    .start(request(code), ToolCallOrigin.INTERACTIVE, callbacks);
+            ObjectNode output = object().put("kind", "harness.protocol_violation")
+                    .put("violationCode", "MODEL_DECISION_MISSING")
+                    .put("decisionErrorCode", code)
+                    .put("decisionErrorDetail", "host validation rejected this decision");
+            run.emit("core.run.paused", object().set("output", output));
+
+            String message = assertInstanceOf(TurnPausedException.class,
+                    assertInstanceOf(ConversationOutcome.Failed.class,
+                            callbacks.outcomes.getFirst()).error()).getMessage();
+            assertTrue(message.contains(explanation), code);
+            assertTrue(message.contains(code), code);
+            assertTrue(message.contains("host validation rejected this decision"), code);
+        });
+    }
+
+    @Test
+    void unknownProtocolViolationKeepsSafeDetailForDiagnosis() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("unknown-protocol-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("unknown-protocol-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode output = object().put("kind", "harness.protocol_violation")
+                .put("violationCode", "FUTURE_PROTOCOL_CHECK")
+                .put("detail", "unrecognized decision\n<invalid>");
+        run.emit("core.run.paused", object().set("output", output));
+
+        String message = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertTrue(message.contains("模型的回合决策未通过协议校验"));
+        assertTrue(message.contains("FUTURE_PROTOCOL_CHECK"));
+        assertTrue(message.contains("unrecognized decision"));
+        assertFalse(message.contains("\n"));
+        assertFalse(message.contains("<invalid>"));
+    }
+
+    @Test
+    void legacyProtocolPauseGetsReadableExplanationWithoutInventingSubtype() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("legacy-protocol-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("legacy-protocol-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        run.emit("core.run.paused", object().put("reason", "PROTOCOL_ERROR"));
+
+        String message = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertTrue(message.contains("模型的回合决策未通过协议校验"));
+        assertTrue(message.contains("PROTOCOL_ERROR"));
+        assertFalse(message.contains("MODEL_DECISION_MISSING"));
+    }
+
+    @Test
+    void typedContextPausePreservesSourceAndReason() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("typed-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("typed-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        ObjectNode output = object().put("kind", "context.planning_required")
+                .put("reasonCode", "UNAUTHORIZED_CONTEXT_SOURCE")
+                .put("contextSourceId", "private-documents");
+        run.emit("core.run.paused", object()
+                .put("reason", "planner selected an unauthorized context source")
+                .set("output", output));
+
+        TurnPausedException paused = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error());
+        assertEquals(TurnPausedException.Reason.UNAUTHORIZED_CONTEXT_SOURCE, paused.reason());
+        assertEquals("private-documents", paused.contextSourceId());
+    }
+
+    @Test
+    void ordinaryPauseKeepsItsOriginalReason() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("ordinary-pause");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("ordinary-pause"), ToolCallOrigin.INTERACTIVE, callbacks);
+        run.emit("core.run.paused", object().put("reason", "需要核对已经执行的工具结果"));
+
+        String message = assertInstanceOf(TurnPausedException.class,
+                assertInstanceOf(ConversationOutcome.Failed.class,
+                        callbacks.outcomes.getFirst()).error()).getMessage();
+        assertEquals("需要核对已经执行的工具结果", message);
     }
 
     @Test
@@ -251,6 +656,133 @@ class AgentConversationRunnerTest {
         run.complete(RunState.COMPLETED, null);
         assertInstanceOf(ConversationOutcome.Completed.class, next.outcomes.getFirst());
         assertTrue(agents.cancellations.isEmpty());
+    }
+
+    @Test
+    void aNewApplicationRequestStartsItsOwnTurnAfterAPausedTask() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle qq = agents.enqueue("old-qq");
+        TestRunHandle feishu = agents.enqueue("new-feishu");
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest original = request("new-goal", "打开qq查看联系人");
+        runner.start(original, null, new RecordingCallbacks());
+        qq.emit("core.run.paused", object().put("reason", "protocol error"));
+        agents.waitingScope = original.scope();
+        agents.waiting = paused(qq);
+        RecordingCallbacks next = new RecordingCallbacks();
+
+        runner.start(request("new-goal", "打开飞书查看联系人"), null, next);
+
+        assertTrue(agents.resumes.isEmpty());
+        assertEquals("TASK_SUPERSEDED", agents.cancellations.getFirst().reason().code());
+        assertEquals("打开飞书查看联系人",
+                agents.requests.get(feishu.id()).inputs().getFirst().data().path("text").asText());
+        feishu.emit("core.run.completed", object().set("output", object().put("text", "new result")));
+        feishu.complete(RunState.COMPLETED, null);
+        assertInstanceOf(ConversationOutcome.Completed.class, next.outcomes.getFirst());
+    }
+
+    @Test
+    void aNewGoalClosesAnExpiredPauseWithoutGivingTheOldTurnMoreBudget() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle old = agents.enqueue("expired");
+        TestRunHandle next = agents.enqueue("fresh");
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest original = request("expired-goal", "Inspect yesterday's calendar");
+        runner.start(original, null, new RecordingCallbacks());
+        old.emit("core.run.paused", object());
+        agents.waitingScope = original.scope();
+        agents.waiting = paused(old);
+        agents.deadlines.put(old.id(), Instant.EPOCH);
+
+        runner.start(request("expired-goal", "Open Notes and read my todo list"), null,
+                new RecordingCallbacks());
+
+        assertTrue(agents.resumes.isEmpty());
+        assertEquals("RUN_TIMEOUT", agents.cancellations.getFirst().reason().code());
+        assertTrue(agents.requests.containsKey(next.id()));
+    }
+
+    @Test
+    void replacingAPausedTaskUsesTheCoreExpiryJudgmentInsteadOfTheAdapterWallClock() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle old = agents.enqueue("engine-expired");
+        TestRunHandle next = agents.enqueue("engine-clock-new-goal");
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest original = request("engine-clock", "Inspect the calendar");
+        runner.start(original, null, new RecordingCallbacks());
+        old.emit("core.run.paused", object());
+        agents.waitingScope = original.scope();
+        agents.waiting = paused(old);
+        agents.deadlines.put(old.id(), Instant.now().plusSeconds(86_400));
+        agents.expiredOverrides.put(old.id(), true);
+
+        runner.start(request("engine-clock", "Open Notes and inspect the todo list"), null,
+                new RecordingCallbacks());
+
+        assertTrue(agents.resumes.isEmpty());
+        assertEquals("RUN_TIMEOUT", agents.cancellations.getFirst().reason().code());
+        assertTrue(agents.requests.containsKey(next.id()));
+    }
+
+    @Test
+    void explicitContinueKeepsTheOriginalTurnAndDoesNotCreateAnotherActionJournal() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle old = agents.enqueue("uncertain-effect");
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest original = request("continue-goal", "Send the approved email");
+        runner.start(original, null, new RecordingCallbacks());
+        old.emit("core.run.paused", object().put("reason", "tool result unknown"));
+        agents.waitingScope = original.scope();
+        agents.waiting = paused(old);
+
+        runner.start(request("continue-goal", "继续"), null, new RecordingCallbacks());
+
+        assertEquals(old.id(), agents.resumes.getFirst().runId());
+        assertTrue(agents.cancellations.isEmpty());
+        assertEquals(1, agents.requests.size());
+    }
+
+    @Test
+    void explicitNewTaskCanReplaceATurnWaitingForAnAnswer() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle old = agents.enqueue("waiting-answer");
+        TestRunHandle next = agents.enqueue("different-task");
+        AgentConversationRunner runner = new AgentConversationRunner(agents, Runnable::run);
+        RunRequest original = request("replace-answer", "Create an event");
+        runner.start(original, null, new RecordingCallbacks());
+        old.emit("core.run.waiting_input", object().put("reason", "Which date?"));
+        agents.waitingScope = original.scope();
+        agents.waiting = new RunSnapshot(old.id(), RunState.WAITING_INPUT, "plan", old.sequence,
+                Instant.EPOCH, Instant.EPOCH, null, null, 1);
+
+        runner.start(request("replace-answer", "Read a file").withAttribute("framework.turnIntent",
+                JsonNodeFactory.instance.textNode("NEW_TASK")), null, new RecordingCallbacks());
+
+        assertTrue(agents.resumes.isEmpty());
+        assertTrue(agents.requests.containsKey(next.id()));
+    }
+
+    @Test
+    void timeoutCancellationHasADistinctReasonInTheConversationPort() {
+        FakeAgentClient agents = new FakeAgentClient();
+        TestRunHandle run = agents.enqueue("timeout-result");
+        RecordingCallbacks callbacks = new RecordingCallbacks();
+        new AgentConversationRunner(agents, Runnable::run)
+                .start(request("timeout-result"), null, callbacks);
+        run.emit("core.run.cancelled", object().put("code", "RUN_TIMEOUT")
+                .put("detail", "run deadline exceeded"));
+        run.complete(RunState.CANCELLED, "run deadline exceeded");
+
+        ConversationOutcome.Cancelled outcome = assertInstanceOf(ConversationOutcome.Cancelled.class,
+                callbacks.outcomes.getFirst());
+        assertEquals(CancellationReason.RUN_TIMEOUT, outcome.reason());
+        assertFalse(outcome.userInitiated());
+    }
+
+    private static RunSnapshot paused(TestRunHandle run) {
+        return new RunSnapshot(run.id(), RunState.PAUSED, "plan", run.sequence,
+                Instant.EPOCH, Instant.EPOCH, null, null, 1);
     }
 
     @Test
@@ -415,12 +947,16 @@ class AgentConversationRunnerTest {
     }
 
     private static RunRequest request(String sessionId) {
+        return request(sessionId, "hello");
+    }
+
+    private static RunRequest request(String sessionId, String text) {
         return RunRequest.builder()
                 .agent(AgentDefinitionRef.latest("system.default"))
                 .profile(RunProfileRef.latest("chat"))
                 .source(InvocationSource.chat())
                 .scope(new RunScope("workspace", "user", sessionId))
-                .input(InputBlock.text("hello"))
+                .input(InputBlock.text(text))
                 .linkage(RunLinkage.root(null))
                 .permissionCeiling(PermissionSet.NONE)
                 .budget(RunBudget.UNBOUNDED)
@@ -475,6 +1011,9 @@ class AgentConversationRunnerTest {
     private static final class FakeAgentClient implements AgentClient {
         private final ArrayDeque<TestRunHandle> starts = new ArrayDeque<>();
         private final Map<RunId, TestRunHandle> runs = new HashMap<>();
+        private final Map<RunId, RunRequest> requests = new HashMap<>();
+        private final Map<RunId, Instant> deadlines = new HashMap<>();
+        private final Map<RunId, Boolean> expiredOverrides = new HashMap<>();
         private final List<CancelCall> cancellations = new ArrayList<>();
         private final List<ResumeCall> resumes = new ArrayList<>();
         private RuntimeException startFailure;
@@ -496,7 +1035,22 @@ class AgentConversationRunnerTest {
         @Override
         public RunHandle start(RunRequest request) {
             if (startFailure != null) throw startFailure;
-            return starts.removeFirst();
+            TestRunHandle handle = starts.removeFirst();
+            requests.put(handle.id(), request);
+            return handle;
+        }
+
+        @Override public java.util.Optional<RunRequest> request(RunId id) {
+            return java.util.Optional.ofNullable(requests.get(id));
+        }
+
+        @Override public java.util.Optional<Instant> deadline(RunId id) {
+            return java.util.Optional.ofNullable(deadlines.get(id));
+        }
+
+        @Override public boolean expired(RunId id) {
+            Boolean expired = expiredOverrides.get(id);
+            return expired == null ? AgentClient.super.expired(id) : expired;
         }
 
         @Override

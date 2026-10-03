@@ -36,12 +36,18 @@ import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.InferencePluginConfigurationFactory;
 import com.javaclaw.ui.javafx.plugin.PluginComponentFactory;
 import com.javaclaw.ui.javafx.plugin.PluginJarPicker;
+import com.javaclaw.ui.javafx.desktop.DesktopPreviewWindow;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /** 桌面 Presentation 层的显式工厂装配；页面 Controller 仍按 FXML 加载临时创建。 */
 @Configuration(proxyBeanMethods = false)
 public class DesktopPresentationConfiguration {
+
+    @Bean(destroyMethod = "close")
+    DesktopPreviewWindow desktopPreviewWindow(FxDispatcher fx) {
+        return new DesktopPreviewWindow(fx);
+    }
 
     @Bean
     ImageViewerFactory imageViewerFactory(

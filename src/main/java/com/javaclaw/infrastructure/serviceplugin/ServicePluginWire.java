@@ -13,7 +13,7 @@ import java.util.Set;
 
 /** Host-side DTOs generated in shape from classpath protocol/service-plugin.yaml. */
 final class ServicePluginWire {
-    static final String SOURCE_SHA256 = "89b2bf2131ce00621c5bd34706ca526aa631d2222b444b71f52d4c142bc47f4b";
+    static final String SOURCE_SHA256 = "85def9123424e26777912c53164f4ae506d7709a415c374627d12ebadf5bbff2";
     static final int PROTOCOL_MAJOR = 1;
     static final int PROTOCOL_MINOR = 0;
     static final int MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -23,7 +23,7 @@ final class ServicePluginWire {
 
     enum Type {
         HELLO, HELLO_ACK, CONFIGURE, HOT_CONFIGURE, HOT_CONFIGURE_ACK,
-        SERVICE_CATALOG, REQUEST, EVENT, RESPONSE,
+        SERVICE_CATALOG, REQUEST, EVENT, LOG, RESPONSE,
         ERROR, CANCEL, HEALTH, PING, PONG, DRAIN, SHUTDOWN
     }
 

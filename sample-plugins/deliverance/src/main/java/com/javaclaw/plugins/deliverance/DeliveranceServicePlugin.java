@@ -9,6 +9,7 @@ import com.javaclaw.service.api.ServiceDescriptor;
 import com.javaclaw.service.api.ServiceInvocation;
 import com.javaclaw.service.api.ServicePlugin;
 import com.javaclaw.service.api.ServicePluginContext;
+import com.javaclaw.service.api.PluginLogger;
 
 import java.time.Instant;
 import java.nio.file.Files;
@@ -374,7 +375,8 @@ public final class DeliveranceServicePlugin implements ServicePlugin {
         Protocol.Usage safeUsage = usage == null ? new Protocol.Usage(0, 0) : usage;
         long durationMs = Math.max(0, TimeUnit.NANOSECONDS.toMillis(
                 System.nanoTime() - startedNanos));
-        context.logger().info("[INFERENCE_CALL] time=" + Instant.now()
+        context.logger().info(PluginLogger.Kind.INFERENCE_INVOCATION,
+                "[INFERENCE_CALL] time=" + Instant.now()
                 + " source=" + logField(source)
                 + " route=" + logField(route)
                 + " operation=" + logField(operation)

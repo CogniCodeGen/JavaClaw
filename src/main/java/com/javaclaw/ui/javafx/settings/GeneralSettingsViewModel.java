@@ -19,7 +19,8 @@ public final class GeneralSettingsViewModel {
     private final ObservableList<ThemeOption> themes = FXCollections.observableArrayList();
     private final ObjectProperty<ThemeOption> selectedTheme = new SimpleObjectProperty<>();
     private final BooleanProperty minimizeToTrayOnClose = new SimpleBooleanProperty();
-    private final BooleanProperty taskRiskAutoApproveEnabled = new SimpleBooleanProperty();
+    private final BooleanProperty computerAppAccessEnabled = new SimpleBooleanProperty();
+    private final StringProperty computerAppAccessStatus = new SimpleStringProperty("");
     private final StringProperty error = new SimpleStringProperty("");
     private final BooleanProperty busy = new SimpleBooleanProperty();
 
@@ -27,15 +28,18 @@ public final class GeneralSettingsViewModel {
         themes.setAll(options);
         selectedTheme.set(current);
         minimizeToTrayOnClose.set(settings.minimizeToTrayOnClose());
-        taskRiskAutoApproveEnabled.set(settings.taskRiskAutoApproveEnabled());
+        computerAppAccessEnabled.set(settings.computerAppAccessEnabled());
         error.set("");
     }
 
     public ObservableList<ThemeOption> themes() { return themes; }
     public ObjectProperty<ThemeOption> selectedThemeProperty() { return selectedTheme; }
     public BooleanProperty minimizeToTrayOnCloseProperty() { return minimizeToTrayOnClose; }
-    public BooleanProperty taskRiskAutoApproveEnabledProperty() {
-        return taskRiskAutoApproveEnabled;
+    public BooleanProperty computerAppAccessEnabledProperty() {
+        return computerAppAccessEnabled;
+    }
+    public StringProperty computerAppAccessStatusProperty() {
+        return computerAppAccessStatus;
     }
     public StringProperty errorProperty() { return error; }
     public BooleanProperty busyProperty() { return busy; }

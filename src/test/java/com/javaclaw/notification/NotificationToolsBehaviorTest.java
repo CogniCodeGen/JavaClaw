@@ -3,6 +3,7 @@ package com.javaclaw.notification;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterAll;
@@ -23,6 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -68,6 +71,17 @@ class NotificationToolsBehaviorTest {
     }
 
     @Test
+    void providerAcknowledgementRequiresNumericProtocolCode() {
+        assertTrue(NotificationTools.webhookAccepted("dingtalk", "{\"errcode\":0,\"errmsg\":\"ok\"}"));
+        assertTrue(NotificationTools.webhookAccepted("feishu", "{\"code\":0}"));
+        assertFalse(NotificationTools.webhookAccepted("dingtalk", "{\"errcode\":1,\"errmsg\":\"发送成功\"}"));
+        assertFalse(NotificationTools.webhookAccepted("wechat", "{\"errmsg\":\"ok\"}"));
+        assertFalse(NotificationTools.webhookAccepted("dingtalk", "{\"code\":0}"));
+        assertFalse(NotificationTools.webhookAccepted("feishu", "{\"errcode\":0}"));
+        assertFalse(NotificationTools.webhookAccepted("feishu", "{\"message\":\"\\\"code\\\":0\"}"));
+    }
+
+    @Test
     void listsBothDisabledAndConfiguredChannelStates() {
         String disabled = tools.listChannels();
         assertTrue(disabled.contains("未启用") && disabled.contains("未配置"), disabled);
@@ -91,6 +105,10 @@ class NotificationToolsBehaviorTest {
 
     @Test
     void routesEmptyUnknownAndDisabledChannelsWithoutExternalCalls() {
+        assertEquals(NotificationTools.DeliveryStatus.SKIPPED,
+                tools.sendByChannelResult("none", "title", "message").status());
+        assertEquals(NotificationTools.DeliveryStatus.FAILED,
+                tools.sendByChannelResult("carrier-pigeon", "title", "message").status());
         assertAll(
                 () -> assertTrue(tools.sendByChannel(null, "title", "message")
                         .contains("未选择")),
@@ -172,17 +190,113 @@ class NotificationToolsBehaviorTest {
             String wechat = tools.sendWechat("message", true);
             String feishu = tools.sendFeishu("title", "message");
             String custom = tools.sendCustomWebhook("message");
-            String routed = tools.sendByChannel("custom", "title", "message");
+            NotificationTools.DeliveryResult routed = tools.sendByChannelResult(
+                    "custom", "title", "message");
 
             assertAll(
-                    () -> assertTrue(all.contains("成功: 4, 失败: 0"), all),
-                    () -> assertTrue(dingtalk.contains("发送成功"), dingtalk),
-                    () -> assertTrue(wechat.contains("发送成功"), wechat),
-                    () -> assertTrue(feishu.contains("发送成功"), feishu),
-                    () -> assertTrue(custom.contains("发送成功"), custom),
-                    () -> assertTrue(routed.contains("发送成功"), routed),
+                    () -> assertTrue(all.contains("已接受: 4, 失败: 0"), all),
+                    () -> assertTrue(dingtalk.contains("实际送达未验证"), dingtalk),
+                    () -> assertTrue(wechat.contains("实际送达未验证"), wechat),
+                    () -> assertTrue(feishu.contains("实际送达未验证"), feishu),
+                    () -> assertTrue(custom.contains("实际送达未验证"), custom),
+                    () -> assertEquals(NotificationTools.DeliveryStatus.ACCEPTED, routed.status()),
                     () -> assertTrue(lastBody.get().contains("message"), lastBody.get()));
             assertTrue(requests.get() == 9, "本地 Webhook 请求数不符: " + requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void partialBroadcastKeepsAcceptedChannelsAndSignalsUncertainty() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/dingtalk", exchange -> {
+            byte[] body = "{\"errcode\":0}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/wechat", exchange -> {
+            byte[] body = "{\"errcode\":42}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            notificationConfig.setDingtalkEnabled(true);
+            notificationConfig.setDingtalkWebhook(base + "/dingtalk");
+            notificationConfig.setWechatEnabled(true);
+            notificationConfig.setWechatWebhook(base + "/wechat");
+            NotificationTools.DeliveryResult result = tools.sendByChannelResult(
+                    "all", "title", "message");
+            assertEquals(NotificationTools.DeliveryStatus.PARTIAL, result.status());
+            assertEquals(NotificationTools.DeliveryStatus.ACCEPTED,
+                    result.channels().get("dingtalk"));
+            assertEquals(NotificationTools.DeliveryStatus.FAILED,
+                    result.channels().get("wechat"));
+            try (ToolEffectCapture.Scope captured = ToolEffectCapture.begin("notify_send")) {
+                tools.sendNotification("message", "title");
+                assertEquals(ToolEffectCapture.Signal.UNCERTAIN, captured.signal());
+                assertEquals("PARTIAL", captured.data().path("status").asText());
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void signedFeishuBroadcastIncludesProtocolSignature() throws Exception {
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/feishu", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"code\":0}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            notificationConfig.setFeishuEnabled(true);
+            notificationConfig.setFeishuWebhook(
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/feishu");
+            notificationConfig.setFeishuSecret("signed-fixture-secret");
+            NotificationTools.DeliveryResult result = tools.sendByChannelResult(
+                    "all", "title", "message");
+            assertEquals(NotificationTools.DeliveryStatus.ACCEPTED, result.status());
+            var payload = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body.get());
+            assertTrue(payload.path("timestamp").isTextual());
+            assertTrue(payload.path("sign").isTextual()
+                    && !payload.path("sign").asText().isBlank());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void serverErrorKeepsNonIdempotentDeliveryUncertain() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/custom", exchange -> {
+            byte[] response = "temporary error".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(503, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            notificationConfig.setCustomEnabled(true);
+            notificationConfig.setCustomWebhook(
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/custom");
+            notificationConfig.setCustomBodyTemplate("{\"message\":\"${message}\"}");
+            NotificationTools.DeliveryResult result = tools.sendByChannelResult(
+                    "custom", "title", "message");
+            assertEquals(NotificationTools.DeliveryStatus.UNCERTAIN, result.status());
+            try (ToolEffectCapture.Scope captured = ToolEffectCapture.begin("notify_custom_webhook")) {
+                tools.sendCustomWebhook("message");
+                assertEquals(ToolEffectCapture.Signal.UNCERTAIN, captured.signal());
+            }
         } finally {
             server.stop(0);
         }

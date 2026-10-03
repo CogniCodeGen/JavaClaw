@@ -51,13 +51,21 @@ class PluginDescriptorLoaderTest {
     }
 
     @Test
-    void 显式三点零插件保持兼容(@TempDir Path dir) throws Exception {
+    void 仅四点零进程内插件兼容(@TempDir Path dir) throws Exception {
         var descriptor = LOADER.load(
-                pluginJar(dir, "current-plugin", "3.0"));
+                pluginJar(dir, "current-plugin", "4.0"));
 
-        assertEquals("3.0", descriptor.apiVersion());
+        assertEquals("4.0", descriptor.apiVersion());
         org.junit.jupiter.api.Assertions.assertTrue(
                 PluginManager.isApiCompatible(descriptor.apiVersion()));
+        org.junit.jupiter.api.Assertions.assertFalse(
+                PluginManager.isApiCompatible("3.0"));
+        org.junit.jupiter.api.Assertions.assertFalse(
+                PluginManager.isApiCompatible("4.9"));
+        org.junit.jupiter.api.Assertions.assertFalse(
+                PluginManager.isApiCompatible("4.garbage"));
+        org.junit.jupiter.api.Assertions.assertFalse(
+                PluginManager.isApiCompatible("4"));
     }
 
     @Test

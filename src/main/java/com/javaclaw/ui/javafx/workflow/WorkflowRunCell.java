@@ -30,11 +30,11 @@ public final class WorkflowRunCell extends ListCell<GraphRun> {
             setGraphic(null);
             return;
         }
-        statusLabel.setText(WorkflowLabels.runStatus(run.status()));
+        statusLabel.setText(WorkflowLabels.runStatus(run));
         statusLabel.getStyleClass().removeAll(
                 "jc-badge-running", "jc-badge-amber", "jc-badge-ok",
                 "jc-badge-failed", "jc-badge-stopped");
-        statusLabel.getStyleClass().add(WorkflowLabels.runStyle(run.status()));
+        statusLabel.getStyleClass().add(WorkflowLabels.runStyle(run));
         idLabel.setText("#" + run.id().substring(0, Math.min(8, run.id().length())));
         metaLabel.setText(run.stepCount() + " 步 · v" + run.workflowVersion());
         setAccessibleText(statusLabel.getText() + "，运行 " + idLabel.getText()

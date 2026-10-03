@@ -3,6 +3,8 @@ package com.javaclaw.schedule;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,6 +37,59 @@ class ScheduleManagerTest {
 
     private ScheduleManager manager;
 
+    @Test
+    void onlyUntilConditionDisablesAfterVerifiedTaskResult() throws Exception {
+        TaskResult verified = new TaskResult(TaskOutcome.VERIFIED_COMPLETE,
+                java.util.List.of(), "", java.util.List.of("receipt:verified"));
+        ScheduledTaskRunner runner = new ScheduledTaskRunner() {
+            @Override public void run(ScheduledRunControl control, ToolCallOrigin origin, String prompt,
+                                      ConversationCallbacks callbacks) {
+                callbacks.onEvent(new com.javaclaw.api.conversation.ConversationEvent.Reply(
+                        "普通正文：已经完成"));
+                callbacks.onTerminal(ConversationOutcome.completed(verified));
+            }
+            @Override public void shutdown() { }
+        };
+        manager = manager(runner);
+        ScheduledTask recurring = manager.saveNewTask(task("recurring", true));
+        ScheduledTask until = task("until", true);
+        until.setExecutionPolicy(ExecutionPolicy.UNTIL_CONDITION);
+        until = manager.saveNewTask(until);
+
+        assertEquals(ScheduleManager.RunNowResult.STARTED, manager.runNow(recurring.getId(), false));
+        await(() -> !manager.isActive(recurring.getId()), Duration.ofSeconds(3));
+        assertTrue(manager.getTask(recurring.getId()).isEnabled());
+
+        assertEquals(ScheduleManager.RunNowResult.STARTED, manager.runNow(until.getId(), false));
+        String untilId = until.getId();
+        await(() -> !manager.isActive(untilId), Duration.ofSeconds(3));
+        assertFalse(manager.getTask(untilId).isEnabled());
+        assertEquals(TaskOutcome.VERIFIED_COMPLETE,
+                manager.getTask(untilId).getExecRecords().getFirst().getTaskResult().outcome());
+    }
+
+    @Test
+    void unverifiedCompletionTextDoesNotDisableUntilCondition() throws Exception {
+        ScheduledTaskRunner runner = new ScheduledTaskRunner() {
+            @Override public void run(ScheduledRunControl control, ToolCallOrigin origin, String prompt,
+                                      ConversationCallbacks callbacks) {
+                callbacks.onEvent(new com.javaclaw.api.conversation.ConversationEvent.Reply(
+                        "完成！所有条件都已达到。"));
+                callbacks.onTerminal(ConversationOutcome.completed(TaskResult.unverified("证据不足")));
+            }
+            @Override public void shutdown() { }
+        };
+        manager = manager(runner);
+        ScheduledTask until = task("unverified", true);
+        until.setExecutionPolicy(ExecutionPolicy.UNTIL_CONDITION);
+        until = manager.saveNewTask(until);
+
+        assertEquals(ScheduleManager.RunNowResult.STARTED, manager.runNow(until.getId(), false));
+        String untilId = until.getId();
+        await(() -> !manager.isActive(untilId), Duration.ofSeconds(3));
+        assertTrue(manager.getTask(untilId).isEnabled());
+    }
+
     @AfterEach
     void tearDown() {
         if (manager != null) manager.shutdown();
@@ -55,7 +110,7 @@ class ScheduleManagerTest {
         await(() -> !manager.isActive(saved.getId()), Duration.ofSeconds(3));
         ScheduledTask stopped = manager.getTask(saved.getId());
         assertFalse(stopped.isEnabled());
-        assertEquals("已取消", stopped.getLastRunStatus());
+        assertEquals("CANCELLED", stopped.getLastRunStatus());
         assertEquals(1, stopped.getRunCount());
         assertEquals(0, stopped.getFailCount());
         assertTrue(runner.lastControl.isCancelled());
@@ -95,7 +150,7 @@ class ScheduleManagerTest {
         await(() -> !manager.isActive(saved.getId()), Duration.ofSeconds(3));
         ScheduledTask completed = manager.getTask(saved.getId());
         assertFalse(completed.isEnabled());
-        assertEquals("成功", completed.getLastRunStatus());
+        assertEquals("SUCCESS", completed.getLastRunStatus());
         assertEquals(1, completed.getRunCount());
         assertEquals(0, completed.getFailCount());
     }
@@ -140,7 +195,7 @@ class ScheduleManagerTest {
 
         ScheduledTask after = manager.getTask(saved.getId());
         assertFalse(after.isEnabled());
-        assertEquals("成功", after.getLastRunStatus());
+        assertEquals("SUCCESS", after.getLastRunStatus());
         assertEquals(1, after.getRunCount());
     }
 
@@ -268,7 +323,7 @@ class ScheduleManagerTest {
         await(() -> !manager.isActive(saved.getId()), Duration.ofSeconds(3));
 
         ScheduledTask failed = manager.getTask(saved.getId());
-        assertEquals("失败", failed.getLastRunStatus());
+        assertEquals("FAILURE", failed.getLastRunStatus());
         assertEquals(1, failed.getRunCount());
         assertEquals(1, failed.getFailCount());
     }

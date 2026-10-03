@@ -18,7 +18,7 @@ import java.util.List;
 
 /** Navigation history, element interaction, waiting and pointer tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserPageTools {
+final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetProvider {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserPageTools.class);
 
@@ -38,6 +38,14 @@ final class BrowserPageTools {
         this.origin = java.util.Objects.requireNonNull(origin, "origin");
         this.gate = java.util.Objects.requireNonNull(gate, "gate");
         this.targets = new BrowserTargetResolver(snapshotManager);
+    }
+
+    @Override public String effectTarget() {
+        gate.enter();
+        try {
+            Page page = browserManager.getActivePage();
+            return page == null ? "" : page.url();
+        } finally { gate.exit(); }
     }
 
     @Tool(name = "web_go_back", description = "浏览器后退到上一页")
@@ -118,9 +126,10 @@ final class BrowserPageTools {
 
     @Tool(
             name = "web_click",
-            description = "点击页面元素。通过引用（如 @e1）、CSS选择器或文本内容定位元素。" + "引用来自 web_snapshot 返回的元素列表。")
+            description = "点击页面元素。目标必须标明定位类型；@e1 引用来自 web_snapshot。"
+                    + BrowserTargetResolver.TOOL_FORMAT)
     public String click(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器（#id、.class）或文本内容")
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT)
                     String target) {
         gate.enter();
         try {
@@ -152,7 +161,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_dblclick", description = "双击页面元素。")
     public String doubleClick(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本内容") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_dblclick({})", target);
@@ -184,7 +193,7 @@ final class BrowserPageTools {
             name = "web_fill",
             description = "在输入框中填充文本（会先清空原有内容）。触发 input 和 change 事件。" + "适用于文本框、搜索框、密码框等。")
     public String fill(
-            @ToolParam( description = "目标输入框：引用（@e1）、CSS选择器或标签文本") String target,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target,
             @ToolParam( description = "要填充的文本内容") String text) {
         gate.enter();
         try {
@@ -215,7 +224,7 @@ final class BrowserPageTools {
             name = "web_type",
             description = "在当前焦点元素或指定元素中逐字输入文本（模拟键盘输入，不清空原有内容）。" + "适用于需要逐字触发事件的场景（如搜索自动补全）。")
     public String type(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本。传空字符串则在当前焦点元素输入")
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT + " 传空字符串则在当前焦点元素输入")
                     String target,
             @ToolParam( description = "要输入的文本") String text) {
         gate.enter();
@@ -254,7 +263,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_hover", description = "将鼠标悬停在指定元素上。可用于触发悬停菜单、提示框等。")
     public String hover(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_hover({})", target);
@@ -282,7 +291,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_select", description = "在下拉选择框中选择指定选项。可通过值、标签文本或索引选择。")
     public String select(
-            @ToolParam( description = "目标下拉框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target,
             @ToolParam( description = "要选择的选项值或标签文本") String value) {
         gate.enter();
         try {
@@ -320,7 +329,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_check", description = "勾选或取消勾选复选框/开关。")
     public String check(
-            @ToolParam( description = "目标复选框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target,
             @ToolParam( description = "是否勾选，true 为勾选，false 为取消") boolean checked) {
         gate.enter();
         try {
@@ -350,7 +359,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_focus", description = "将焦点移到指定元素上。")
     public String focus(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_focus({})", target);
@@ -378,7 +387,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_upload", description = "上传文件到文件输入框。")
     public String upload(
-            @ToolParam( description = "文件输入框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target,
             @ToolParam( description = "要上传的文件路径") String filePath) {
         gate.enter();
         try {
@@ -411,8 +420,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_drag", description = "将元素拖拽到目标位置。")
     public String drag(
-            @ToolParam( description = "源元素：引用（@e1）、CSS选择器") String source,
-            @ToolParam( description = "目标元素：引用（@e2）、CSS选择器")
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String source,
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT)
                     String targetElement) {
         gate.enter();
         try {
@@ -486,7 +495,7 @@ final class BrowserPageTools {
             @ToolParam( description = "滚动方向：up、down、left、right")
                     String direction,
             @ToolParam( description = "滚动像素数，默认 500") int amount,
-            @ToolParam( description = "可选的目标元素（在该元素内滚动），传空字符串则滚动整个页面")
+            @ToolParam(description = "可选；传空字符串滚动整个页面。" + BrowserTargetResolver.TOOL_FORMAT)
                     String target) {
         gate.enter();
         try {
@@ -539,7 +548,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_scroll_to_element", description = "滚动页面直到指定元素出现在可见区域内。")
     public String scrollToElement(
-            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT) String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_scroll_to_element({})", target);

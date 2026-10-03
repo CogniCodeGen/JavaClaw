@@ -16,6 +16,8 @@ import java.util.UUID;
  */
 public class ChatSession {
 
+    private static final String DEFAULT_TITLE = "新的对话";
+
     private static final DateTimeFormatter DISPLAY_FORMATTER =
             DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
@@ -24,6 +26,7 @@ public class ChatSession {
 
     /** 会话标题 */
     private String title;
+    private boolean autoTitlePending;
 
     /** 会话创建时间 */
     private final LocalDateTime createdAt;
@@ -43,14 +46,27 @@ public class ChatSession {
         this.messages = new ArrayList<>();
     }
 
+    /** A new conversation explicitly awaiting its first user-authored title. */
+    public static ChatSession untitled() {
+        ChatSession session = new ChatSession(DEFAULT_TITLE);
+        session.autoTitlePending = true;
+        return session;
+    }
+
     /**
      * 从持久化数据恢复会话
      */
     public ChatSession(String id, String title, LocalDateTime createdAt, List<ChatMessage> messages) {
+        this(id, title, createdAt, messages, false);
+    }
+
+    public ChatSession(String id, String title, LocalDateTime createdAt,
+                       List<ChatMessage> messages, boolean autoTitlePending) {
         this.id = id;
         this.title = title;
         this.createdAt = createdAt;
         this.messages = messages != null ? new ArrayList<>(messages) : new ArrayList<>();
+        this.autoTitlePending = autoTitlePending;
     }
 
     public String getId() {
@@ -68,7 +84,10 @@ public class ChatSession {
 
     public void setTitle(String title) {
         this.title = title;
+        this.autoTitlePending = false;
     }
+
+    public boolean isAutoTitlePending() { return autoTitlePending; }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;
@@ -86,17 +105,23 @@ public class ChatSession {
     }
 
     /**
-     * 根据第一条用户消息自动生成标题
+     * 根据第一条用户消息为尚未命名的会话生成标题。
      *
-     * <p>截取用户首条消息的前 20 个字符作为会话标题。</p>
+     * <p>截取用户首条消息的前 20 个字符；保留已有标题（包括分支标题）。</p>
+     *
+     * @return 标题是否发生变化
      */
-    public void autoTitle() {
+    public boolean autoTitle() {
+        if (!autoTitlePending) return false;
         for (ChatMessage msg : messages) {
-            if (msg.getRole() == ChatMessage.Role.USER && !msg.getContent().isBlank()) {
+            if (msg.getRole() == ChatMessage.Role.USER
+                    && msg.getContent() != null && !msg.getContent().isBlank()) {
                 String content = msg.getContent().trim();
                 this.title = content.length() > 20 ? content.substring(0, 20) + "..." : content;
-                return;
+                this.autoTitlePending = false;
+                return true;
             }
         }
+        return false;
     }
 }

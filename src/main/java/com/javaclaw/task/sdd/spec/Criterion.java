@@ -1,5 +1,6 @@
 package com.javaclaw.task.sdd.spec;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 /**
  * 单条可验证的验收谓词 —— 一个场景（{@link Scenario}）的成功判据。
  *
@@ -32,6 +33,7 @@ public record Criterion(String type, String predicate) {
     }
 
     /** 是否为代码可直接核验的确定性谓词（前三类）。 */
+    @JsonIgnore
     public boolean isDeterministic() {
         String t = normalizedType();
         return ARTIFACT_EXISTS.equals(t) || COMMAND_EXIT_ZERO.equals(t) || OUTPUT_CONTAINS.equals(t);

@@ -51,7 +51,7 @@
                                           styleClass="combo-box, settings-combo" onAction="#providerChanged"/>
                             </children>
                         </HBox>
-                        <Label text="切换提供商会自动填充推荐的 API 地址和模型名称"
+                        <Label text="切换提供商会填充推荐地址；模型名可从列表选择或自行输入"
                                styleClass="settings-hint"/>
                         <Separator/>
                         <Label fx:id="cloudConnectionLabel" text="API 连接" styleClass="settings-group-title"/>
@@ -65,10 +65,14 @@
                         <HBox fx:id="modelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
-                                <TextField fx:id="modelNameField" promptText="模型名称" prefWidth="350.0"
-                                           styleClass="text-input, text-field, settings-field"/>
+                                <ComboBox fx:id="modelNameField" editable="true" promptText="选择或输入模型名称"
+                                          prefWidth="350.0" styleClass="combo-box, settings-combo"/>
+                                <Button fx:id="modelDiscoveryRefreshButton" text="刷新列表"
+                                        styleClass="button, settings-secondary-button"/>
                             </children>
                         </HBox>
+                        <Label fx:id="modelDiscoveryStatusLabel" wrapText="true"
+                               styleClass="settings-hint"/>
                         <HBox fx:id="apiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>

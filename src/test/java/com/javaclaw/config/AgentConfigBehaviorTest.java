@@ -1,12 +1,21 @@
 package com.javaclaw.config;
 
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.application.settings.BehaviorSettingsApplicationService.GeneralSettings;
+import com.javaclaw.desktop.agent.ConfiguredDesktopAccess;
+import com.javaclaw.desktop.api.DesktopAvailability;
+import com.javaclaw.desktop.api.DesktopConsentPort;
+import com.javaclaw.desktop.api.DesktopSessionOwner;
+import com.javaclaw.desktop.api.DesktopSystemPermissionService;
+import com.javaclaw.desktop.api.DesktopTarget;
+import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Path;
 import java.util.Properties;
@@ -15,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentConfigBehaviorTest {
@@ -154,6 +164,40 @@ class AgentConfigBehaviorTest {
     }
 
     @Test
+    void desktopAccessSwitchGrantsAllSessionPurposesOnlyWhileOsPermissionsAreReady() {
+        java.util.concurrent.atomic.AtomicBoolean permitted = new java.util.concurrent.atomic.AtomicBoolean();
+        DesktopSystemPermissionService osPermissions = new DesktopSystemPermissionService() {
+            @Override public DesktopAvailability status() {
+                return new DesktopAvailability(permitted.get(), "test", 0,
+                        permitted.get() ? "ready" : "permission missing");
+            }
+            @Override public DesktopAvailability requestPermissions() { return status(); }
+        };
+        ConfiguredDesktopAccess access = new ConfiguredDesktopAccess(config, osPermissions);
+        DesktopSessionOwner owner = new DesktopSessionOwner("workspace", "session", "chat", "chat-1");
+        DesktopTarget target = new DesktopTarget("test", "target", 1, "App", "Window",
+                0, 0, 1, 1, DesktopTarget.VISIBLE);
+
+        assertFalse(access.enabled());
+        assertThrows(SecurityException.class,
+                () -> access.request(owner, target, DesktopConsentPort.Purpose.OBSERVE));
+        config.setComputerAppAccessEnabled(true);
+        assertTrue(access.enabled());
+        assertFalse(access.accessStatus().available());
+        assertThrows(IllegalStateException.class,
+                () -> access.request(owner, target, DesktopConsentPort.Purpose.CONTROL));
+        permitted.set(true);
+        assertTrue(access.accessStatus().available());
+        for (DesktopConsentPort.Purpose purpose : DesktopConsentPort.Purpose.values()) {
+            assertTrue(access.request(owner, target, purpose));
+        }
+        permitted.set(false);
+        assertFalse(access.accessStatus().available());
+        config.setComputerAppAccessEnabled(false);
+        assertFalse(access.enabled());
+    }
+
+    @Test
     void modesPersistenceAndResetKeepAStablePublicConfigurationSurface() {
         config.setHttpVersion("HTTP_2");
         assertTrue(config.isHttp2());
@@ -192,6 +236,40 @@ class AgentConfigBehaviorTest {
         config.setModelName("custom-before-reset");
         config.resetToDefaults();
         assertEquals(AgentConfigSchema.DEFAULT_MODEL_NAME, config.getModelName());
+    }
+
+    @Test
+    void computerAppAccessIsOffByDefaultAndPersistsAcrossReload() {
+        AgentConfigBehaviorSettingsAdapter settings =
+                new AgentConfigBehaviorSettingsAdapter(config);
+        assertFalse(config.isComputerAppAccessEnabled());
+        assertFalse(settings.load().general().computerAppAccessEnabled());
+
+        settings.saveGeneral(new GeneralSettings(true, true));
+        assertTrue(config.isComputerAppAccessEnabled());
+        config.reload();
+        assertTrue(settings.load().general().computerAppAccessEnabled());
+
+        settings.saveGeneral(new GeneralSettings(true, false));
+        assertFalse(config.isComputerAppAccessEnabled());
+        config.reload();
+        assertFalse(settings.load().general().computerAppAccessEnabled());
+
+        settings.saveGeneral(new GeneralSettings(true, true));
+        config.resetToDefaults();
+        assertFalse(config.isComputerAppAccessEnabled());
+    }
+
+    @Test
+    void failedSettingsSaveCannotGrantDesktopAccessInMemory() {
+        AgentConfigBehaviorSettingsAdapter settings =
+                new AgentConfigBehaviorSettingsAdapter(config);
+        context.getBean(JdbcTemplate.class).execute("DROP TABLE app_properties");
+
+        assertThrows(IllegalStateException.class,
+                () -> settings.saveGeneral(new GeneralSettings(false, true)));
+        assertFalse(config.isComputerAppAccessEnabled());
+        assertTrue(config.isTrayMinimizeOnClose());
     }
 
     private void raw(String key, String value) {

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -112,6 +113,8 @@ class ArchitectureRulesTest {
                         "com.javaclaw.framework..",
                         "com.javaclaw.platform.spring..",
                         "com.javaclaw.infrastructure..")
+                .and()
+                .haveNameNotMatching("com\\.javaclaw\\.agent\\.ToolRiskRegistry(\\$.*)?")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
@@ -120,6 +123,19 @@ class ArchitectureRulesTest {
                         "com.javaclaw.framework.builtin..")
                 .because("product features consume public framework API/SPI, not extension loading, stores or built-ins")
                 .check(productionClasses);
+
+        // The security inventory must know the exact declaring class of the one
+        // framework-owned clarification tool to prevent a plugin impersonating it.
+        // Keep this exception limited to that identity, rather than exempting the
+        // product package from the framework boundary.
+        var builtinDependencies = productionClasses.stream()
+                .filter(type -> type.getName().startsWith("com.javaclaw.agent.ToolRiskRegistry"))
+                .flatMap(type -> type.getDirectDependenciesFromSelf().stream())
+                .map(dependency -> dependency.getTargetClass().getName())
+                .filter(name -> name.startsWith("com.javaclaw.framework.builtin."))
+                .collect(java.util.stream.Collectors.toSet());
+        assertEquals(java.util.Set.of("com.javaclaw.framework.builtin.ClarifyTools"),
+                builtinDependencies);
     }
 
     @Test
@@ -181,6 +197,45 @@ class ArchitectureRulesTest {
                 .resideInAPackage("io.teknek." + "deliverance..")
                 .because("Deliverance and native inference must remain in its isolated service-plugin JVM")
                 .check(productionClasses);
+    }
+
+    @Test
+    void executionAndAcceptanceCannotRecoverStateFromDisplayText() {
+        noClasses()
+                .that().resideInAnyPackage(
+                        "com.javaclaw.framework.core..",
+                        "com.javaclaw.framework.springai..",
+                        "com.javaclaw.loop..",
+                        "com.javaclaw.workflow..",
+                        "com.javaclaw.schedule..",
+                        "com.javaclaw.task.sdd.verify..")
+                .should().callMethod(com.javaclaw.agent.model.ToolResponse.class,
+                        "isSuccess", String.class)
+                .because("tool display messages cannot establish execution status")
+                .check(productionClasses);
+        assertFalse(Files.exists(Path.of("src/main/java/com/javaclaw/task/sdd/spec/SpecParser.java")),
+                "SDD state must not regain a Markdown parser");
+    }
+
+    @Test
+    void controlPackagesDoNotBranchOnDisplayWordsOrInternalNamePrefixes() throws Exception {
+        List<String> forbidden = List.of(
+                "getMessage().contains(", "displayMessage().contains(",
+                "contains(\"完成\")", "contains(\"成功\")", "contains(\"失败\")",
+                "startsWith(\"framework_\")", "startsWith(\"desktop_session_\")");
+        for (String directory : List.of("framework/core", "framework/springai", "loop",
+                "workflow", "schedule", "task/sdd/verify", "application/schedule")) {
+            Path root = Path.of("src/main/java/com/javaclaw", directory);
+            try (var files = Files.walk(root)) {
+                for (Path source : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                    String text = Files.readString(source);
+                    for (String pattern : forbidden) {
+                        assertFalse(text.contains(pattern),
+                                () -> source + " branches on display text or a tool-name prefix: " + pattern);
+                    }
+                }
+            }
+        }
     }
 
     @Test

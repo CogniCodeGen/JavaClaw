@@ -23,28 +23,19 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatHistoryMetricsTest {
 
     private static org.springframework.context.annotation.AnnotationConfigApplicationContext root;
-    private static String previousDataDirectory;
 
     @TempDir
     static Path tempDirectory;
 
     @BeforeAll
     static void initWorkspace() {
-        previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
-        System.setProperty(DataRoot.DATA_DIR_PROPERTY,
-                tempDirectory.resolve("data").toString());
-        root = ApplicationContexts.createRoot(DataRoot.resolve());
+        root = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("data")));
     }
 
     @AfterAll
     static void closeContext() {
         if (root != null) {
             root.close();
-        }
-        if (previousDataDirectory == null) {
-            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
-        } else {
-            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
         }
     }
 

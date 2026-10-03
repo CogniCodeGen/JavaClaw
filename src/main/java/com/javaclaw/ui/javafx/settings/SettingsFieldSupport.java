@@ -124,6 +124,10 @@ public final class SettingsFieldSupport {
         return field.getText() == null ? "" : field.getText().strip();
     }
 
+    static void setDisabled(boolean disabled, Node... nodes) {
+        for (Node node : nodes) node.setDisable(disabled);
+    }
+
     private static void error(TextField field, String message) {
         if (!field.getStyleClass().contains("field-error")) {
             field.getStyleClass().add("field-error");

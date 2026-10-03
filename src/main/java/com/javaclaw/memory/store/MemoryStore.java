@@ -204,10 +204,9 @@ public class MemoryStore implements AutoCloseable {
             requireOpen();
             task.run();
         } catch (RuntimeException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
-                throw e;
-            }
-            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+            if (e instanceof MemoryStoreClosedException) throw e;
+            if (e instanceof MemoryWriteException wrapped && wrapped.storeLabel.equals(label)) throw e;
+            throw new MemoryWriteException(label, e);
         } finally {
             writeLock.unlock();
         }
@@ -220,20 +219,34 @@ public class MemoryStore implements AutoCloseable {
             requireOpen();
             return task.call();
         } catch (RuntimeException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
-                throw e;
-            }
-            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+            if (e instanceof MemoryStoreClosedException) throw e;
+            if (e instanceof MemoryWriteException wrapped && wrapped.storeLabel.equals(label)) throw e;
+            throw new MemoryWriteException(label, e);
         } catch (Exception e) {
-            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+            throw new MemoryWriteException(label, e);
         } finally {
             writeLock.unlock();
         }
     }
 
+    private static final class MemoryWriteException extends RuntimeException {
+        private final String storeLabel;
+
+        private MemoryWriteException(String storeLabel, Throwable cause) {
+            super("[" + storeLabel + "] 记忆写入失败", cause);
+            this.storeLabel = storeLabel;
+        }
+    }
+
+    private static final class MemoryStoreClosedException extends IllegalStateException {
+        private MemoryStoreClosedException(String label) {
+            super("[" + label + "] 记忆存储已关闭，拒绝写入");
+        }
+    }
+
     private void requireOpen() {
         if (invalidated || mgr == null || root == null) {
-            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
+            throw new MemoryStoreClosedException(label);
         }
     }
 
@@ -255,11 +268,18 @@ public class MemoryStore implements AutoCloseable {
 
     public Episode findTurn(String turnId) {
         if (turnId == null) return null;
-        requireOpen();
-        Episode[] found = {null};
-        root.episodes.iterate(e -> { if (turnId.equals(e.turnId)) found[0] = e; });
-        if (found[0] == null) root.pendingEpisodes.iterate(e -> { if (turnId.equals(e.turnId)) found[0] = e; });
-        return found[0];
+        writeLock.lock();
+        try {
+            requireOpen();
+            Episode[] found = {null};
+            root.episodes.iterate(e -> { if (turnId.equals(e.turnId)) found[0] = e; });
+            if (found[0] == null) root.pendingEpisodes.iterate(e -> {
+                if (turnId.equals(e.turnId)) found[0] = e;
+            });
+            return found[0];
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     public void markDistilled(Episode episode) {

@@ -24,6 +24,6 @@ public final class SkillPrompts {
                patch 的 oldString 必须谨慎——你看不到技能正文时宁可不 patch（worthLearning=false）。
             4. create 的正文要写成可执行的操作指南：按「## 适用场景 → ## 操作步骤 → ## 注意事项 → ## 验证方法」
                组织，步骤具体到工具与参数，不写空泛原则。
-            5. 中文输出。
+            5. 技能内容跟随用户的语言。
             """;
 }

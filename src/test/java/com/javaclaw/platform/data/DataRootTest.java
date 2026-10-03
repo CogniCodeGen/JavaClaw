@@ -17,17 +17,27 @@ class DataRootTest {
     Path tempDirectory;
 
     @Test
-    void defaultDirectoryUsesDataUnderWorkingDirectory() {
+    void defaultDirectoryUsesLauncherHomeNotWorkingDirectory() {
         String previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         String previousWorkingDirectory = System.getProperty("user.dir");
         System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty("user.dir", tempDirectory.toString());
         try {
-            assertEquals(tempDirectory.resolve("data").toAbsolutePath().normalize(),
-                    DataRoot.resolve().path());
+            assertEquals(ApplicationHome.resolve().dataDirectory(), DataRoot.resolve().path());
         } finally {
             restoreProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
             restoreProperty("user.dir", previousWorkingDirectory);
+        }
+    }
+
+    @Test
+    void externalDataOverrideIsRejected() {
+        String previous = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("outside").toString());
+        try {
+            assertThrows(IllegalStateException.class, DataRoot::resolve);
+        } finally {
+            restoreProperty(DataRoot.DATA_DIR_PROPERTY, previous);
         }
     }
 
@@ -63,6 +73,22 @@ class DataRootTest {
                 () -> new DataRoot(tempDirectory).prepare());
 
         assertTrue(failure.getMessage().contains("格式版本为 2"));
+    }
+
+    @Test
+    void managedChildrenRejectLexicalAndSymbolicLinkEscape() throws IOException {
+        DataRoot root = new DataRoot(tempDirectory.resolve("data")).prepare();
+        Path outside = Files.createDirectories(tempDirectory.resolve("outside"));
+        assertThrows(IOException.class,
+                () -> root.requireManaged(outside.resolve("capture.png")));
+
+        Path screenshots = Files.createDirectories(root.path().resolve("screenshots"));
+        Files.createSymbolicLink(screenshots.resolve("workspace"), outside);
+        assertThrows(IOException.class,
+                () -> root.requireDirectory(screenshots.resolve("workspace")));
+        try (var entries = Files.list(outside)) {
+            assertTrue(entries.findAny().isEmpty());
+        }
     }
 
     private static void restoreProperty(String name, String value) {

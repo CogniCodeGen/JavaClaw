@@ -40,7 +40,6 @@ class SettingsWindowFxmlLoadTest {
     private WorkspaceContextHandle workspace;
     private PlaywrightBrowserManager browser;
     private SettingsView view;
-    private String previousDataDirectory;
 
     @BeforeAll
     static void startToolkit() throws Exception {
@@ -62,18 +61,11 @@ class SettingsWindowFxmlLoadTest {
         if (workspace != null) workspace.close();
         if (browser != null) browser.shutdown();
         if (root != null) root.close();
-        if (previousDataDirectory == null) {
-            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
-        } else {
-            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
-        }
     }
 
     @Test
     void windowShellLoadsWithoutCreatingAnySettingsSectionAndClosesCleanly() throws Exception {
-        previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
-        System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("data").toString());
-        root = ApplicationContexts.createRoot(DataRoot.resolve());
+        root = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("data")));
         WorkspaceManager workspaces = root.getBean(WorkspaceManager.class);
         DataManager data = root.getBean(DataManager.class);
         WorkspaceContext current = WorkspaceContext.captureCurrent(workspaces, data);

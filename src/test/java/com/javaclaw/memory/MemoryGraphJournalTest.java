@@ -207,7 +207,8 @@ class MemoryGraphJournalTest {
             String recalled = fixture.memory.recall(scope("immediate"), "银杏计划", 8);
             assertTrue(recalled.contains("批准银杏计划"), recalled);
             assertEquals(1, fixture.memory.inScope(scope("immediate")).episodes().size());
-            assertTrue(fixture.memory.facts().stream().anyMatch(f -> f.text.contains("我偏好简短句子")));
+            assertTrue(fixture.memory.facts().isEmpty(),
+                    "提交原文不能绕过结构化偏好提议直接晋升");
             assertEquals(2, fixture.memory.inScope(scope("immediate")).store().root().observedThreadSequence);
         }
     }

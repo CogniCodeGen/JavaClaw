@@ -108,7 +108,7 @@ class ToolConfirmationManagerBehaviorTest {
     void globalSwitchAndReviewModesSelectTheExpectedGate() {
         assertTrue(ToolConfirmationManager.isEnabled());
         assertSame(port, ToolConfirmationManager.getPort());
-        assertFalse(ToolConfirmationManager.requiresConfirmation("unregistered_tool"));
+        assertTrue(ToolConfirmationManager.requiresConfirmation("unregistered_tool"));
         assertTrue(ToolConfirmationManager.requiresConfirmation("sys_file_write"));
 
         ToolConfirmationManager.setEnabled(false);
@@ -118,7 +118,7 @@ class ToolConfirmationManagerBehaviorTest {
         assertEquals(0, port.confirmations.size());
 
         ToolConfirmationManager.setEnabled(true);
-        assertTrue(ToolConfirmationManager.requestConfirmation(
+        assertFalse(ToolConfirmationManager.requestConfirmation(
                 ToolCallOrigin.UNKNOWN, "unregistered_tool", "noop"));
         assertEquals(0, port.confirmations.size());
 
@@ -345,15 +345,22 @@ class ToolConfirmationManagerBehaviorTest {
     }
 
     @Test
-    void commandDescriptionEnablesOnlyDeterministicallyReadOnlyCommands() {
+    void commandDescriptionNeverGrantsReadOnlyShellApproval() {
         ToolCallOrigin task = ToolCallOrigin.managedTask("command", "/workspace/project");
         port.decision = ConfirmDecision.DENY;
 
         String description = ToolConfirmationManager.buildCommandDescription(
                 "ls /tmp | grep cache", "/workspace/project");
         assertEquals("命令: ls /tmp | grep cache | 目录: /workspace/project", description);
-        assertTrue(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", description));
-        assertTrue(port.notifications.getLast().message().contains("只读命令"));
+        assertFalse(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", description));
+        assertEquals(1, port.confirmations.size());
+
+        ToolConfirmationManager.requestHighRiskCommandConfirmation(task, "cmd_execute",
+                "普通展示文字", "ls /tmp | grep cache", "/workspace/project");
+        assertEquals("ls /tmp | grep cache",
+                port.confirmations.getLast().operationParameters().get("command"));
+        assertEquals("/workspace/project",
+                port.confirmations.getLast().operationParameters().get("workDir"));
 
         String mutating = ToolConfirmationManager.buildCommandDescription(
                 "touch target/output.txt", "/workspace/project");
@@ -372,7 +379,6 @@ class ToolConfirmationManagerBehaviorTest {
                         "cat file > output", "/workspace/project")));
 
         useMode(ToolReviewMode.SMART);
-        config.setTaskRiskAutoApproveEnabled(false);
         assertFalse(ToolConfirmationManager.requestConfirmation(task, "cmd_execute", description));
     }
 
@@ -410,7 +416,6 @@ class ToolConfirmationManagerBehaviorTest {
 
     private static void useMode(ToolReviewMode mode) {
         config.setToolReviewMode(mode);
-        config.setTaskRiskAutoApproveEnabled(true);
         ToolConfirmationManager.configure(config);
     }
 

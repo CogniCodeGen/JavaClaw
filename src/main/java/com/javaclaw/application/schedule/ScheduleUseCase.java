@@ -45,7 +45,7 @@ public final class ScheduleUseCase implements ScheduleApplicationService {
                 command.intervalUnit(), command.dailyTime(), command.cronExpression(),
                 command.onceDateTime(), command.prompt(), enabled, command.version(),
                 command.notifyEnabled(), command.notifyChannel(),
-                command.unattendedToolsAuthorized(), command.draft()));
+                command.unattendedToolsAuthorized(), command.draft(), command.executionPolicy()));
         if (checked.draft()) {
             throw new ValidationException("草稿必须先保存，之后才能切换运行状态");
         }
@@ -107,7 +107,7 @@ public final class ScheduleUseCase implements ScheduleApplicationService {
                 command.onceDateTime().strip(), prompt, command.enabled(), command.version(),
                 command.notifyEnabled(), command.notifyChannel().isBlank()
                         ? "none" : command.notifyChannel(),
-                command.unattendedToolsAuthorized(), command.draft());
+                command.unattendedToolsAuthorized(), command.draft(), command.executionPolicy());
     }
 
     private static void validateTrigger(String trigger, int interval, String daily,

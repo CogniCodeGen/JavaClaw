@@ -237,7 +237,16 @@ public final class SddTaskController implements AutoCloseable {
         fx.dispatch(() -> {
             if (closed.get()) return;
             if (event instanceof Event.Log log) {
-                if (log.taskId().equals(selectedId)) detailPanelController.appendLog(log.message());
+                if (log.taskId().equals(selectedId)) {
+                    SddLogEntry.Kind kind = log.kind() == null ? SddLogEntry.Kind.DEFAULT
+                            : switch (log.kind()) {
+                                case DEFAULT -> SddLogEntry.Kind.DEFAULT;
+                                case INFO -> SddLogEntry.Kind.INFO;
+                                case OK -> SddLogEntry.Kind.OK;
+                                case WARN -> SddLogEntry.Kind.WARN;
+                            };
+                    detailPanelController.appendLog(log.message(), kind);
+                }
                 return;
             }
             Task task = ((Event.Changed) event).task();

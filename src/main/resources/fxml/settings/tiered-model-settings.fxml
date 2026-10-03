@@ -60,10 +60,15 @@
                         <HBox fx:id="normalModelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
-                                <TextField fx:id="normalModelNameField" prefWidth="350.0"
-                                           styleClass="text-input, text-field, settings-field"/>
+                                <ComboBox fx:id="normalModelNameField" editable="true"
+                                          promptText="选择或输入模型名称" prefWidth="350.0"
+                                          styleClass="combo-box, settings-combo"/>
+                                <Button fx:id="normalDiscoveryRefreshButton" text="刷新列表"
+                                        styleClass="button, settings-secondary-button"/>
                             </children>
                         </HBox>
+                        <Label fx:id="normalDiscoveryStatusLabel" wrapText="true"
+                               styleClass="settings-hint"/>
                         <HBox fx:id="normalApiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
@@ -121,10 +126,15 @@
                         <HBox fx:id="lightModelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
-                                <TextField fx:id="lightModelNameField" prefWidth="350.0"
-                                           styleClass="text-input, text-field, settings-field"/>
+                                <ComboBox fx:id="lightModelNameField" editable="true"
+                                          promptText="选择或输入模型名称" prefWidth="350.0"
+                                          styleClass="combo-box, settings-combo"/>
+                                <Button fx:id="lightDiscoveryRefreshButton" text="刷新列表"
+                                        styleClass="button, settings-secondary-button"/>
                             </children>
                         </HBox>
+                        <Label fx:id="lightDiscoveryStatusLabel" wrapText="true"
+                               styleClass="settings-hint"/>
                         <HBox fx:id="lightApiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>

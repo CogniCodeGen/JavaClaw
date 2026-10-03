@@ -74,11 +74,18 @@ class FunctionalAcceptanceInventoryTest {
     private static final Set<String> EXPECTED_MODE_IDS = Set.of(
             "chat", "plan", "loop", "workflow", "shell", "task", "workflow-center");
     private static final Set<String> EXPECTED_TOOL_GROUPS = Set.of(
-            "agents", "coding", "command", "desktop", "dynamic_task", "email",
+            "agents", "coding", "command", "desktop-session", "dynamic_task", "email",
             "knowledge", "mcp", "media", "notification", "plugins", "schedule",
             "skill", "system", "task_manage", "web");
     private static final Set<String> TOOL_PERMISSIONS = Set.of(
             "tool.read", "tool.execute", "interaction.request");
+    private static final Set<String> DESKTOP_SESSION_TOOLS = Set.of(
+            "desktop_session_probe", "desktop_session_targets",
+            "desktop_session_launch_application", "desktop_session_open",
+            "desktop_session_snapshot", "desktop_session_observe",
+            "desktop_session_click", "desktop_session_type",
+            "desktop_session_key", "desktop_session_scroll",
+            "desktop_session_takeover", "desktop_session_close");
 
     @TempDir
     Path temporaryDirectory;
@@ -161,8 +168,8 @@ class FunctionalAcceptanceInventoryTest {
             }
         }
 
-        assertEquals(167, methodCount);
-        assertEquals(167, names.size());
+        assertEquals(168, methodCount);
+        assertEquals(168, names.size());
         assertEquals(EXPECTED_TOOL_GROUPS, groups);
         assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
     }
@@ -210,11 +217,16 @@ class FunctionalAcceptanceInventoryTest {
         Map<String, String> failures = new LinkedHashMap<>();
         Set<String> invoked = new LinkedHashSet<>();
         try {
-            assertEquals(List.of(137, 140, 137),
+            assertEquals(List.of(149, 152, 149),
                     bundles.stream().map(List::size).toList(),
                     "交互、SDD 与 Loop Run 的专属工具装配数量不符");
-            assertEquals(142, uniqueTools.size(),
-                    "严格隔离仅应排除 desktop/command/jshell/plugin 共 25 个工具");
+            assertEquals(DESKTOP_SESSION_TOOLS, uniqueTools.values().stream()
+                            .filter(tool -> "desktop-session".equals(tool.descriptor().group()))
+                            .map(tool -> tool.descriptor().name())
+                            .collect(java.util.stream.Collectors.toSet()),
+                    "逐会话授权的桌面工具清单不符");
+            assertEquals(154, uniqueTools.size(),
+                    "严格隔离应保留 12 个逐会话授权的桌面工具，并继续隔离旧命令等工具");
             for (FrameworkTool tool : uniqueTools.values()) {
                 String name = tool.descriptor().name();
                 try {
@@ -242,7 +254,7 @@ class FunctionalAcceptanceInventoryTest {
             if (closeFailure != null) throw closeFailure;
         }
 
-        assertEquals(142, invoked.size(), () -> "未完成直接调用: " + failures);
+        assertEquals(154, invoked.size(), () -> "未完成直接调用: " + failures);
         assertTrue(failures.isEmpty(), () -> "工具桥直接调用异常: " + failures);
     }
 
@@ -292,28 +304,22 @@ class FunctionalAcceptanceInventoryTest {
             results.put("plugin_list_tools", plugins.listTools());
             results.put("plugin_call_tool", plugins.callTool("missing", "missing", "{}"));
 
-            com.javaclaw.desktop.DesktopTools desktop =
-                    rootContext.getBean(com.javaclaw.desktop.DesktopToolFactory.class)
-                            .create(ToolCallOrigin.INTERACTIVE,
-                                    kernel.current().context().screenshotsDir());
-            results.put("desktop_probe", desktop.probe());
-            results.put("desktop_launch", desktop.launch("JavaClaw acceptance", null));
-            results.put("desktop_list_windows", desktop.listWindows());
-            results.put("desktop_activate", desktop.activate("JavaClaw acceptance"));
-            results.put("desktop_capture", desktop.capture(null));
-            results.put("desktop_inspect", desktop.inspect(null));
-            results.put("desktop_click_ref", desktop.clickRef("missing", 1));
-            results.put("desktop_type_ref", desktop.typeRef("missing", "acceptance"));
-            results.put("desktop_click", desktop.click(0, 0, "left", 1));
-            results.put("desktop_type", desktop.type("acceptance"));
-            results.put("desktop_key", desktop.key("escape"));
+            com.javaclaw.desktop.agent.DesktopSessionTools desktop =
+                    new com.javaclaw.desktop.agent.DesktopSessionTools(
+                            rootContext.getBean(com.javaclaw.desktop.api.DesktopSessionService.class),
+                            new com.javaclaw.desktop.api.DesktopSessionOwner(
+                                    kernel.current().context().workspaceId(), "acceptance",
+                                    "test", "acceptance"),
+                            kernel.current().context().screenshotsDir());
+            results.put("desktop_session_probe", desktop.probe());
+            results.put("desktop_session_targets", desktop.targets());
         } finally {
             settings.setToolReviewMode(previousMode);
             ToolConfirmationManager.setPort(previousPort);
             ToolConfirmationManager.setEnabled(previousConfirmationState);
         }
 
-        assertEquals(25, results.size());
+        assertEquals(16, results.size());
         results.forEach((name, result) -> {
             assertTrue(result != null && !result.isBlank(), () -> name + " 返回空结果");
             assertTrue(result.startsWith("[" + name + "]"),

@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 
 /** Site navigation, account selection and authenticated-session tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserSiteTools {
+final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetProvider {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSiteTools.class);
 
@@ -51,6 +51,14 @@ final class BrowserSiteTools {
         this.json = java.util.Objects.requireNonNull(json, "json");
         this.targets = new BrowserTargetResolver(snapshotManager);
         this.sessionRestorer = new SiteSessionRestorer(json);
+    }
+
+    @Override public String effectTarget() {
+        gate.enter();
+        try {
+            Page page = browserManager.getActivePage();
+            return page == null ? "" : page.url();
+        } finally { gate.exit(); }
     }
 
     @Tool(
@@ -107,13 +115,13 @@ final class BrowserSiteTools {
                 if (login.loginRequired()) {
                     if (origin.kind() == ToolCallOrigin.Kind.INTERACTIVE) {
                         return performInteractiveLogin(
-                                "web_navigate", normalizedUrl, page.url(), login.reason());
+                                "web_navigate", normalizedUrl, page.url(), login.reason(), true);
                     }
                     String modeHint =
                             origin.kind() == ToolCallOrigin.Kind.SCHEDULED
                                     ? "定时任务无法等待用户登录，请先在交互聊天中登录并保存站点后重试。"
                                     : "当前为托管任务，请先在交互聊天中登录并保存站点，再继续任务。";
-                    return ToolResponse.success(
+                    return ToolResponse.pending(
                             "web_navigate",
                             String.format(
                                     "已导航到: %s%n标题: %s%nHTTP状态: %d%n" + "[登录] 检测到页面需要身份验证（%s）。%s",
@@ -161,17 +169,26 @@ final class BrowserSiteTools {
             description =
                     "为当前聊天/任务选择访问某站点时使用的账号身份。"
                             + "同一站点保存多个账号或用户明确要求换号时，必须先调用本工具；"
-                            + "account 可传账号配置名称、用户名、配置 ID，或 new 表示使用全新空白账号。"
+                            + "使用 newAccount=true 选择全新空白账号，或 newAccount=false 并传准确 accountId。"
                             + "切换会创建干净 BrowserContext，旧账号数据不会混入。")
     public String siteSelectAccount(
             @ToolParam( description = "目标站点 URL，例如 https://github.com") String url,
-            @ToolParam( description = "账号配置名称、用户名、配置 ID；传 new/新账号 表示不恢复已保存登录")
-                    String account) {
+            @ToolParam(required = false, description = "true 表示使用全新空白账号；否则传 accountId")
+                    Boolean newAccount,
+            @ToolParam(required = false, description = "已保存账号的准确配置 ID；newAccount=true 时留空")
+                    String accountId) {
         gate.enter();
         try {
-            log.debug("工具调用: site_select_account({}, {})", url, account);
+            log.debug("工具调用: site_select_account({}, newAccount={}, accountId={})",
+                    url, newAccount, accountId);
             try {
                 String normalizedUrl = PlaywrightBrowserManager.normalizeUrl(url);
+                boolean createNew = Boolean.TRUE.equals(newAccount);
+                String requested = accountId == null ? "" : accountId.strip();
+                if (createNew == !requested.isBlank()) {
+                    return ToolResponse.error("site_select_account",
+                            "必须二选一：newAccount=true 且 accountId 为空，或 newAccount=false 且传准确账号 ID");
+                }
                 if (!ToolConfirmationManager.requestConfirmation(
                         origin, "site_select_account", "切换站点账号将清空当前浏览器会话状态: " + normalizedUrl)) {
                     return ToolResponse.error("site_select_account", "用户取消了账号切换");
@@ -179,11 +196,7 @@ final class BrowserSiteTools {
 
                 SiteCredentialManager manager = siteCredentials;
                 String scopeId = browserManager.getActiveScopeId();
-                String requested = account == null ? "" : account.trim();
-                if (requested.equalsIgnoreCase("new")
-                        || requested.equalsIgnoreCase("new-account")
-                        || requested.equals("新账号")
-                        || requested.equals("不使用已保存账号")) {
+                if (createNew) {
                     if (!manager.bindNewAccount(scopeId, normalizedUrl)) {
                         return ToolResponse.error("site_select_account", "保存新账号选择失败");
                     }
@@ -194,23 +207,12 @@ final class BrowserSiteTools {
                 }
 
                 List<SiteCredential> matches = manager.findAllByUrl(normalizedUrl);
-                List<SiteCredential> selected =
-                        matches.stream()
-                                .filter(
-                                        candidate ->
-                                                requested.equals(candidate.getId())
-                                                        || requested.equalsIgnoreCase(
-                                                                nullToEmpty(candidate.getName()))
-                                                        || requested.equalsIgnoreCase(
-                                                                nullToEmpty(
-                                                                        candidate.getUsername())))
-                                .toList();
+                List<SiteCredential> selected = matches.stream()
+                        .filter(candidate -> requested.equals(candidate.getId())).toList();
                 if (selected.size() != 1) {
                     return ToolResponse.error(
                             "site_select_account",
-                            selected.isEmpty()
-                                    ? "未找到账号「" + requested + "」。可用账号: " + accountSummary(matches)
-                                    : "账号名称不唯一，请改用配置 ID。可用账号: " + accountSummary(matches));
+                            "未找到账号 ID「" + requested + "」。可用账号: " + accountSummary(matches));
                 }
 
                 SiteCredential credential = selected.getFirst();
@@ -255,7 +257,8 @@ final class BrowserSiteTools {
                         "site_login_interactive", "当前任务无法等待用户操作；请在交互聊天中完成登录并保存站点后重试");
             }
             return performInteractiveLogin(
-                    "site_login_interactive", page.url(), page.url(), "用户请求交互式登录");
+                    "site_login_interactive", page.url(), page.url(), "用户请求交互式登录",
+                    SiteLoginSupport.assess(loginSignals(page, 0)).loginRequired());
 
         } finally {
             gate.exit();
@@ -267,15 +270,15 @@ final class BrowserSiteTools {
             description =
                     "在当前页面用「站点管理」中已登记的凭据自动填充并提交登录表单。"
                             + "无需指定用户名/密码：工具内部根据当前页面 URL 匹配到站点条目后直接填入。"
-                            + "支持可选选择器覆盖默认启发式（用户名/密码/提交按钮）。登录成功后会询问是否保存会话。")
+                            + "支持可选选择器覆盖默认表单语义定位（用户名/密码/提交按钮）。验证登录后会询问是否保存会话。")
     public String siteLoginNow(
-            @ToolParam( description = "用户名输入框的 CSS 选择器；留空则按常见命名启发式查找")
+            @ToolParam( description = "用户名输入框的 CSS 选择器；留空则按 autocomplete、类型及表单结构定位")
                     String usernameSelector,
             @ToolParam(
                             description = "密码输入框的 CSS 选择器；留空则按 input[type=password] 自动定位")
                     String passwordSelector,
             @ToolParam(
-                            description = "提交按钮的 CSS 选择器；留空则尝试 button[type=submit] / 含登录文案的按钮")
+                            description = "提交按钮的 CSS 选择器；留空则定位表单提交控件")
                     String submitSelector) {
         gate.enter();
         try {
@@ -309,6 +312,8 @@ final class BrowserSiteTools {
                             "该站点只保存了浏览器会话，没有账号密码；请调用 site_login_interactive 让用户本人登录");
                 }
 
+                boolean challengeBeforeSubmit = SiteLoginSupport.assess(
+                        loginSignals(page, 0)).loginRequired();
                 stateBeforeLogin = page.context().storageState();
 
                 // 1) 用户名
@@ -351,8 +356,14 @@ final class BrowserSiteTools {
                     // 有些 SPA 不变更 URL，仍可能登录成功；继续走会话校验
                 }
 
-                // 5) 仅在页面已离开登录态后，询问是否持久化本次会话
-                SiteLoginSupport.LoginAssessment login = assessLoginPage(page, 0);
+                // Revisit the original challenged page. A public destination with a new
+                // tracking cookie cannot establish that the login succeeded.
+                Response verificationResponse = page.navigate(currentUrl,
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                int verificationStatus = verificationResponse == null ? 0
+                        : verificationResponse.status();
+                SiteLoginSupport.LoginSignals signals = loginSignals(page, verificationStatus);
+                SiteLoginSupport.LoginAssessment login = SiteLoginSupport.assess(signals);
                 if (login.loginRequired()) {
                     browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
                     return ToolResponse.error(
@@ -360,6 +371,18 @@ final class BrowserSiteTools {
                             "提交后页面仍要求登录（"
                                     + login.reason()
                                     + "），可能需要验证码或双因素认证；请改用 site_login_interactive");
+                }
+                String beforeSiteState = SiteLoginSupport.filterStorageStateForUrl(
+                        stateBeforeLogin, currentUrl, json);
+                String afterSiteState = SiteLoginSupport.filterStorageStateForUrl(
+                        page.context().storageState(), currentUrl, json);
+                if (SiteLoginSupport.verifyLogin(signals,
+                        !java.util.Objects.equals(beforeSiteState, afterSiteState),
+                        currentUrl, page.url(), challengeBeforeSubmit)
+                        != SiteLoginSupport.VerificationStatus.AUTHENTICATED) {
+                    browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
+                    return ToolResponse.uncertain("site_login_now",
+                            "登录提交已执行，但目标站点的持久登录态尚未验证；请重新访问受保护页面检查");
                 }
                 boolean saved =
                         ToolConfirmationManager.requestExplicitUserConfirmation(
@@ -405,7 +428,7 @@ final class BrowserSiteTools {
                     "把已登记的密码填入指定输入框。用于 site_login_now 启发式无法覆盖的非常规登录表单。"
                             + "本工具不向 LLM 暴露密码，密码由站点管理器内部读取。")
     public String siteFillPassword(
-            @ToolParam( description = "目标密码输入框的 CSS 选择器或元素引用 @e1")
+            @ToolParam(description = BrowserTargetResolver.TOOL_FORMAT)
                     String targetSelector) {
         gate.enter();
         try {
@@ -527,14 +550,14 @@ final class BrowserSiteTools {
 
     /** 打开可见浏览器等待用户本人登录，验证完成后询问是否持久化站点会话。 */
     private String performInteractiveLogin(
-            String responseToolName, String targetUrl, String loginUrl, String detectionReason) {
+            String responseToolName, String targetUrl, String loginUrl, String detectionReason,
+            boolean protectedTargetObserved) {
         boolean interactionAttempted = false;
         boolean persistSession = false;
         try {
             interactionAttempted = true;
             Page openedPage = browserManager.showPageForUser(loginUrl);
             String stateBeforeLogin = openedPage.context().storageState();
-            String urlBeforeLogin = openedPage.url();
 
             boolean loginFinished =
                     ToolConfirmationManager.requestExplicitUserConfirmation(
@@ -555,14 +578,16 @@ final class BrowserSiteTools {
             }
 
             // SSO 可能把用户留在身份提供方的完成页或弹窗；回到原目标页才是对“已登录”的有效验证。
-            if (SiteLoginSupport.hostOf(targetUrl) != null
-                    && !SiteLoginSupport.looksLikeLoginUrl(targetUrl)) {
-                page.navigate(
+            int verificationStatus = 0;
+            if (SiteLoginSupport.hostOf(targetUrl) != null) {
+                Response verificationResponse = page.navigate(
                         targetUrl,
                         new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                verificationStatus = verificationResponse == null ? 0 : verificationResponse.status();
             }
 
-            SiteLoginSupport.LoginAssessment assessment = assessLoginPage(page, 0);
+            SiteLoginSupport.LoginSignals signals = loginSignals(page, verificationStatus);
+            SiteLoginSupport.LoginAssessment assessment = SiteLoginSupport.assess(signals);
             if (assessment.loginRequired()) {
                 return ToolResponse.error(
                         responseToolName,
@@ -578,11 +603,12 @@ final class BrowserSiteTools {
                             page.context().storageState(), saveUrl, json);
             String comparableBeforeLogin =
                     SiteLoginSupport.filterStorageStateForUrl(stateBeforeLogin, saveUrl, json);
-            if (java.util.Objects.equals(comparableBeforeLogin, storageState)
-                    && java.util.Objects.equals(urlBeforeLogin, finalUrl)
-                    && SiteLoginSupport.looksLikeLoginUrl(finalUrl)) {
-                return ToolResponse.error(
-                        responseToolName, "未检测到页面或登录会话发生变化，请完成登录后重新调用 site_login_interactive");
+            if (SiteLoginSupport.verifyLogin(signals,
+                    !java.util.Objects.equals(comparableBeforeLogin, storageState),
+                    targetUrl, finalUrl, protectedTargetObserved)
+                    != SiteLoginSupport.VerificationStatus.AUTHENTICATED) {
+                return ToolResponse.uncertain(responseToolName,
+                        "目标站点的持久登录态尚未验证；请完成登录并重新访问受保护页面后再保存会话");
             }
             SiteCredentialManager manager = siteCredentials;
             String scopeId = browserManager.getActiveScopeId();
@@ -643,10 +669,8 @@ final class BrowserSiteTools {
     private String chooseSiteUrl(String targetUrl, String finalUrl) {
         String finalHost = SiteLoginSupport.hostOf(finalUrl);
         String targetHost = SiteLoginSupport.hostOf(targetUrl);
-        if (SiteLoginSupport.looksLikeLoginUrl(targetUrl)
-                && finalHost != null
-                && (!java.util.Objects.equals(targetHost, finalHost)
-                        || !SiteLoginSupport.looksLikeLoginUrl(finalUrl))) {
+        if (finalHost != null && targetHost != null
+                && !java.util.Objects.equals(targetHost, finalHost)) {
             return finalUrl;
         }
         return targetHost == null ? finalUrl : targetUrl;
@@ -673,7 +697,7 @@ final class BrowserSiteTools {
         if (origin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {
             return SiteResolution.failed(
                     "站点存在多个已保存账号，当前任务不能猜测账号。请先调用 "
-                            + "site_select_account(url, account) 明确选择。可用账号: "
+                            + "site_select_account(newAccount=false, accountId=准确 ID) 明确选择。可用账号: "
                             + accountSummary(matches));
         }
 
@@ -775,40 +799,18 @@ final class BrowserSiteTools {
     }
 
     private SiteLoginSupport.LoginAssessment assessLoginPage(Page page, int status) {
-        SiteLoginSupport.LoginSignals signals =
-                new SiteLoginSupport.LoginSignals(
-                        page == null ? "" : page.url(),
+        return SiteLoginSupport.assess(loginSignals(page, status));
+    }
+
+    private SiteLoginSupport.LoginSignals loginSignals(Page page, int status) {
+        return new SiteLoginSupport.LoginSignals(
                         status,
                         hasVisible(
                                 page,
-                                "input[type='password']",
-                                "input[autocomplete='one-time-code']",
-                                "input[name*='otp' i]",
-                                "input[name*='verification' i]"),
-                        hasVisible(
-                                page,
-                                "input[autocomplete='username']",
-                                "input[type='email']",
-                                "input[name*='user' i]",
-                                "input[name*='account' i]",
-                                "input[name*='login' i]"),
-                        hasVisible(
-                                page,
-                                "button:has-text('登录')",
-                                "button:has-text('Sign in')",
-                                "button:has-text('Log in')",
-                                "button:has-text('Login')",
-                                "[role='button']:has-text('登录')",
-                                "input[type='submit'][value*='登录']"),
-                        hasVisible(
-                                page,
-                                "a:has-text('退出登录')",
-                                "button:has-text('退出登录')",
-                                "a:has-text('Sign out')",
-                                "button:has-text('Sign out')",
-                                "a:has-text('Log out')",
-                                "button:has-text('Log out')"));
-        return SiteLoginSupport.assess(signals);
+                                "form:has(input[type='password']):has(input[autocomplete='username'],input[type='email']):has(button[type='submit'],input[type='submit'])",
+                                "form:has(input[autocomplete='current-password']):has(button[type='submit'],input[type='submit'])"),
+                        hasVisible(page,
+                                "form:has(input[autocomplete='one-time-code']):has(button[type='submit'],input[type='submit'])"));
     }
 
     private boolean hasVisible(Page page, String... selectors) {

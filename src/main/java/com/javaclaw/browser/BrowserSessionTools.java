@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 
 /** Tab, JavaScript, cookie and document-export tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserSessionTools {
+final class BrowserSessionTools implements com.javaclaw.framework.spi.EffectTargetProvider {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSessionTools.class);
     private static final DateTimeFormatter TIMESTAMP_FMT =
@@ -41,6 +41,14 @@ final class BrowserSessionTools {
         this.snapshotManager = java.util.Objects.requireNonNull(snapshotManager, "snapshotManager");
         this.origin = java.util.Objects.requireNonNull(origin, "origin");
         this.gate = java.util.Objects.requireNonNull(gate, "gate");
+    }
+
+    @Override public String effectTarget() {
+        gate.enter();
+        try {
+            Page page = browserManager.getActivePage();
+            return page == null ? "" : page.url();
+        } finally { gate.exit(); }
     }
 
     @Tool(name = "web_tab_new", description = "新建浏览器 Tab 页。可选指定初始 URL。")
@@ -209,9 +217,10 @@ final class BrowserSessionTools {
             try {
                 List<Cookie> cookies;
                 if (url != null && !url.isBlank()) {
+                    java.net.URI target = CookieUrlMatcher.requireHttpUrl(url);
                     cookies =
                             browserManager.getCookies().stream()
-                                    .filter(c -> url.contains(c.domain))
+                                    .filter(c -> CookieUrlMatcher.matches(c, target))
                                     .collect(Collectors.toList());
                 } else {
                     cookies = browserManager.getCookies();

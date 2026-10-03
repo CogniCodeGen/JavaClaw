@@ -15,6 +15,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
+import javafx.util.StringConverter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -83,9 +84,25 @@ class CommunicationSettingsFxmlLoadTest {
         assertNotNull(secret);
         assertEquals("mail-secret", callFx(secret::getText));
 
-        runFx(() -> combo(email, "presetCombo").setValue("Gmail"));
+        runFx(() -> {
+            ComboBox<EmailSettingsViewModel.Preset> presets = combo(email, "presetCombo");
+            presets.setConverter(new StringConverter<>() {
+                @Override
+                public String toString(EmailSettingsViewModel.Preset value) {
+                    return "renamed provider";
+                }
+
+                @Override
+                public EmailSettingsViewModel.Preset fromString(String text) {
+                    return null;
+                }
+            });
+            presets.setValue(EmailSettingsViewModel.Preset.GMAIL);
+        });
         assertEquals("smtp.gmail.com", callFx(() -> text(email, "smtpHostField").getText()));
         assertEquals("587", callFx(() -> text(email, "smtpPortField").getText()));
+        assertEquals(Encryption.STARTTLS,
+                callFx(() -> combo(email, "encryptionCombo").getValue()));
 
         runFx(email::close);
         views.remove(email);
@@ -168,8 +185,8 @@ class CommunicationSettingsFxmlLoadTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static ComboBox<String> combo(SettingsSectionView<?> view, String id) {
-        return (ComboBox<String>) view.root().lookup("#" + id);
+    private static <T> ComboBox<T> combo(SettingsSectionView<?> view, String id) {
+        return (ComboBox<T>) view.root().lookup("#" + id);
     }
 
     private static Snapshot snapshot() {

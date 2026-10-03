@@ -19,8 +19,11 @@ final class ThreadRequestPolicy {
         RunScope parent = null;
         RunRequest parentRequest = null;
         if (request.linkage().parentRunId() != null) {
-            parentRequest = runs.find(request.linkage().parentRunId()).orElseThrow(
-                    () -> new IllegalArgumentException("unknown parent turn")).request();
+            var parentRun = runs.find(request.linkage().parentRunId()).orElseThrow(
+                    () -> new IllegalArgumentException("unknown parent turn"));
+            if (parentRun.snapshot().state().terminal())
+                throw new IllegalStateException("cannot create a child Run after its parent ended");
+            parentRequest = parentRun.request();
             parent = parentRequest.scope();
             if (!parent.workspaceId().equals(request.scope().workspaceId()) || !parent.userId().equals(request.scope().userId()))
                 throw new SecurityException("cross-scope delegation is forbidden");

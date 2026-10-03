@@ -22,10 +22,11 @@ class ThreadLifecycleIntegrationTest {
     @Test void forkCopiesOnlyCutoffAndSurvivesRecursiveSourceDeletion() {
         Fixture f = new Fixture(directory);
         RunScope source = new RunScope("w", "u", "parent");
-        RunId first = f.complete(source, "first", "answer one", null);
-        f.complete(source, "future secret", "answer two", null);
+        RunId first = f.create(source, "first", null);
         RunScope child = new RunScope("w", "u", "child");
         f.complete(child, "delegated", "child answer", first);
+        f.finish(first, "answer one");
+        f.complete(source, "future secret", "answer two", null);
         ThreadSnapshot branch = f.client.fork(source, TurnId.from(first), "branch");
         List<ThreadEvent> history = f.client.events(branch.scope(), 0);
         assertTrue(history.toString().contains("answer one"));
@@ -151,16 +152,79 @@ class ThreadLifecycleIntegrationTest {
         RunScope parent = new RunScope("w", "local-user", "parent");
         RunScope other = new RunScope("w", "local-user", "other");
         RunScope child = new RunScope("w", "local-user", "child");
-        RunId first = f.complete(parent, "parent", "one", null);
-        RunId second = f.complete(other, "other", "two", null);
+        RunId first = f.create(parent, "parent", null);
+        RunId second = f.create(other, "other", null);
         f.complete(child, "work", "result", first);
         assertThrows(IllegalArgumentException.class, () -> f.complete(child, "hijack", "wrong", second));
+        f.finish(first, "one");
+        f.finish(second, "two");
         f.jdbc.update("INSERT INTO chat_sessions(workspace_id,id,title,created_at) VALUES('w','parent','local history','2026-01-01')");
         RunScope differentUser = new RunScope("w", "remote-user", "parent");
         f.complete(differentUser, "separate", "isolated", null);
         f.client.delete(differentUser);
         assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM chat_sessions WHERE id='parent'", Integer.class));
         assertEquals(ThreadStatus.ACTIVE, f.client.get(parent).status());
+    }
+
+    @Test void terminalParentRejectsPreparedAndDirectChildRunCreation() {
+        Fixture f = new Fixture(directory);
+        RunScope parentScope = new RunScope("w", "u", "finished-parent");
+        RunScope childScope = new RunScope("w", "u", "late-child");
+        RunId parent = f.complete(parentScope, "parent", "answer", null);
+        RunRequest child = RunRequest.builder()
+                .agent(AgentDefinitionRef.latest("system.default"))
+                .profile(RunProfileRef.latest("chat"))
+                .scope(childScope).source(InvocationSource.subAgent(parent.value()))
+                .input(InputBlock.text("late work"))
+                .permissionCeiling(PermissionSet.UNRESTRICTED)
+                .linkage(new RunLinkage(parent, null, null)).build();
+
+        assertThrows(IllegalStateException.class, () -> f.runs.prepare(child));
+        f.threads.create(new ThreadStartRequest(childScope, "child",
+                ThreadConfiguration.DEFAULT, parentScope, TurnId.from(parent)));
+        RunId childId = RunId.random();
+        assertThrows(IllegalStateException.class, () -> f.runs.create(childId, child,
+                "plan", f.draft("core.run.created", f.json.createObjectNode())));
+        assertTrue(f.runs.find(childId).isEmpty());
+    }
+
+    @Test void childCreationWaitsForAcceptanceAndCannotPassItsOutcomeFence() throws Exception {
+        Fixture f = new Fixture(directory);
+        RunScope parentScope = new RunScope("w", "u", "accepting-parent");
+        RunScope childScope = new RunScope("w", "u", "contending-child");
+        RunId parent = f.create(parentScope, "parent", null);
+        RunRequest child = f.runs.prepare(RunRequest.builder()
+                .agent(AgentDefinitionRef.latest("system.default"))
+                .profile(RunProfileRef.latest("chat"))
+                .scope(childScope).source(InvocationSource.subAgent(parent.value()))
+                .input(InputBlock.text("work"))
+                .permissionCeiling(PermissionSet.UNRESTRICTED)
+                .linkage(new RunLinkage(parent, null, null)).build());
+        RunId childId = RunId.random();
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var creation = new java.util.concurrent.atomic.AtomicReference<
+                java.util.concurrent.CompletableFuture<CreateRunResult>>();
+
+        f.runs.withRunAcceptanceLock(parent, () -> {
+            creation.set(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                started.countDown();
+                return f.runs.create(childId, child, "plan",
+                        f.draft("core.run.created", f.json.createObjectNode()));
+            }));
+            try {
+                assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+                assertThrows(java.util.concurrent.TimeoutException.class,
+                        () -> creation.get().get(100, java.util.concurrent.TimeUnit.MILLISECONDS));
+            } catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+            f.runs.append(parent, Set.of(RunState.CREATED), RunState.CREATED,
+                    new RunEventDraft("core.task.outcome", 3, "framework.core", null, null,
+                            f.json.valueToTree(TaskResult.delivered())), null, null).orElseThrow();
+            return null;
+        });
+        var rejected = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> creation.get().get(3, java.util.concurrent.TimeUnit.SECONDS));
+        assertInstanceOf(IllegalStateException.class, rejected.getCause());
+        assertTrue(f.runs.find(childId).isEmpty());
     }
 
     @Test void forkUsesTheTerminalCutoffEvenAfterACancelledModelSettlesItsBill() {

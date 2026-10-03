@@ -9,13 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ToolApprovalChallengeTest {
 
     @Test
-    void decodesCanonicalOutputWrappedAndLegacyTopLevelEvents() {
-        var approval = JsonNodeFactory.instance.objectNode();
-        approval.put("tool", "sys_file_delete");
-        approval.putObject("arguments").put("path", "/tmp/file");
-        approval.put("fingerprint", "fingerprint");
-        approval.put("kind", "DOUBLE_CONFIRM");
-
+    void decodesOnlyCanonicalStructuredEvent() {
+        var approval = new ToolApprovalChallenge("sys_file_delete",
+                JsonNodeFactory.instance.objectNode().put("path", "/tmp/file"),
+                "fingerprint", "DOUBLE_CONFIRM", "delete file").toJson();
         var canonical = JsonNodeFactory.instance.objectNode();
         canonical.put("reason", "delete file");
         canonical.set("approval", approval);
@@ -24,11 +21,35 @@ class ToolApprovalChallengeTest {
         var wrapped = JsonNodeFactory.instance.objectNode();
         wrapped.put("reason", "delete file");
         wrapped.putObject("output").set("approval", approval);
-        assertChallenge(ToolApprovalChallenge.fromEventPayload(wrapped));
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolApprovalChallenge.fromEventPayload(wrapped));
 
         var legacy = approval.deepCopy();
-        legacy.put("description", "delete file");
-        assertChallenge(ToolApprovalChallenge.fromEventPayload(legacy));
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolApprovalChallenge.fromEventPayload(legacy));
+
+        var missingArguments = canonical.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) missingArguments.path("approval"))
+                .remove("arguments");
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolApprovalChallenge.fromEventPayload(missingArguments));
+
+        var missingTrust = canonical.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) missingTrust.path("approval"))
+                .remove("trustedContextRead");
+        assertThrows(IllegalArgumentException.class,
+                () -> ToolApprovalChallenge.fromEventPayload(missingTrust));
+    }
+
+    @Test
+    void trustedContextReadIsExplicitAndSurvivesTheApprovalEvent() {
+        ToolApprovalChallenge challenge = new ToolApprovalChallenge("context",
+                JsonNodeFactory.instance.objectNode(), "fingerprint", "CONFIRM",
+                "Read context", true);
+        var event = JsonNodeFactory.instance.objectNode();
+        event.set("approval", challenge.toJson());
+        assertEquals(true, ToolApprovalChallenge.fromEventPayload(event)
+                .trustedContextRead());
     }
 
     @Test

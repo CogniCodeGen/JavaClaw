@@ -4,6 +4,9 @@ import com.javaclaw.api.interaction.ConfirmDecision;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.DiscoveryRequest;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.Usage;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ProbeResult;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult;
@@ -52,7 +55,9 @@ public final class ModelSettingsController
     @FXML private javafx.scene.Node managedProfileRow;
     @FXML private ComboBox<InferenceSettingsChoice<UUID>> managedProfileCombo;
     @FXML private TextField baseUrlField;
-    @FXML private TextField modelNameField;
+    @FXML private ComboBox<String> modelNameField;
+    @FXML private Button modelDiscoveryRefreshButton;
+    @FXML private Label modelDiscoveryStatusLabel;
     @FXML private SecretFieldController apiKeyFieldController;
     @FXML private ToggleSwitch thinkingEnabledCheck;
     @FXML private TextField thinkingBudgetField;
@@ -72,19 +77,27 @@ public final class ModelSettingsController
     @FXML private Button resetButton;
 
     private final ModelSettingsApplicationService useCases;
+    private final ModelDiscoveryApplicationService modelDiscovery;
     private final DialogService dialogs;
     private final ModelProviderCatalog providers;
     private final InferenceManagementApplicationService inference;
     private final PluginCenterViewFactory plugins;
+    private final ManagedTaskExecutor tasks;
+    private final FxDispatcher fx;
     private final UiAsyncAction<SaveResult> mutation;
     private final UiAsyncAction<ProbeResult> probe;
     private final UiAsyncAction<ViewData> refresh;
     private final UiAsyncAction<List<InferenceSettingsChoice<UUID>>> profileRefresh;
+    private final ModelDiscoveryCredentialScope discoveryCredential =
+            new ModelDiscoveryCredentialScope();
+    private ModelDiscoveryCombo modelChoices;
+    private String selectedProviderId;
     private Consumer<SaveResult> onApplied = ignored -> { };
     private Runnable onRuntimeConfigurationChanged = () -> { };
 
     public ModelSettingsController(
             ModelSettingsApplicationService useCases,
+            ModelDiscoveryApplicationService modelDiscovery,
             ModelProviderCatalog providers,
             InferenceManagementApplicationService inference,
             PluginCenterViewFactory plugins,
@@ -93,9 +106,12 @@ public final class ModelSettingsController
             ManagedTaskExecutor tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.modelDiscovery = Objects.requireNonNull(modelDiscovery, "modelDiscovery");
         this.providers = Objects.requireNonNull(providers, "providers");
         this.inference = Objects.requireNonNull(inference, "inference");
         this.plugins = Objects.requireNonNull(plugins, "plugins");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
+        this.fx = Objects.requireNonNull(fx, "fx");
         Objects.requireNonNull(workspace, "workspace");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
         mutation = new UiAsyncAction<>(tasks, fx);
@@ -106,6 +122,24 @@ public final class ModelSettingsController
 
     @FXML
     private void initialize() {
+        modelChoices = new ModelDiscoveryCombo(modelNameField, modelDiscoveryRefreshButton,
+                modelDiscoveryStatusLabel, modelDiscovery, this::discoveryRequest,
+                tasks, fx);
+        baseUrlField.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)
+                    && discoveryCredential.requiresNewKey(selectedProviderId, newValue)) {
+                apiKeyFieldController.setText("");
+            }
+            modelChoices.scheduleRefresh();
+        });
+        apiKeyFieldController.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)) {
+                ModelDiscoveryCombo.provider(providers, providerCombo.getValue())
+                        .ifPresent(provider -> discoveryCredential.capture(
+                                provider.id(), SettingsFieldSupport.text(baseUrlField)));
+            }
+            modelChoices.scheduleRefresh();
+        });
         providerCombo.getItems().setAll(providers.providers().stream()
                 .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.CHAT))
                 .map(ModelProviderCatalog.Provider::displayName).toList());
@@ -146,7 +180,7 @@ public final class ModelSettingsController
         ModelSettings value = snapshot.model();
         SettingsFieldSupport.loading(root, () -> {
             baseUrlField.setText(value.baseUrl());
-            modelNameField.setText(value.modelName());
+            modelChoices.setText(value.modelName());
             apiKeyFieldController.setText(value.apiKey());
             thinkingEnabledCheck.setSelected(value.thinkingEnabled());
             thinkingBudgetField.setText(Integer.toString(value.thinkingBudget()));
@@ -169,6 +203,8 @@ public final class ModelSettingsController
             managedProfileCombo.getItems().setAll(data.profiles());
             selectManaged(value.managedProfileId());
             updateProvider(false);
+            selectedProviderId = selectedProvider().id();
+            discoveryCredential.capture(selectedProviderId, SettingsFieldSupport.text(baseUrlField));
         });
     }
 
@@ -192,8 +228,13 @@ public final class ModelSettingsController
     @FXML private void advancedRequested() { showBasic(false); }
     @FXML private void providerChanged() {
         if (SettingsFieldSupport.isLoading(root)) return;
-        updateProvider(true);
+        String providerId = selectedProvider().id();
+        boolean changed = !providerId.equals(selectedProviderId);
+        selectedProviderId = providerId;
+        if (changed) apiKeyFieldController.setText("");
+        updateProvider(changed);
         if (selectedProvider().localManaged()) loadManagedProfiles();
+        else modelChoices.scheduleRefresh();
     }
     @FXML private void manageLocalModelsRequested() {
         plugins.createServicePluginConfiguration(root.getScene().getWindow(),
@@ -228,7 +269,8 @@ public final class ModelSettingsController
         String managedId = managedProfileCombo.getValue() == null ? ""
                 : managedProfileCombo.getValue().value().toString();
         return new ModelSettings(provider.id(), SettingsFieldSupport.text(baseUrlField),
-                SettingsFieldSupport.text(modelNameField), apiKeyFieldController.text(),
+                modelChoices.text(), discoveryCredential.keyFor(provider.id(),
+                        SettingsFieldSupport.text(baseUrlField), apiKeyFieldController.text()),
                 thinkingEnabledCheck.isSelected(),
                 SettingsFieldSupport.integer(thinkingBudgetField, 1024, 65536, "思考预算"),
                 http2Radio.isSelected() ? "HTTP_2" : "HTTP_1_1",
@@ -254,8 +296,9 @@ public final class ModelSettingsController
         visible(managedProfileRow, managed);
         if (applyDefaults && !managed) {
             baseUrlField.setText(provider.defaultBaseUrl());
-            modelNameField.setText(provider.defaultChatModel());
+            modelChoices.setText(provider.defaultChatModel());
         }
+        modelChoices.setActive(!managed);
     }
 
     private void loadManagedProfiles() {
@@ -275,8 +318,17 @@ public final class ModelSettingsController
     }
 
     private ModelProviderCatalog.Provider selectedProvider() {
-        return providers.find(providerCombo.getValue()).orElseThrow(
+        return ModelDiscoveryCombo.provider(providers, providerCombo.getValue()).orElseThrow(
                 () -> new IllegalArgumentException("请选择模型提供商"));
+    }
+
+    private DiscoveryRequest discoveryRequest() {
+        return ModelDiscoveryCombo.provider(providers, providerCombo.getValue())
+                .map(provider -> new DiscoveryRequest(provider.id(),
+                        SettingsFieldSupport.text(baseUrlField), discoveryCredential.keyFor(
+                                provider.id(), SettingsFieldSupport.text(baseUrlField),
+                                apiKeyFieldController.text()), Usage.CHAT))
+                .orElse(null);
     }
 
     private void selectManaged(String id) {
@@ -288,6 +340,7 @@ public final class ModelSettingsController
     void deactivate() {
         refresh.cancel();
         profileRefresh.cancel();
+        modelChoices.cancel();
     }
 
     private static void visible(javafx.scene.Node node, boolean value) {
@@ -303,6 +356,7 @@ public final class ModelSettingsController
         probe.close();
         refresh.close();
         profileRefresh.close();
+        modelChoices.close();
     }
 
     private record ViewData(

@@ -18,6 +18,17 @@ import java.util.function.Supplier;
 
 /** Delegation tools share the AgentEngine and keep each named child in its own durable Thread. */
 public final class SubAgentTools implements ToolProviderFactory {
+    /** The result operation is read-only only when created by this host provider. */
+    public static boolean isTrustedResultTool(FrameworkTool tool) {
+        return isTrustedTool(tool) && "subagent_result".equals(tool.descriptor().name());
+    }
+
+    public static boolean isTrustedTool(FrameworkTool tool) {
+        return tool != null && tool.getClass().getEnclosingClass() == SubAgentTools.class
+                && java.util.Set.of("subagent_spawn", "subagent_send", "subagent_result",
+                        "subagent_interrupt").contains(tool.descriptor().name());
+    }
+
     private final Supplier<AgentClient> agents;
     private final RunStore runs;
     private final java.util.function.BiConsumer<ToolContext, RunHandle> observer;
@@ -41,8 +52,10 @@ public final class SubAgentTools implements ToolProviderFactory {
     }
 
     private FrameworkTool tool(ToolContext parent, String operation, String description) {
+        boolean readOnly = operation.equals("result");
         ToolDescriptor descriptor = new ToolDescriptor("subagent_" + operation, description,
-                schema(operation), "subagent", PermissionSet.of("tool.read"), true);
+                schema(operation), "subagent",
+                PermissionSet.of(readOnly ? "tool.read" : "subagent.delegate"), readOnly);
         return new FrameworkTool() {
             @Override public ToolDescriptor descriptor() { return descriptor; }
             @Override public JsonNode execute(JsonNode input, ToolExecutionContext execution) throws Exception {

@@ -19,6 +19,8 @@ class AgentConfigSchemaTest {
         assertEquals("OpenAI", properties.getProperty(AgentConfigSchema.KEY_PROVIDER_TYPE));
         assertEquals("qwen/qwen3.5-9b", properties.getProperty(AgentConfigSchema.KEY_MODEL_NAME));
         assertEquals("4", properties.getProperty(AgentConfigSchema.KEY_SCHEDULE_THREAD_POOL_SIZE));
+        assertEquals("false", properties.getProperty(
+                AgentConfigSchema.KEY_COMPUTER_APP_ACCESS_ENABLED));
         assertFalse(properties.containsKey(AgentConfigSchema.KEY_CONFIRMATION_TIMEOUT_DEFAULT));
     }
 
@@ -33,6 +35,8 @@ class AgentConfigSchemaTest {
         assertEquals("qwen/qwen3.5-9b", properties.getProperty(AgentConfigSchema.KEY_MODEL_NAME));
         assertEquals("60", properties.getProperty(AgentConfigSchema.KEY_CONFIRMATION_TIMEOUT_DEFAULT));
         assertEquals("42", properties.getProperty("memory.graph.max.nodes"));
+        assertEquals("false", properties.getProperty(
+                AgentConfigSchema.KEY_COMPUTER_APP_ACCESS_ENABLED));
     }
 
     @Test

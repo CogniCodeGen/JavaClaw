@@ -684,8 +684,8 @@ public class ScheduleManager {
             events.log(task.getName(), "开始执行...");
 
             String contextualPrompt = "【定时任务上下文】你正在执行定时任务「" + task.getName()
-                    + "」（id=" + taskId + "）。若本次检查已满足目标条件，请先用 notify_send 通知用户，"
-                    + "再调用 schedule_disable 工具并传入 id=" + taskId + " 停止本定时任务，避免继续轮询。\n\n"
+                    + "」（id=" + taskId + "）。本任务执行策略为 " + task.getExecutionPolicy().name()
+                    + "；请给出本次工作的可核验证据。后续调度由系统根据策略和结构化验收结果处理。\n\n"
                     + prompt;
             com.javaclaw.agent.ToolCallOrigin runOrigin =
                     com.javaclaw.agent.ToolConfirmationManager.beginAuthorizedScheduledRun(
@@ -721,7 +721,7 @@ public class ScheduleManager {
                 }
             };
             try {
-                runner.run(control, runOrigin, contextualPrompt, runCallbacks);
+                runner.run(control, runOrigin, contextualPrompt, prompt, runCallbacks);
             } catch (Throwable failure) {
                 runCallbacks.onTerminal(ConversationOutcome.failed(failure));
                 if (failure instanceof Error error) throw error;
@@ -744,28 +744,18 @@ public class ScheduleManager {
                                         StringBuilder resultBuilder, ConversationOutcome outcome) {
         if (!isExecutionCurrent(epoch, runSnapshot.getId())) return;
         String duration = formatDuration(startNanos);
-        ScheduledTaskStore.ExecutionStatus status;
-        String detail;
-        Throwable failure = null;
-        if (outcome instanceof ConversationOutcome.Failed failed) {
-            status = ScheduledTaskStore.ExecutionStatus.FAILURE;
-            failure = failed.error();
-            detail = failure.getMessage() == null ? failure.toString() : failure.getMessage();
-        } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
-            status = ScheduledTaskStore.ExecutionStatus.CANCELLED;
-            detail = "取消原因：" + cancelled.reason();
-        } else {
-            status = ScheduledTaskStore.ExecutionStatus.SUCCESS;
-            detail = resultBuilder.length() > 500
-                    ? resultBuilder.substring(0, 500) + "..." : resultBuilder.toString();
-        }
+        ScheduleOutcomeMapper.Mapped mapped = ScheduleOutcomeMapper.map(outcome, resultBuilder);
+        ScheduledTaskStore.ExecutionStatus status = mapped.status();
+        String detail = mapped.detail();
+        com.javaclaw.framework.api.TaskResult taskResult = mapped.taskResult();
+        Throwable failure = mapped.failure();
 
         ScheduledTask persisted;
         try {
             synchronized (persistenceLock) {
                 if (!isExecutionCurrent(epoch, runSnapshot.getId())) return;
                 persisted = store.recordExecution(requireWorkspace(), runSnapshot.getId(),
-                        new ScheduledTaskStore.ExecutionResult(status, duration, detail));
+                        new ScheduledTaskStore.ExecutionResult(status, duration, detail, taskResult));
                 if (persisted == null) return;
                 replaceTaskInternal(persisted);
             }
@@ -775,12 +765,23 @@ public class ScheduleManager {
             return;
         }
 
+        if (ScheduleOutcomeMapper.shouldDisableAfterVerifiedResult(persisted, status, taskResult)) {
+            try {
+                persisted = setEnabled(runSnapshot.getId(), false, DisableMode.AFTER_CURRENT_RUN);
+                taskLog.info("[{}] 目标验收通过，已按 UNTIL_CONDITION 策略停用后续调度",
+                        persisted.getName());
+            } catch (RuntimeException failureToDisable) {
+                log.error("目标验收通过但停用后续调度失败: {}", runSnapshot.getId(), failureToDisable);
+                events.log(runSnapshot.getName(), "目标已验证，但停用后续调度失败");
+            }
+        }
+
         switch (status) {
             case SUCCESS -> {
-                taskLog.info("[{}] 执行成功（耗时 {}），回复内容: {}",
+                taskLog.info("[{}] 运行结束（耗时 {}），任务结果: {}",
                         runSnapshot.getName(), duration, detail);
-                taskLog.info("========== 任务结束（成功） ==========");
-                events.log(runSnapshot.getName(), "执行完成: " + shortText(detail, 200));
+                taskLog.info("========== 运行结束 ==========");
+                events.log(runSnapshot.getName(), "运行完成: " + shortText(detail, 200));
                 completionNotifier.notifyCompletion(persisted, true, detail);
             }
             case FAILURE -> {

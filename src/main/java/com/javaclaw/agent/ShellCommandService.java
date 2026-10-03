@@ -12,6 +12,8 @@ import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -64,10 +66,18 @@ public final class ShellCommandService {
         handle.completion().whenComplete((output, failure) -> {
             if (failure == null) {
                 callbacks.onEvent(new ConversationEvent.Reply(output));
-                callbacks.onTerminal(ConversationOutcome.completed());
+                callbacks.onTerminal(ConversationOutcome.completed(taskResult(input)));
                 return;
             }
             Throwable cause = unwrap(failure);
+            if (cause instanceof CommandRejected rejected) {
+                callbacks.onEvent(new ConversationEvent.Reply(rejected.displayMessage()));
+                callbacks.onTerminal(ConversationOutcome.completed(
+                        new TaskResult(TaskOutcome.BLOCKED,
+                                List.of(Objects.toString(input, "")),
+                                rejected.displayMessage(), List.of())));
+                return;
+            }
             if (cause instanceof CancellationException) {
                 callbacks.onTerminal(ConversationOutcome.cancelled(
                         CancellationReason.RUNTIME_REBUILD));
@@ -79,6 +89,18 @@ public final class ShellCommandService {
             callbacks.onTerminal(ConversationOutcome.failed(cause));
         });
         return handle;
+    }
+
+    private static TaskResult taskResult(String input) {
+        String command = input == null ? "" : input.strip();
+        String normalized = command.startsWith("/") ? command.substring(1) : command;
+        String[] parts = normalized.toLowerCase(java.util.Locale.ROOT).split("\\s+", 3);
+        String action = parts.length > 1 ? parts[1] : "";
+        if (normalized.isBlank() || normalized.equals("help") || normalized.equals("?")
+                || action.isBlank() || action.equals("list") || action.equals("status")) {
+            return TaskResult.notApplicable();
+        }
+        return TaskResult.unverified("命令处理已结束，尚未独立核验目标状态");
     }
 
     private String dispatch(String line) {
@@ -93,7 +115,7 @@ public final class ShellCommandService {
             case "task", "任务" -> task(rest);
             case "agent", "智能体" -> agent(rest);
             case "schedule", "定时" -> schedule(rest);
-            default -> "✗ 未知命令：" + domain + "\n\n" + helpText();
+            default -> reject("✗ 未知命令：" + domain + "\n\n" + helpText());
         };
     }
 
@@ -116,7 +138,7 @@ public final class ShellCommandService {
                 return sb.toString().trim();
             }
             case "status" -> {
-                if (arg.isEmpty()) return "用法：/task status <id>";
+                if (arg.isEmpty()) return reject("用法：/task status <id>");
                 try {
                     SddTaskApplicationService.Task task = sddTasks.require(arg);
                     return "「" + task.title() + "」状态=" + task.state()
@@ -124,11 +146,11 @@ public final class ShellCommandService {
                             + (task.result() != null && !task.result().isBlank()
                             ? "，" + task.result() : "");
                 } catch (com.javaclaw.application.error.NotFoundException failure) {
-                    return "✗ " + failure.getMessage();
+                    return reject("✗ " + failure.getMessage());
                 }
             }
             case "create" -> {
-                if (arg.isEmpty()) return "用法：/task create <任务描述>";
+                if (arg.isEmpty()) return reject("用法：/task create <任务描述>");
                 String title = sddTasks.generateTitle(arg);
                 String stamp = LocalDateTime.now().format(TS);
                 SddTaskApplicationService.Task task = sddTasks.create(
@@ -140,12 +162,12 @@ public final class ShellCommandService {
             case "pause" -> { return ctrlTask(arg, "pause"); }
             case "resume" -> { return ctrlTask(arg, "resume"); }
             case "cancel" -> { return ctrlTask(arg, "cancel"); }
-            default -> { return "✗ 未知子命令：task " + sub + "\n用法：/task list|status <id>|create <描述>|pause|resume|cancel <id>"; }
+            default -> { return reject("✗ 未知子命令：task " + sub + "\n用法：/task list|status <id>|create <描述>|pause|resume|cancel <id>"); }
         }
     }
 
     private String ctrlTask(String id, String op) {
-        if (id.isEmpty()) return "用法：/task " + op + " <id>";
+        if (id.isEmpty()) return reject("用法：/task " + op + " <id>");
         try {
             switch (op) {
                 case "pause" -> sddTasks.pause(id);
@@ -154,7 +176,7 @@ public final class ShellCommandService {
                 default -> { }
             }
         } catch (com.javaclaw.application.error.NotFoundException failure) {
-            return "✗ " + failure.getMessage();
+            return reject("✗ " + failure.getMessage());
         }
         return "✓ 已" + (op.equals("pause") ? "暂停" : op.equals("resume") ? "续跑" : "取消") + "任务：" + id;
     }
@@ -179,10 +201,10 @@ public final class ShellCommandService {
                 return sb.toString().trim();
             }
             case "create", "delete" -> {
-                return "✗ 已不在命令中增删智能体。可复用能力请改用技能（在对话中让我 skill_create，或用技能中心）；"
-                        + "自定义智能体的增删请到设置面板。/agent 仅支持 list。";
+                return reject("✗ 已不在命令中增删智能体。可复用能力请改用技能（在对话中让我 skill_create，或用技能中心）；"
+                        + "自定义智能体的增删请到设置面板。/agent 仅支持 list。");
             }
-            default -> { return "✗ 未知子命令：agent " + sub + "\n用法：/agent list"; }
+            default -> { return reject("✗ 未知子命令：agent " + sub + "\n用法：/agent list"); }
         }
     }
 
@@ -213,19 +235,19 @@ public final class ShellCommandService {
                 return sb.toString().trim();
             }
             case "get" -> {
-                if (arg.isEmpty()) return "用法：/schedule get <id>";
+                if (arg.isEmpty()) return reject("用法：/schedule get <id>");
                 Task t = scheduleTask(arg);
-                if (t == null) return "✗ 未找到定时任务：" + arg;
+                if (t == null) return reject("✗ 未找到定时任务：" + arg);
                 return "「" + t.name() + "」" + t.triggerType()
                         + (t.enabled() ? "，启用" : "，停用") + "\nprompt：" + t.prompt();
             }
             case "create" -> {
                 // 用法：/schedule create 名称 | 类型 | 值 | 提示词
                 String[] parts = arg.split("\\|", 4);
-                if (parts.length < 4) return "用法：/schedule create 名称 | interval|daily|cron | 值 | 提示词";
+                if (parts.length < 4) return reject("用法：/schedule create 名称 | interval|daily|cron | 值 | 提示词");
                 String name = parts[0].trim(), type = parts[1].trim().toLowerCase(),
                         val = parts[2].trim(), prompt = parts[3].trim();
-                if (!List.of("interval", "daily", "cron").contains(type)) return "✗ 类型须为 interval/daily/cron";
+                if (!List.of("interval", "daily", "cron").contains(type)) return reject("✗ 类型须为 interval/daily/cron");
                 Task draft = schedules.createDraft(name);
                 int intervalValue = 1;
                 String dailyTime = "";
@@ -233,7 +255,7 @@ public final class ShellCommandService {
                 switch (type) {
                     case "interval" -> {
                         try { intervalValue = Math.max(1, Integer.parseInt(val)); }
-                        catch (NumberFormatException ex) { return "✗ interval 需分钟数"; }
+                        catch (NumberFormatException ex) { return reject("✗ interval 需分钟数"); }
                     }
                     case "daily" -> dailyTime = val;
                     case "cron" -> cronExpression = val;
@@ -246,40 +268,55 @@ public final class ShellCommandService {
                 return "✓ 已创建并启用定时任务「" + name + "」（id=" + saved.id() + "）";
             }
             case "stop", "disable" -> {
-                if (arg.isEmpty()) return "用法：/schedule stop <id>";
+                if (arg.isEmpty()) return reject("用法：/schedule stop <id>");
                 Task task = scheduleTask(arg);
-                if (task == null) return "✗ 未找到定时任务：" + arg;
+                if (task == null) return reject("✗ 未找到定时任务：" + arg);
                 schedules.setEnabled(ScheduleCommands.copyOf(task), false);
                 return "✓ 已停用定时任务：" + arg;
             }
             case "delete" -> {
-                if (arg.isEmpty()) return "用法：/schedule delete <id>";
-                if (scheduleTask(arg) == null) return "✗ 未找到定时任务：" + arg;
+                if (arg.isEmpty()) return reject("用法：/schedule delete <id>");
+                if (scheduleTask(arg) == null) return reject("✗ 未找到定时任务：" + arg);
                 schedules.delete(arg);
                 return "✓ 已删除定时任务：" + arg;
             }
             case "run" -> {
-                if (arg.isEmpty()) return "用法：/schedule run <id>";
+                if (arg.isEmpty()) return reject("用法：/schedule run <id>");
                 Task t = scheduleTask(arg);
-                if (t == null) return "✗ 未找到定时任务：" + arg;
+                if (t == null) return reject("✗ 未找到定时任务：" + arg);
                 ScheduleApplicationService.RunResult result =
                         schedules.runNow(arg, !t.enabled()).runResult();
                 return switch (result) {
                     case STARTED -> "✓ 已触发立即执行：" + arg
                             + (t.enabled() ? "" : "（仅本次，仍保持暂停）");
-                    case ALREADY_ACTIVE -> "✗ 任务已在运行或排队：" + arg;
-                    case DISABLED -> "✗ 任务已暂停：" + arg;
-                    case NOT_FOUND -> "✗ 未找到定时任务：" + arg;
-                    case UNSUPPORTED -> "✗ 当前无法执行该任务：" + arg;
+                    case ALREADY_ACTIVE -> reject("✗ 任务已在运行或排队：" + arg);
+                    case DISABLED -> reject("✗ 任务已暂停：" + arg);
+                    case NOT_FOUND -> reject("✗ 未找到定时任务：" + arg);
+                    case UNSUPPORTED -> reject("✗ 当前无法执行该任务：" + arg);
                 };
             }
-            default -> { return "✗ 未知子命令：schedule " + sub + "\n用法：/schedule list|get <id>|create ...|stop <id>|delete <id>|run <id>"; }
+            default -> { return reject("✗ 未知子命令：schedule " + sub + "\n用法：/schedule list|get <id>|create ...|stop <id>|delete <id>|run <id>"); }
         }
     }
 
     private Task scheduleTask(String id) {
         return schedules.snapshot().tasks().stream()
                 .filter(task -> Objects.equals(task.id(), id)).findFirst().orElse(null);
+    }
+
+    private static String reject(String displayMessage) {
+        throw new CommandRejected(displayMessage);
+    }
+
+    private static final class CommandRejected extends RuntimeException {
+        private final String displayMessage;
+
+        private CommandRejected(String displayMessage) {
+            super(displayMessage);
+            this.displayMessage = displayMessage;
+        }
+
+        private String displayMessage() { return displayMessage; }
     }
 
     private String helpText() {

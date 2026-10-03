@@ -335,10 +335,11 @@ class HabitReviewerCrossBatchTest {
             }
             gateway.beforeRespond = () -> store.markHabitReviewProgress(
                     99, 1, "s:turn-1", List.of(), List.of(), false, "other", "newer review");
-            IllegalStateException failure = assertThrows(IllegalStateException.class,
+            RuntimeException failure = assertThrows(RuntimeException.class,
                     () -> new HabitReviewer(gateway, store, embedding.gateway(), settings)
                             .reviewNow(RunId.random()));
-            assertTrue(failure.getMessage().contains("进度已变化"));
+            assertTrue(failure.getCause() instanceof IllegalStateException,
+                    "过期回顾应由存储边界拒绝提交");
             assertEquals(1, store.habitReviewProgress().cursorTimestamp());
             assertEquals(1, store.habitReviewProgress().revision());
             assertTrue(store.allFacts().isEmpty());
@@ -384,8 +385,9 @@ class HabitReviewerCrossBatchTest {
             }
             ExecutionException failure = assertThrows(ExecutionException.class,
                     () -> review.get(5, TimeUnit.SECONDS));
-            assertTrue(failure.getCause() instanceof IllegalStateException);
-            assertTrue(failure.getCause().getMessage().contains("进度已变化"));
+            assertTrue(failure.getCause() instanceof RuntimeException
+                    && failure.getCause().getCause() instanceof IllegalStateException,
+                    "过期回顾应由存储边界拒绝提交");
             assertTrue(store.allFacts().isEmpty());
             assertEquals(1, store.habitReviewProgress().revision());
         }

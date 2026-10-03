@@ -2,6 +2,7 @@ package com.javaclaw.application.agent;
 
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.expert.KnowledgeExpert;
+import com.javaclaw.agent.vision.VisionPreprocessor;
 import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.task.SddTaskApplicationService;
@@ -10,7 +11,9 @@ import com.javaclaw.browser.PlaywrightBrowserTools;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
-import com.javaclaw.desktop.DesktopToolFactory;
+import com.javaclaw.desktop.api.DesktopSessionOwner;
+import com.javaclaw.desktop.api.DesktopSessionService;
+import com.javaclaw.desktop.agent.DesktopSessionTools;
 import com.javaclaw.email.EmailTools;
 import com.javaclaw.framework.spi.ToolContext;
 import com.javaclaw.framework.spi.ModelTaskGateway;
@@ -47,7 +50,7 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
     private final EmailConfig emailSettings;
     private final NotificationConfig notificationSettings;
     private final CommandToolFactory commandTools;
-    private final DesktopToolFactory desktopTools;
+    private final DesktopSessionService desktopSessions;
     private final ProcessRunner processes;
     private final KnowledgeExpert knowledge;
     private final McpConfigManager mcpConfigurations;
@@ -70,7 +73,7 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
             EmailConfig emailSettings,
             NotificationConfig notificationSettings,
             CommandToolFactory commandTools,
-            DesktopToolFactory desktopTools,
+            DesktopSessionService desktopSessions,
             ProcessRunner processes,
             KnowledgeExpert knowledge,
             McpConfigManager mcpConfigurations,
@@ -90,7 +93,7 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
         this.emailSettings = Objects.requireNonNull(emailSettings, "emailSettings");
         this.notificationSettings = Objects.requireNonNull(notificationSettings, "notificationSettings");
         this.commandTools = Objects.requireNonNull(commandTools, "commandTools");
-        this.desktopTools = Objects.requireNonNull(desktopTools, "desktopTools");
+        this.desktopSessions = Objects.requireNonNull(desktopSessions, "desktopSessions");
         this.processes = Objects.requireNonNull(processes, "processes");
         this.knowledge = Objects.requireNonNull(knowledge, "knowledge");
         this.mcpConfigurations = Objects.requireNonNull(mcpConfigurations, "mcpConfigurations");
@@ -109,7 +112,8 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
 
     public ToolObjectBundle create(ToolContext context) {
         ToolCallOrigin origin = origin(context);
-        Map<String, Object> capabilityTools = createCapabilityTools(origin, context);
+        VisionPreprocessor vision = new VisionPreprocessor(modelTasks, context.runId(), context.cancellation());
+        Map<String, Object> capabilityTools = createCapabilityTools(origin, context, vision);
         List<Object> objects = new ArrayList<>(capabilityTools.values());
         if (context.request().source().kind().equals("chat")
                 || context.request().source().kind().equals("plan")) {
@@ -138,8 +142,7 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
                     ? context.request().attributes().get("workDir").asText(null) : null;
             objects.add(new com.javaclaw.task.ValidationInspectionTools(workDir, processes));
         }
-        objects.add(new com.javaclaw.media.MediaTools(
-                new com.javaclaw.agent.vision.VisionPreprocessor(modelTasks, context.runId())));
+        objects.add(new com.javaclaw.media.MediaTools(vision));
         if (context.request().source().kind().equals("loop")) {
             objects.add(new com.javaclaw.loop.agent.LoopReportTool());
         }
@@ -152,7 +155,7 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
         List<Class<?>> result = new ArrayList<>(List.of(
                 com.javaclaw.agent.expert.KnowledgeExpert.class,
                 com.javaclaw.code.CodeTools.class,
-                com.javaclaw.desktop.DesktopTools.class,
+                com.javaclaw.desktop.agent.DesktopSessionTools.class,
                 com.javaclaw.email.EmailTools.class,
                 com.javaclaw.loop.agent.LoopReportTool.class,
                 com.javaclaw.mcp.McpManageTools.class,
@@ -173,15 +176,20 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
         return List.copyOf(result);
     }
 
-    private Map<String, Object> createCapabilityTools(ToolCallOrigin origin, ToolContext context) {
+    private Map<String, Object> createCapabilityTools(ToolCallOrigin origin, ToolContext context,
+                                                       VisionPreprocessor vision) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("web", new PlaywrightBrowserTools(threadBrowsers.acquire(context.scope()),
                 siteCredentials, origin, json, false, ThreadBrowserRuntimes.scopeId(context.scope())));
         result.put("email", new EmailTools(origin, emailSettings));
         result.put("system", new SystemTools(origin, workspace.screenshotsDir()));
-        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
-            result.put("desktop", desktopTools.create(origin, workspace.screenshotsDir()));
-        }
+        result.put("desktop-session", new DesktopSessionTools(desktopSessions,
+                new DesktopSessionOwner(workspace.workspaceId(), context.scope().sessionId(),
+                        context.request().source().kind(), context.request().source().id()),
+                workspace.screenshotsDir(),
+                new com.javaclaw.platform.data.DataRoot(workspace.globalDataRoot()), vision,
+                new com.javaclaw.framework.core.TaskAcceptanceContext(context.request(),
+                        new com.javaclaw.desktop.agent.DesktopCapabilityContext(settings))));
         result.put("notification", new NotificationTools(
                 origin, notificationSettings, emailSettings));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
@@ -191,8 +199,14 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
     }
 
     @Override public boolean accepts(com.javaclaw.framework.api.RunScope scope) { return threadBrowsers.accepts(scope); }
-    @Override public void deleting(com.javaclaw.framework.api.RunScope scope) { threadBrowsers.deleting(scope); }
-    @Override public void close() { threadBrowsers.close(); }
+    @Override public void deleting(com.javaclaw.framework.api.RunScope scope) {
+        threadBrowsers.deleting(scope);
+        desktopSessions.closeScope(scope.workspaceId(), scope.sessionId());
+    }
+    @Override public void close() {
+        threadBrowsers.close();
+        desktopSessions.closeWorkspace(workspace.workspaceId());
+    }
 
     private static ToolCallOrigin origin(ToolContext context) {
         String kind = context.request().source().kind();

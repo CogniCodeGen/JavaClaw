@@ -39,7 +39,7 @@ public record PluginDescriptor(
         ConfigurationUi configurationUi) {
 
     /** 当前宿主支持的 plugin-api 主版本号；插件 {@link #apiVersion()} 不匹配则拒载 */
-    public static final String HOST_API_VERSION = "3.0";
+    public static final String HOST_API_VERSION = "4.0";
 
     /** 防御性拷贝 + 空值兜底，保证不可变与非空集合 */
     public PluginDescriptor {

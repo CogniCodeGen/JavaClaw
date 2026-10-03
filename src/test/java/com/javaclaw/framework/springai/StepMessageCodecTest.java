@@ -55,7 +55,8 @@ class StepMessageCodecTest {
         assertTrue(SpringAiPromptFactory.isResumeCommand((UserMessage) recovered.getLast()));
         assertEquals("original task", recovered.getFirst().getText());
         assertTrue(recovered.getLast().getText().contains("human.continue"));
-        new StepContextProjector(StepContextPolicy.DEFAULT).validate(recovered, request);
+        new StepContextProjector(StepContextPolicy.DEFAULT,
+                new com.fasterxml.jackson.databind.ObjectMapper()).validate(recovered, request);
     }
 
     @Test
@@ -68,7 +69,8 @@ class StepMessageCodecTest {
         UserMessage restored = (UserMessage) StepMessageCodec.message(StepMessageCodec.message(original));
 
         assertTrue(SpringAiPromptFactory.sameUserContent(original, restored));
-        new StepContextProjector(StepContextPolicy.DEFAULT).validate(List.of(restored), request);
+        new StepContextProjector(StepContextPolicy.DEFAULT,
+                new com.fasterxml.jackson.databind.ObjectMapper()).validate(List.of(restored), request);
     }
 
     private static ReasoningRequest request(ResumeCommand resume) {

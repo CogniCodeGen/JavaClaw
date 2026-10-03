@@ -3,6 +3,8 @@ package com.javaclaw.loop;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.framework.api.ModelDecisionV1;
 import com.javaclaw.loop.model.CompletionCheck;
 import com.javaclaw.loop.model.Decision;
 import com.javaclaw.loop.model.IterationResult;
@@ -14,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -60,13 +63,7 @@ public final class LoopController {
      */
     private int lastSatisfied;
     private int lastTotal;
-
-    /**
-     * 「全部客观准则已满足、但执行体沉默（无提议）」的连续轮数计数。达到
-     * {@link LoopConstants#CRITERIA_MET_SILENT_GRACE_ROUNDS} 即以客观核验判完成，
-     * 避免 INTERVAL（免停滞计数）下无限空等确认。任何其它裁决路径都清零（只累计连续沉默）。
-     */
-    private int criteriaMetSilentRounds;
+    private List<String> lastMissing = List.of();
 
     private LoopController(LoopSpec spec, LoopIterationRunner runner, CompletionChecker checker,
                            ProgressGate progress, Guardrails guards, CarryContext carry,
@@ -127,7 +124,9 @@ public final class LoopController {
                 if (pre != null) {
                     events.stopped(callbacks, Math.max(1, iteration - 1), pre, pre.description(),
                             lastSatisfied, lastTotal, guards.tokensUsed());
-                    callbacks.onTerminal(ConversationOutcome.completed());
+                    callbacks.onTerminal(pre == StopReason.CANCELLED
+                            ? ConversationOutcome.cancelled(CancellationReason.USER_REQUEST)
+                            : ConversationOutcome.completed(LoopTaskResults.stopped(spec, lastSatisfied, pre, lastMissing)));
                     return;
                 }
 
@@ -145,7 +144,7 @@ public final class LoopController {
                     events.stopped(callbacks, iteration, StopReason.CANCELLED,
                             StopReason.CANCELLED.description(), lastSatisfied, lastTotal,
                             guards.tokensUsed());
-                    callbacks.onTerminal(ConversationOutcome.completed());
+                    callbacks.onTerminal(ConversationOutcome.cancelled(CancellationReason.USER_REQUEST));
                     return;
                 }
                 String previousOutput = carry.lastOutput(); // 在并入前留存「上一轮」，供停滞仲裁对比
@@ -160,6 +159,7 @@ public final class LoopController {
                 CompletionCheck check = checker.check(result, carry, waitRound);
                 lastSatisfied = check.satisfied();
                 lastTotal = check.total();
+                lastMissing = check.missing();
                 // 完成核验（命令真跑 / 验收员模型调用）可能是分钟级开销，取消常恰落在其执行期间：
                 // 一返回就复检，先于停滞仲裁（另一次模型调用）与决策漏斗短路收束，
                 // 否则取消要拖到下一轮 awaitBeforeNext 才被观测，白烧一次仲裁模型调用
@@ -170,11 +170,11 @@ public final class LoopController {
                     events.stopped(callbacks, iteration, StopReason.CANCELLED,
                             StopReason.CANCELLED.description(), lastSatisfied, lastTotal,
                             guards.tokensUsed());
-                    callbacks.onTerminal(ConversationOutcome.completed());
+                    callbacks.onTerminal(ConversationOutcome.cancelled(CancellationReason.USER_REQUEST));
                     return;
                 }
                 boolean madeProgress = progress.madeProgress(check, result);
-                if (!waitRound) {
+                if (!waitRound && !result.threw()) {
                     madeProgress = arbitrateStallIfNeeded(iteration, madeProgress, check,
                             previousOutput, result);
                 }
@@ -198,7 +198,11 @@ public final class LoopController {
                     case DONE, STOP -> {
                         log.info("循环结束：共 {} 轮，终态={}，用量={} tokens",
                                 iteration, verdict.decision(), guards.tokensUsed());
-                        callbacks.onTerminal(ConversationOutcome.completed());
+                        callbacks.onTerminal(ConversationOutcome.completed(
+                                verdict.decision() == Decision.DONE
+                                        ? result.taskResult()
+                                        : LoopTaskResults.stopped(spec, lastSatisfied,
+                                                verdict.stopReason(), check.missing())));
                         return;
                     }
                     case CONTINUE -> {
@@ -206,7 +210,7 @@ public final class LoopController {
                             events.stopped(callbacks, iteration, StopReason.CANCELLED,
                                     StopReason.CANCELLED.description(), check.satisfied(), check.total(),
                                     guards.tokensUsed());
-                            callbacks.onTerminal(ConversationOutcome.completed());
+                            callbacks.onTerminal(ConversationOutcome.cancelled(CancellationReason.USER_REQUEST));
                             return;
                         }
                     }
@@ -263,29 +267,22 @@ public final class LoopController {
      */
     private LoopVerdict decide(IterationResult result, CompletionCheck check,
                                boolean madeProgress, boolean waitRound) {
+        if (!result.threw() && (result.taskResult() == null || result.modelDecision() == null)) {
+            return LoopVerdict.stop(StopReason.PROTOCOL_VIOLATION,
+                    "当前子任务缺少持久化 Harness 结果或独立模型决策");
+        }
+        if (!result.threw() && result.modelDecision() == ModelDecisionV1.Decision.BLOCKED) {
+            return LoopVerdict.stop(StopReason.HARNESS_BLOCKED);
+        }
+        if (!result.threw() && result.modelDecision() == ModelDecisionV1.Decision.NEEDS_INPUT) {
+            return LoopVerdict.stop(StopReason.HARNESS_NEEDS_INPUT);
+        }
         if (check.done()) {
-            criteriaMetSilentRounds = 0;
-            return LoopVerdict.done("全部成功准则通过且执行体确认完成");
+            return result.modelDecision() == ModelDecisionV1.Decision.CLAIM_DONE
+                    ? LoopVerdict.done("当前子任务的 Harness 结果已验收，显式循环准则也已通过")
+                    : LoopVerdict.stop(StopReason.PROTOCOL_VIOLATION,
+                            "Harness 验收结果与独立模型决策不一致");
         }
-        // 「准则全满足·执行体沉默」宽限必须先于轮后护栏：这类轮次在 ProgressGate 看来是「无进展」
-        // （无新行动、纯文本雷同），若先走 postflight，自驱节奏下停滞计数（阈值 2）会在宽限攒够之前
-        // 抢先判 NO_PROGRESS——目标明明已客观达成却收「收敛不了」失败卡。沉默 = 无 loop_report 也无
-        // 哨兵的主动「未完成」提议（hasRemaining=false）；失败/超时轮不算沉默（无有效产出，交由下方
-        // 连败护栏计数）。宽限轮不推进护栏计数（decide 至多再宽限 1 轮即完成，预算护栏仍逐轮兜底）
-        if (!result.threw() && check.total() > 0 && check.missing().isEmpty()
-                && !progress.hasRemaining(check, result)) {
-            // 宽限轮是成功轮：必须重置连败计数（宽限提前 return 不经 postflight，若不重置，
-            // 被成功宽限轮隔开的两次失败会被当作「连续」失败误触发 CONSECUTIVE_FAILURE——
-            // 此时距宽限判 DONE 只差一轮，循环却以失败终态收场）
-            guards.noteSuccess();
-            if (++criteriaMetSilentRounds >= LoopConstants.CRITERIA_MET_SILENT_GRACE_ROUNDS) {
-                criteriaMetSilentRounds = 0;
-                return LoopVerdict.done("全部成功准则持续满足，执行体虽未按协议确认，据客观核验判定完成");
-            }
-            return LoopVerdict.continueLoop("全部准则已满足，等待执行体确认完成（宽限 "
-                    + criteriaMetSilentRounds + "/" + LoopConstants.CRITERIA_MET_SILENT_GRACE_ROUNDS + "）");
-        }
-        criteriaMetSilentRounds = 0; // 宽限只累计「连续」沉默轮，任何其它形态都清零
         StopReason post = guards.postflight(result, madeProgress, waitRound);
         if (post != null) {
             return LoopVerdict.stop(post);
@@ -296,22 +293,20 @@ public final class LoopController {
         if (result.threw()) {
             return LoopVerdict.continueLoop("本轮执行失败，按连败护栏给予重试机会");
         }
-        if (waitRound && result.report() != null && !result.report().done()) {
-            // 执行体主动汇报仍在等待（done=false）：尊重其判断继续等。done=true 但核验未过
-            // （谎报完成被客观核验拆穿）不走此路——落到下方 hasRemaining 分支展示未满足清单，
-            // 否则 INTERVAL 下状态卡永远显示「等待中：等待外部条件」，误导排障方向
-            String why = result.report().reason().isBlank() ? "等待外部条件" : result.report().reason();
+        if (waitRound && result.modelDecision() == ModelDecisionV1.Decision.CONTINUE) {
+            String why = result.report() == null || result.report().reason().isBlank()
+                    ? "等待外部条件" : result.report().reason();
             return LoopVerdict.continueLoop("等待中：" + why);
         }
         if (progress.hasRemaining(check, result)) {
             // 未满足数以「真实准则数」check.total() 为准，而非 missing().size()：无结构化准则的自由
-            // 目标下，CompletionChecker 会塞一条合成 missing 占位（"执行体尚未确认完成"），照 missing
+            // 目标下，CompletionChecker 会塞一条合成 missing 占位，照 missing
             // 计数会印出「尚有 1 项未满足」谈论并不存在的准则；有准则但全满足仅差确认时 missing 为空。
             // 两种情形统一用「执行体尚未确认完成」，仅在确有未满足准则时才报具体条数
             int unmet = check.total() > 0 ? check.missing().size() : 0;
             return LoopVerdict.continueLoop(unmet > 0
                     ? "尚有 " + unmet + " 项未满足，继续推进"
-                    : "执行体尚未确认完成，继续推进");
+                    : "Harness 尚未验收完成，继续推进");
         }
         return LoopVerdict.stop(StopReason.NO_PROGRESS, "既未完成也无明确剩余，判定收敛不了");
     }

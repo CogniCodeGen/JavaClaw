@@ -1,10 +1,10 @@
 package com.javaclaw.config;
 
+import com.javaclaw.platform.data.DataRoot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
@@ -36,6 +36,7 @@ public class DataManager {
     private static final String TASK_EVENTS_DIR = "task-events";
 
     private final WorkspaceManager workspaces;
+    private final DataRoot managedData;
 
     private Path dataRoot;
     private Path screenshotsDir;
@@ -45,6 +46,7 @@ public class DataManager {
 
     public DataManager(WorkspaceManager workspaces) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
+        this.managedData = new DataRoot(workspaces.getGlobalDataPath());
         resolvePaths();
         initDirectories();
     }
@@ -77,12 +79,12 @@ public class DataManager {
      */
     private void initDirectories() {
         try {
-            Files.createDirectories(screenshotsDir);
-            Files.createDirectories(knowledgeDir);
-            Files.createDirectories(globalKnowledgeDir);
+            managedData.requireDirectory(screenshotsDir);
+            managedData.requireDirectory(knowledgeDir);
+            managedData.requireDirectory(globalKnowledgeDir);
             log.info("数据目录已初始化: {}", dataRoot.toAbsolutePath());
         } catch (IOException e) {
-            log.error("创建数据目录失败", e);
+            throw new IllegalStateException("创建应用内数据目录失败", e);
         }
     }
 
@@ -90,21 +92,21 @@ public class DataManager {
      * 获取截图保存目录
      */
     public Path getScreenshotsDir() {
-        return screenshotsDir;
+        return requireManaged(screenshotsDir);
     }
 
     /**
      * 获取当前工作区的知识库数据目录
      */
     public Path getKnowledgeDir() {
-        return knowledgeDir;
+        return requireManaged(knowledgeDir);
     }
 
     /**
      * 获取全局知识库数据目录（跨工作区共享）
      */
     public Path getGlobalKnowledgeDir() {
-        return globalKnowledgeDir;
+        return requireManaged(globalKnowledgeDir);
     }
 
     /**
@@ -126,14 +128,14 @@ public class DataManager {
      * 获取数据根目录
      */
     public Path getDataRoot() {
-        return dataRoot;
+        return requireManaged(dataRoot);
     }
 
     /**
      * 获取任务事件 JSONL 存储目录
      */
     public Path getTaskEventsDir() {
-        return taskEventsDir;
+        return requireManaged(taskEventsDir);
     }
 
     /**
@@ -141,6 +143,14 @@ public class DataManager {
      */
     public Path getTaskEventsFile(String taskId) {
         validatePathSegment(taskId, "taskId");
-        return taskEventsDir.resolve(taskId + ".jsonl");
+        return requireManaged(taskEventsDir.resolve(taskId + ".jsonl"));
+    }
+
+    private Path requireManaged(Path candidate) {
+        try {
+            return managedData.requireManaged(candidate);
+        } catch (IOException failure) {
+            throw new IllegalStateException("应用内数据路径无效", failure);
+        }
     }
 }

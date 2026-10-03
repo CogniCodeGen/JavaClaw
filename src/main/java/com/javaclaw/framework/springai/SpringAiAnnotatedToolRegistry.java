@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.spi.FrameworkTool;
+import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.framework.spi.ToolContext;
 import com.javaclaw.framework.spi.ToolDescriptor;
 import com.javaclaw.framework.spi.ToolExecutionContext;
@@ -16,6 +18,7 @@ import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 
 import java.lang.reflect.Method;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -38,6 +41,20 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
 
     public SpringAiAnnotatedToolRegistry(ObjectMapper json) {
         this.json = Objects.requireNonNull(json, "json");
+    }
+
+    /** The gateway accepts elevated receipts only from this host-owned callback wrapper. */
+    public static boolean isTrustedReceiptSource(FrameworkTool tool) {
+        return tool instanceof AnnotatedFrameworkTool annotated
+                && HostEffectReceiptAdapter.supports(annotated.source);
+    }
+
+    /** Host tool names are reserved for callbacks produced by their exact declaring class. */
+    public static boolean isExactHostTool(FrameworkTool tool) {
+        return tool instanceof AnnotatedFrameworkTool annotated
+                && annotated.source != null
+                && com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
+                        annotated.descriptor.name(), annotated.source.getClass());
     }
 
     public Registration register(String workspaceId, ToolObjectFactory factory) {
@@ -78,7 +95,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             List<FrameworkTool> tools = new ArrayList<>(callbacks.size());
             for (ContractedCallback callback : callbacks) {
                 tools.add(new AnnotatedFrameworkTool(
-                        callback.callback(), callback.contract(), lifecycle, json));
+                        callback.callback(), callback.contract(), callback.source(), lifecycle, json));
             }
             assertUnique(tools);
             return List.copyOf(tools);
@@ -108,10 +125,12 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
         List<ContractedCallback> callbacks = new ArrayList<>();
         for (Object object : objects) {
             if (object instanceof ToolCallback callback) {
-                callbacks.add(new ContractedCallback(callback, externalContract()));
+                rejectHostNameFromExternalCallback(callback.getToolDefinition().name());
+                callbacks.add(new ContractedCallback(callback, externalContract(), null));
             } else if (object instanceof ToolCallbackProvider provider) {
                 for (ToolCallback callback : provider.getToolCallbacks()) {
-                    callbacks.add(new ContractedCallback(callback, externalContract()));
+                    rejectHostNameFromExternalCallback(callback.getToolDefinition().name());
+                    callbacks.add(new ContractedCallback(callback, externalContract(), null));
                 }
             } else if (hasToolMethod(object)) {
                 Map<String, com.javaclaw.framework.spi.ToolContract> contracts =
@@ -124,11 +143,22 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
                         throw new IllegalStateException(
                                 "host @Tool is missing @ToolContract: " + name);
                     }
-                    callbacks.add(new ContractedCallback(callback, contract));
+                    if (com.javaclaw.agent.ToolRiskRegistry.isKnownHostTool(name)
+                            && !com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
+                                    name, object.getClass())) {
+                        throw new IllegalStateException("extension cannot impersonate host tool: " + name);
+                    }
+                    callbacks.add(new ContractedCallback(callback, contract, object));
                 }
             }
         }
         return callbacks;
+    }
+
+    private static void rejectHostNameFromExternalCallback(String name) {
+        if (com.javaclaw.agent.ToolRiskRegistry.isKnownHostTool(name)) {
+            throw new IllegalStateException("extension cannot impersonate host tool: " + name);
+        }
     }
 
     private static Map<String, com.javaclaw.framework.spi.ToolContract> contracts(Class<?> toolType) {
@@ -182,7 +212,8 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
     private static final class ExternalContractHolder { }
 
     private record ContractedCallback(
-            ToolCallback callback, com.javaclaw.framework.spi.ToolContract contract) { }
+            ToolCallback callback, com.javaclaw.framework.spi.ToolContract contract,
+            Object source) { }
 
     private static boolean hasToolMethod(Object object) {
         return hasToolMethod(object.getClass());
@@ -236,14 +267,20 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
         private final SharedLifecycle lifecycle;
         private final ObjectMapper json;
         private final ToolDescriptor descriptor;
+        private final Object source;
+        private final ThreadLocal<ToolEffectCapture.Signal> effectSignal = new ThreadLocal<>();
+        private final ThreadLocal<String> effectTarget = new ThreadLocal<>();
+        private final ThreadLocal<JsonNode> structuredData = new ThreadLocal<>();
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private AnnotatedFrameworkTool(
                 ToolCallback callback,
                 com.javaclaw.framework.spi.ToolContract contract,
+                Object source,
                 SharedLifecycle lifecycle,
                 ObjectMapper json) {
             this.callback = callback;
+            this.source = source;
             this.lifecycle = lifecycle;
             this.json = json;
             var definition = callback.getToolDefinition();
@@ -256,7 +293,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             }
             descriptor = new ToolDescriptor(definition.name(), definition.description(), schema,
                     contract.group(), PermissionSet.of(contract.permissions()),
-                    contract.idempotent());
+                    contract.idempotent(), contract.effectPolicy());
         }
 
         @Override
@@ -265,8 +302,52 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
         }
 
         @Override
+        public com.javaclaw.framework.spi.ToolRuntimeContextProvider runtimeContextProvider() {
+            if (source instanceof com.javaclaw.framework.spi.ToolRuntimeContextProvider provider
+                    && com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
+                            descriptor.name(), source.getClass())) {
+                return provider;
+            }
+            return null;
+        }
+
+        @Override
+        public String effectResourceKey(JsonNode arguments) {
+            if (source != null && source.getClass() == com.javaclaw.desktop.agent.DesktopSessionTools.class
+                    && descriptor.name().equals("desktop_session_launch_application")
+                    && descriptor.effectPolicy() == com.javaclaw.framework.spi.ToolEffectPolicy.DISCOVERY_GATED)
+                return ((com.javaclaw.desktop.agent.DesktopSessionTools) source)
+                        .launchResourceKey(arguments.path("application").asText(""));
+            if (source != null && source.getClass() == com.javaclaw.desktop.agent.DesktopSessionTools.class
+                    && descriptor.effectPolicy()
+                            == com.javaclaw.framework.spi.ToolEffectPolicy.OBSERVATION_GATED) {
+                String sessionId = arguments.path("sessionId").asText("");
+                if (sessionId.isBlank()) return "desktop:unknown";
+                try {
+                    String target = ((com.javaclaw.desktop.agent.DesktopSessionTools) source)
+                            .effectResourceKey(sessionId);
+                    return target.isBlank() ? "desktop:unknown" : "desktop:" + target;
+                } catch (RuntimeException unavailable) {
+                    // An expired session must never turn an older uncertain action into
+                    // an apparently unrelated new resource.
+                    return "desktop:unknown";
+                }
+            }
+            return "";
+        }
+
+        @Override
         public JsonNode execute(JsonNode arguments, ToolExecutionContext context) throws Exception {
-            String result = callback.call(json.writeValueAsString(arguments));
+            effectSignal.remove();
+            effectTarget.remove();
+            structuredData.remove();
+            String result;
+            try (ToolEffectCapture.Scope capture = ToolEffectCapture.begin(descriptor.name())) {
+                result = callback.call(json.writeValueAsString(arguments));
+                if (capture.signal() != null) effectSignal.set(capture.signal());
+                if (capture.target() != null) effectTarget.set(capture.target());
+                if (capture.data() != null) structuredData.set(capture.data());
+            }
             if (result == null) return TextNode.valueOf("");
             try {
                 JsonNode parsed = json.readTree(result);
@@ -274,6 +355,41 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             } catch (Exception ignored) {
                 return TextNode.valueOf(result);
             }
+        }
+
+        @Override
+        public com.javaclaw.framework.spi.ToolExecutionResultV1 executeResult(
+                JsonNode arguments, ToolExecutionContext context) throws Exception {
+            JsonNode rendered = execute(arguments, context);
+            ToolEffectCapture.Signal signal = effectSignal.get();
+            JsonNode data = structuredData.get();
+            structuredData.remove();
+            com.javaclaw.framework.api.ToolExecutionStatus status = signal == null
+                    ? com.javaclaw.framework.api.ToolExecutionStatus.UNKNOWN
+                    : switch (signal) {
+                        case SUCCESS -> com.javaclaw.framework.api.ToolExecutionStatus.SUCCEEDED;
+                        case ERROR -> com.javaclaw.framework.api.ToolExecutionStatus.FAILED;
+                        case TIMEOUT -> com.javaclaw.framework.api.ToolExecutionStatus.TIMED_OUT;
+                        case PENDING -> com.javaclaw.framework.api.ToolExecutionStatus.PENDING;
+                        case UNCERTAIN -> com.javaclaw.framework.api.ToolExecutionStatus.UNCERTAIN;
+                        case REOBSERVE -> com.javaclaw.framework.api.ToolExecutionStatus.REOBSERVE;
+                    };
+            String display = rendered.isTextual() ? rendered.asText() : "";
+            return new com.javaclaw.framework.spi.ToolExecutionResultV1(
+                    status, data == null ? rendered : data,
+                    status == com.javaclaw.framework.api.ToolExecutionStatus.FAILED
+                            ? "TOOL_ERROR" : "", display);
+        }
+
+        @Override
+        public EffectReceiptV1 effectReceipt(JsonNode arguments, JsonNode rawOutput,
+                ToolExecutionContext context, Instant observedAt) {
+            ToolEffectCapture.Signal signal = effectSignal.get();
+            String target = effectTarget.get();
+            effectSignal.remove();
+            effectTarget.remove();
+            return HostEffectReceiptAdapter.receipt(
+                    source, descriptor.name(), arguments, signal, context, observedAt, target);
         }
 
         @Override

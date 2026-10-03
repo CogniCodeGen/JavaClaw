@@ -157,10 +157,9 @@ public final class BuiltinExtensionCatalog {
                 "PlanRevision with a permission profile that cannot execute mutations",
                 schema(true), 30, List.of(), registrar ->
                         registrar.permissionPolicy((current, configuration, request) ->
-                                new PermissionSet(current.values().stream()
-                                        .filter(permission -> readOnly(permission.value()))
-                                        .collect(java.util.stream.Collectors.toCollection(
-                                                java.util.LinkedHashSet::new))))));
+                                current.intersect(PermissionSet.of(
+                                        "tool.read", "memory.read", "knowledge.read",
+                                        "interaction.request", "subagent.delegate")))));
         extensions.add(declarative("subagent.run", "SubAgent",
                 "Parent/child AgentClient runs with shared kernel budgets and cancellation",
                 schema(true), 40, List.of(), registrar -> registrar.toolProvider(subagents)));
@@ -289,9 +288,4 @@ public final class BuiltinExtensionCatalog {
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
 
-    private static boolean readOnly(String permission) {
-        String value = permission.toLowerCase(Locale.ROOT);
-        return !(value.contains("write") || value.contains("delete") || value.contains("execute")
-                || value.contains("send") || value.contains("mutate") || value.contains("admin"));
-    }
 }

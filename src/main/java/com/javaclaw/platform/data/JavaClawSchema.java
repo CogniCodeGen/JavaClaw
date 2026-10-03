@@ -5,7 +5,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
- * JavaClaw 3 初始数据库结构。
+ * JavaClaw 4 初始数据库结构。
  *
  * <p>所有 DDL 都可重复执行；对象没有运行时状态，只由根 Context 的
  * {@link SchemaInitializer} 在启动时调用。这里不负责连接、目录解析或旧版本迁移。</p>
@@ -13,7 +13,7 @@ import java.sql.Statement;
 final class JavaClawSchema {
 
     /**
-     * 创建 JavaClaw 3 初始 schema。DDL 全部幂等；生产启动链只由根 Spring Context
+     * 创建 JavaClaw 4 初始 schema。DDL 全部幂等；生产启动链只由根 Spring Context
      * 的 schema 初始化器调用一次。
      */
     void initialize(Connection c) throws SQLException {
@@ -115,6 +115,7 @@ final class JavaClawSchema {
                         cron_expression CLOB,
                         once_date_time VARCHAR(64),
                         prompt CLOB,
+                        execution_policy VARCHAR(32) NOT NULL DEFAULT 'RECURRING',
                         enabled BOOLEAN NOT NULL,
                         version BIGINT NOT NULL DEFAULT 0,
                         last_run_time VARCHAR(64),
@@ -170,6 +171,7 @@ final class JavaClawSchema {
                         workspace_id VARCHAR(128) NOT NULL,
                         id VARCHAR(128) NOT NULL,
                         title VARCHAR(512),
+                        auto_title_pending BOOLEAN NOT NULL DEFAULT FALSE,
                         created_at VARCHAR(64) NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, id)

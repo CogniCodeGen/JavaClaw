@@ -96,8 +96,9 @@ public final class SddTaskUseCase implements SddTaskApplicationService {
             }
 
             @Override
-            public void onLog(String taskId, String taskTitle, String message) {
-                checked.onEvent(new Event.Log(taskId, taskTitle, message));
+            public void onLog(String taskId, String taskTitle, String message,
+                              com.javaclaw.task.sdd.SddProgress.LogKind kind) {
+                checked.onEvent(new Event.Log(taskId, taskTitle, message, kind));
             }
         });
     }
@@ -118,7 +119,8 @@ public final class SddTaskUseCase implements SddTaskApplicationService {
         return new Task(task.id, task.title, task.description, task.workDir, task.capabilities,
                 task.tokenBudget, task.notificationChannel, task.createdAt, task.updatedAt,
                 task.state, task.progress, task.result, task.totalInputTokens,
-                task.totalOutputTokens, task.phaseInputTokens, task.phaseOutputTokens);
+                task.totalOutputTokens, task.phaseInputTokens, task.phaseOutputTokens,
+                task.taskResult);
     }
 
     private static String required(String value, String label) {

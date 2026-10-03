@@ -1,11 +1,13 @@
 package com.javaclaw.loop.model;
 
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.TaskResult;
 import java.util.List;
 
 /**
  * 单轮执行产出：由 {@code LoopIterationRunner} 跑完一轮后返回。
  *
- * @param finalReply   本轮执行体的最终回复全文（含结尾的自报判定行）；null 归一为空串
+ * @param finalReply   本轮执行体的用户可见回复全文；null 归一为空串，不携带控制状态
  * @param threw        本轮是否异常/超时（用于连续失败检测）
  * @param inputTokens  本轮输入用量
  * @param outputTokens 本轮输出用量
@@ -13,16 +15,23 @@ import java.util.List;
  *                     供进展判定比对「行动是否有新意」——同一组指纹重复出现即复读机行动。
  *                     刻意取入参而非结果：同一命令的输出天然含耗时/时间戳/PID 噪声，哈希结果会
  *                     令每次重放都成新指纹、复读机检测永不触发
- * @param report       结构化轮次汇报（loop_report 工具提交）；null 表示模型未按协议汇报，
- *                     下游降级到哨兵行文本解析
+ * @param report       可选的结构化轮次进度、延迟汇报
+ * @param taskResult   当前子 Run 持久化的 Harness 任务结果；null 表示缺失
+ * @param modelDecision 当前子 Run 的独立 Harness 决策；null 表示未提交
  */
 public record IterationResult(String finalReply, boolean threw,
                               long inputTokens, long outputTokens,
-                              List<String> toolCalls, LoopReport report) {
+                              List<String> toolCalls, LoopReport report,
+                              TaskResult taskResult, ModelDecisionV1.Decision modelDecision) {
 
     public IterationResult {
         if (finalReply == null) finalReply = "";
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
+    }
+
+    public IterationResult(String finalReply, boolean threw, long inputTokens, long outputTokens,
+                           List<String> toolCalls, LoopReport report) {
+        this(finalReply, threw, inputTokens, outputTokens, toolCalls, report, null, null);
     }
 
     /** 正常完成的一轮（无工具调用记录、无结构化汇报）。 */
@@ -40,6 +49,13 @@ public record IterationResult(String finalReply, boolean threw,
     public static IterationResult ok(String finalReply, long inputTokens, long outputTokens,
                                      List<String> toolCalls, LoopReport report) {
         return new IterationResult(finalReply, false, inputTokens, outputTokens, toolCalls, report);
+    }
+
+    public static IterationResult ok(String finalReply, long inputTokens, long outputTokens,
+                                     List<String> toolCalls, LoopReport report,
+                                     TaskResult taskResult, ModelDecisionV1.Decision modelDecision) {
+        return new IterationResult(finalReply, false, inputTokens, outputTokens,
+                toolCalls, report, taskResult, modelDecision);
     }
 
     /** 异常/超时的一轮（无有效产出、无已计量用量）。 */

@@ -9,10 +9,16 @@ import com.javaclaw.framework.spi.*;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /** Rule assessment for every run, escalating only abnormal/tool/long runs to a LIGHT model. */
 public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
     private static final int MAX_EVALUATION_INPUT_CHARACTERS = 12_000;
+    private static final Set<String> TOOL_EVENTS = Set.of(
+            "core.tool.started", "core.tool.completed", "core.tool.failed",
+            "core.tool.receipt", "core.tool.arguments_rejected");
+    private static final Set<String> FAILURE_EVENTS = Set.of(
+            "core.run.failed", "core.step.failed", "core.tool.failed");
 
     @Override
     public String id() {
@@ -35,8 +41,8 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
             assessment.put("summary", "最终答复超过辅助模型评估输入上限；评估未执行");
             return assessment;
         }
-        boolean hasTools = events.stream().anyMatch(event -> event.type().startsWith("core.tool."));
-        boolean abnormal = events.stream().anyMatch(event -> event.type().endsWith(".failed"));
+        boolean hasTools = events.stream().anyMatch(event -> TOOL_EVENTS.contains(event.type()));
+        boolean abnormal = events.stream().anyMatch(event -> FAILURE_EVENTS.contains(event.type()));
         boolean longRun = events.size() > 20 || output.toString().length() > 2_000;
         if (!hasTools && !abnormal && !longRun) {
             ObjectNode assessment = JsonNodeFactory.instance.objectNode();
@@ -77,7 +83,7 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
         input.put("toolCalls", events.stream()
                 .filter(event -> event.type().equals("core.tool.completed")).count());
         input.put("failedEvents", events.stream()
-                .filter(event -> event.type().endsWith(".failed")).count());
+                .filter(event -> FAILURE_EVENTS.contains(event.type())).count());
         input.put("correctionGuardApplied", output.path("correctionGuardApplied").asBoolean(false));
         return input;
     }

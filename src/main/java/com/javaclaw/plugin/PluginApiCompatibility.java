@@ -14,7 +14,7 @@ final class PluginApiCompatibility {
     }
 
     static boolean isInProcessCompatible(String version) {
-        return major(PluginDescriptor.HOST_API_VERSION).equals(major(version));
+        return PluginDescriptor.HOST_API_VERSION.equals(version);
     }
 
     private static String major(String version) {

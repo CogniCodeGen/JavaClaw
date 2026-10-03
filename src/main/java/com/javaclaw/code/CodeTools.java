@@ -491,7 +491,7 @@ public class CodeTools {
                     ToolConfirmationManager.requestHighRiskCommandConfirmation(
                             origin, tool, action + "\n"
                                     + ToolConfirmationManager.buildCommandDescription(
-                                            cmd, base.toString()));
+                                            cmd, base.toString()), cmd, base.toString());
             if (!confirmation.isAllow()) {
                 return ToolResponse.error(tool, "用户拒绝了操作");
             }

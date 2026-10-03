@@ -116,6 +116,84 @@ final class OnDemandToolSelection {
         return snapshot(completed.output(), id);
     }
 
+    /** Freeze an authorized rejected batch for the next provider step without replaying it. */
+    Snapshot retrieveExact(String key, List<String> names) {
+        if (catalog == null) {
+            throw pause("cannot repair unavailable tools: this Run has no authorized tool catalog");
+        }
+        if (names.isEmpty() || names.stream().distinct().count() != names.size()) {
+            throw pause("cannot repair unavailable tools: the requested names are empty or duplicated");
+        }
+        if (names.size() > policy.candidates()) {
+            throw pause("unavailable-tool repair needs " + names.size()
+                    + " candidate slots, above the limit of " + policy.candidates());
+        }
+        ObjectNode input = NODES.objectNode().put("phase", "tool_search_v2")
+                .put("key", key).put("query", "exact rejected tool names")
+                .put("limit", names.size());
+        ArrayNode requested = input.putArray("names");
+        names.forEach(requested::add);
+        StepId id = StepId.tool(request.runId(),
+                "context/tools/" + key + "/repair/" + requested);
+        var old = steps.step(request.runId(), id);
+        if (old.isPresent()) {
+            AgentStep step = old.get();
+            if (step.kind() != AgentStep.Kind.ORCHESTRATION || !input.equals(step.input())
+                    || step.state() != AgentStep.State.COMPLETED || outputRedacted(id)) {
+                throw pause("persisted unavailable-tool repair catalog changed: " + id.value());
+            }
+            return snapshot(step.output(), id);
+        }
+        ObjectNode output = NODES.objectNode();
+        ArrayNode values = output.putArray("candidates");
+        for (String name : names) {
+            var found = catalog.searchAuthorized(name, List.of(), Integer.MAX_VALUE).stream()
+                    .filter(candidate -> candidate.name().equals(name)).findFirst();
+            if (found.isEmpty()) {
+                throw pause("requested tool is not authorized for this Run: " + name);
+            }
+            var candidate = found.get();
+            int index = values.size();
+            values.addObject().put("id", "t" + index)
+                    .put("name", candidate.name()).put("group", candidate.group())
+                    .put("summary", SensitiveDataRedactor.redactText(
+                            excerpt(candidate.description(), 160)))
+                    .put("fingerprint", candidate.fingerprint());
+        }
+        StepEvents.started(request.events(), id, AgentStep.Kind.ORCHESTRATION, input, null);
+        StepEvents.completed(request.events(), id, output, null);
+        AgentStep completed = steps.step(request.runId(), id).orElseThrow();
+        if (outputRedacted(id) || !output.equals(completed.output())) {
+            throw pause("persisted unavailable-tool repair catalog was redacted or changed: "
+                    + id.value());
+        }
+        return snapshot(completed.output(), id);
+    }
+
+    /** Keep a grounded desktop action when its companion observe schema will not fit. */
+    ObservedActionFit fitObservedDesktopAction(String key, List<String> names,
+            List<String> activated, ToolCatalogSession.CatalogMode mode, Snapshot snapshot) {
+        if (!names.contains("desktop_session_observe")
+                || activated.contains("desktop_session_observe")) {
+            return new ObservedActionFit(names, snapshot);
+        }
+        try {
+            catalog.projectPlanned(names, policy.selectedTools(), mode);
+            return new ObservedActionFit(names, snapshot);
+        } catch (IllegalStateException invalid) {
+            if (!(invalid instanceof ToolSchemaBudgetExceededException)) {
+                throw OnDemandContextSession.pause("invalid or over-budget planned tool selection: "
+                        + invalid.getMessage(), invalid);
+            }
+            // The existing frame grounds this action. The next provider step
+            // observes its effect; no additional input is sent in this step.
+            List<String> fitted = names.stream()
+                    .filter(name -> !name.equals("desktop_session_observe")).toList();
+            return new ObservedActionFit(fitted, fitted.isEmpty()
+                    ? new Snapshot(List.of(), null) : retrieveExact(key, fitted));
+        }
+    }
+
     Choice choose(JsonNode decision, Intent intent, Snapshot snapshot,
             JsonNode refinementInput, String key) {
         verifySnapshot(snapshot);
@@ -180,7 +258,9 @@ final class OnDemandToolSelection {
             if (candidate == null) throw pause("retrieved tool candidate is unavailable: " + id.asText());
             names.add(candidate.name());
         });
-        return new Choice(List.copyOf(names), ToolCatalogSession.CatalogMode.OPTIONAL);
+        // A concrete candidate is ready for this provider step. Discovery is
+        // selected explicitly, rather than competing with the chosen callback.
+        return new Choice(List.copyOf(names), ToolCatalogSession.CatalogMode.NONE);
     }
 
     private void verifySnapshot(Snapshot snapshot) {
@@ -306,5 +386,6 @@ final class OnDemandToolSelection {
     }
     record Candidate(String id, String name, String group, String summary, String fingerprint) { }
     record Snapshot(List<Candidate> candidates, String stepId) { }
+    record ObservedActionFit(List<String> names, Snapshot snapshot) { }
     record Choice(List<String> names, ToolCatalogSession.CatalogMode mode) { }
 }

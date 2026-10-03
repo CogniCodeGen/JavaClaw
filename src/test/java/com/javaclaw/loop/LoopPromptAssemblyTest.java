@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 提示词组装与哨兵解析的回归测试。
+ * 提示词组装回归测试。
  *
  * <p>背景事故：目标分解被短请求阈值跳过时，目标文本曾从系统提示词与轮次提示词中<b>双双蒸发</b>，
  * 执行体收到一套循环纪律却不知目标为何，空转烧轮。本测试钉死「目标原文必须出现在每一轮
@@ -36,9 +36,9 @@ class LoopPromptAssemblyTest {
     void 摘要接力模式携带历轮简述与末轮全文() {
         CarryContext ctx = new CarryContext(GOAL, CarryForwardMode.SUMMARY);
         ctx.record(IterationResult.ok("第一轮的完整长产出……", 0L, 0L, java.util.List.of(),
-                new com.javaclaw.loop.model.LoopReport(false, "抓取了七天数据", "生成报表", 0L, "")));
+                new com.javaclaw.loop.model.LoopReport("抓取了七天数据", "生成报表", 0L, "")));
         ctx.record(IterationResult.ok("第二轮的完整长产出……", 0L, 0L, java.util.List.of(),
-                new com.javaclaw.loop.model.LoopReport(false, "报表已生成", "发送邮件", 0L, "")));
+                new com.javaclaw.loop.model.LoopReport("报表已生成", "发送邮件", 0L, "")));
 
         String round3 = ctx.assemble(3);
         assertTrue(round3.contains(GOAL), "目标原文必须在");
@@ -48,22 +48,4 @@ class LoopPromptAssemblyTest {
         assertFalse(round3.contains("第一轮的完整长产出"), "历史轮只留简述，不带全文（上下文有界）");
     }
 
-    @Test
-    void 哨兵解析容忍常见分隔符变体() {
-        String prefix = LoopConstants.JUDGMENT_LINE_PREFIX;
-        String done = LoopConstants.JUDGMENT_DONE;
-
-        // 标准格式
-        assertTrue(SentinelParser.proposesDone("正文\n" + prefix + done + "｜依据：xx"));
-        // 全角冒号变体
-        assertTrue(SentinelParser.proposesDone("正文\n" + prefix + "：" + done));
-        // 半角冒号 + 空格变体
-        assertTrue(SentinelParser.proposesDone("正文\n" + prefix + ": " + done));
-        // 未完成不误判为完成
-        assertFalse(SentinelParser.proposesDone(
-                "正文\n" + prefix + LoopConstants.JUDGMENT_NOT_DONE + "｜剩余：yy"));
-        // 正文中引用判定行时以最后一条为准
-        assertTrue(SentinelParser.proposesDone(
-                prefix + LoopConstants.JUDGMENT_NOT_DONE + "\n后来又干了活\n" + prefix + done));
-    }
 }

@@ -43,6 +43,204 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SpringAiModelTaskGatewayTest {
 
     @Test
+    void rejectsReasoningPreambleEvenWhenAValidJsonObjectFollows() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        var schema = json.readTree(OnDemandContextPlanner.STAGE_TWO_V2_SCHEMA);
+
+        String output = """
+                We need to choose exact context IDs and retrieved tool candidate IDs.
+                The best match for observing the desktop session is t0.
+                historyIds and sourceIds should be empty. Return JSON only. Final must conform.
+
+                {
+                  "historyIds": [],
+                  "sourceIds": [],
+                  "toolAction": "direct",
+                  "toolIds": ["t0"]
+                }
+                """;
+        assertThrows(IllegalStateException.class, () ->
+                SpringAiModelTaskGateway.validatedOutput(json, schema, output));
+        var parsed = SpringAiModelTaskGateway.validatedOutput(json, schema,
+                "{\"historyIds\":[],\"sourceIds\":[],\"toolAction\":\"direct\",\"toolIds\":[\"t0\"]}");
+        assertEquals("direct", parsed.path("toolAction").asText());
+        assertEquals(ModelTaskOutputException.Reason.INVALID_JSON,
+                assertThrows(ModelTaskOutputException.class, () ->
+                SpringAiModelTaskGateway.validatedOutput(json, schema,
+                        output + "Trailing explanation")).reason());
+        assertEquals(ModelTaskOutputException.Reason.INVALID_JSON,
+                assertThrows(ModelTaskOutputException.class, () ->
+                SpringAiModelTaskGateway.validatedOutput(json, schema,
+                        "Earlier candidate:\n{\"historyIds\":[],\"sourceIds\":[],"
+                                + "\"toolAction\":\"none\",\"toolIds\":[]}\nFinal:\n"
+                                + "{\"historyIds\":[],\"sourceIds\":[],"
+                                + "\"toolAction\":\"direct\",\"toolIds\":[\"t0\"]}"))
+                .reason());
+        assertEquals(ModelTaskOutputException.Reason.INVALID_JSON,
+                assertThrows(ModelTaskOutputException.class, () ->
+                SpringAiModelTaskGateway.validatedOutput(json, schema,
+                        "Explanation\n{\"historyIds\":[],\"sourceIds\":[],"
+                                + "\"toolAction\":123,\"toolIds\":[\"t0\"]}"))
+                .reason());
+    }
+
+    @Test
+    void completeJsonFencesPreserveTheParsedTree() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        var schema = request(RunId.random(), 0).outputSchema();
+        var expected = json.readTree("{\"ok\":true}");
+        for (String output : List.of(
+                "```json\n{\"ok\":true}\n```",
+                "```\n{\"ok\":true}\n```",
+                "``` json \n{\"ok\":true}\n```",
+                " \t\r\n```JsOn\r\n  {\"ok\":true}  \r\n```\r\n \t")) {
+            assertEquals(expected, SpringAiModelTaskGateway.validatedOutput(json, schema, output));
+        }
+    }
+
+    @Test
+    void realRefineV2ShapeInAJsonFenceMatchesTheBareJsonTree() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        var schema = json.readTree(OnDemandContextPlanner.STAGE_TWO_V2_SCHEMA);
+        // Mirrors a complete refine_v2 response; the exchange identifier is anonymized.
+        String bare = """
+                {
+                  "historyIds": ["exchange:test"],
+                  "sourceIds": [],
+                  "toolAction": "direct",
+                  "toolIds": ["t0"]
+                }
+                """;
+        String fenced = "```json\n" + bare + "```";
+
+        assertEquals(json.readTree(bare),
+                SpringAiModelTaskGateway.validatedOutput(json, schema, fenced));
+    }
+
+    @Test
+    void singleExactToolCallWrappersPreserveTheStructuredPlanningValue() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        var schema = json.readTree(OnDemandContextPlanner.STAGE_TWO_V2_SCHEMA);
+        String bare = "{\"historyIds\":[\"exchange:test\"],\"sourceIds\":[],"
+                + "\"toolAction\":\"direct\",\"toolIds\":[\"t5\"]}";
+        for (String output : List.of(
+                "<tool_call>\n\n\n\n" + bare,
+                "<tool_call>" + bare + "</tool_call>",
+                " \t\r\n<tool_call>\r\n " + bare + " \r\n</tool_call> \r\n\t")) {
+            assertEquals(json.readTree(bare),
+                    SpringAiModelTaskGateway.validatedOutput(json, schema, output));
+        }
+        assertEquals("literal </tool_call>", SpringAiModelTaskGateway.validatedOutput(json,
+                json.readTree("{\"type\":\"string\"}"),
+                "<tool_call>\"literal </tool_call>\"</tool_call>").asText());
+    }
+
+    @Test
+    void toolCallWrappersRejectAmbiguousForeignAndPartialFormats() {
+        ObjectMapper json = new ObjectMapper();
+        var schema = request(RunId.random(), 0).outputSchema();
+        String bare = "{\"ok\":true}";
+        for (String output : List.of(
+                "<tool_call><tool_call>" + bare,
+                "<tool_call>" + bare + "</tool_call><tool_call>" + bare + "</tool_call>",
+                "<tool_call>" + bare + "</tool_call></tool_call>",
+                "<tool_call>" + bare + bare,
+                "<tool_call>" + bare + "Explanation",
+                "<tool_call>" + bare + "</tool_call>Explanation",
+                "<tool_call>Explanation " + bare,
+                "<tool_call>" + bare + "</tool_call",
+                "<tool_call>" + bare + "</tool_response>",
+                "<tool_call>", "<tool_call></tool_call>",
+                "<tool_call name=\"planner\">" + bare + "</tool_call>",
+                "<tool_call >" + bare, "<TOOL_CALL>" + bare,
+                "<html><body>" + bare + "</body></html>",
+                "<think>reasoning</think>" + bare,
+                "<tool_call><html>" + bare + "</html></tool_call>",
+                "Before <tool_call>" + bare + "</tool_call>",
+                "<tool_call>```json\n" + bare + "\n```</tool_call>",
+                "```json\n<tool_call>" + bare + "</tool_call>\n```",
+                "<tool_call>{\"ok\":false,\"ok\":true}</tool_call>")) {
+            assertEquals(ModelTaskOutputException.Reason.INVALID_JSON,
+                    assertThrows(ModelTaskOutputException.class, () ->
+                            SpringAiModelTaskGateway.validatedOutput(json, schema, output)).reason());
+        }
+    }
+
+    @Test
+    void wrappedJsonStillRequiresTheSchemaAndToolArgumentsAreNeverExtracted() {
+        ObjectMapper json = new ObjectMapper();
+        var schema = request(RunId.random(), 0).outputSchema();
+        for (String output : List.of(
+                "<tool_call>{\"ok\":42}",
+                "<tool_call>{\"ok\":true,\"extra\":1}</tool_call>",
+                "<tool_call>{\"name\":\"desktop_session_click\","
+                        + "\"arguments\":{\"ok\":true}}</tool_call>")) {
+            assertEquals(ModelTaskOutputException.Reason.SCHEMA_MISMATCH,
+                    assertThrows(ModelTaskOutputException.class, () ->
+                            SpringAiModelTaskGateway.validatedOutput(json, schema, output)).reason());
+        }
+    }
+
+    @Test
+    void nativeToolCallsAreRejectedEvenWithValidJsonAndTheirUsageIsMetered() {
+        ChatModel model = prompt -> new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                .content("{\"ok\":true}")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("unexpected", "function",
+                        "desktop_session_click", "{}"))).build())),
+                ChatResponseMetadata.builder().model("unknown-test-model")
+                        .usage(new DefaultUsage(7, 3)).build());
+        Fixture fixture = fixture(model, RunBudget.UNBOUNDED);
+
+        ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> fixture.gateway.execute(request(fixture.runId, 0)).toCompletableFuture().get());
+
+        ModelTaskOutputException rejected = assertInstanceOf(ModelTaskOutputException.class, failure.getCause());
+        assertEquals(ModelTaskOutputException.Reason.SCHEMA_MISMATCH, rejected.reason());
+        assertTrue(rejected.getMessage().contains("native tool calls"));
+        assertEquals(1, fixture.audit.usageCalls.get());
+        assertEquals(1, fixture.audit.failedCalls.get());
+        assertEquals(0, fixture.audit.completedCalls.get());
+        assertEquals(7, fixture.ledger.snapshot(fixture.runId).inputTokens());
+        assertEquals(3, fixture.ledger.snapshot(fixture.runId).outputTokens());
+    }
+
+    @Test
+    void explanationsMultipleValuesAndMalformedFencesAreRejected() {
+        ObjectMapper json = new ObjectMapper();
+        var schema = request(RunId.random(), 0).outputSchema();
+        for (String output : List.of(
+                "before\n```json\n{\"ok\":true}\n```",
+                "```json\n{\"ok\":true}\n```\nafter",
+                "```json\n{\"ok\":true}\n``` after",
+                "```json\n{\"ok\":true}\n```\n```json\n{\"ok\":false}\n```",
+                "```json\n{\"ok\":true}\n",
+                "```javascript\n{\"ok\":true}\n```",
+                "```json extra\n{\"ok\":true}\n```",
+                "{\"ok\":true}\n{\"ok\":false}",
+                "```json\n{\"ok\":true}\n{\"ok\":false}\n```",
+                "preamble\n" + "x".repeat(16_385) + "\n{\"ok\":true}",
+                "{\"ok\":false,\"ok\":true}",
+                "```json\n{\"ok\":false,\"ok\":true}\n```")) {
+            assertEquals(ModelTaskOutputException.Reason.INVALID_JSON,
+                    assertThrows(ModelTaskOutputException.class, () ->
+                            SpringAiModelTaskGateway.validatedOutput(json, schema, output)).reason());
+        }
+    }
+
+    @Test
+    void fencedJsonStillMustMatchTheRequestedSchema() {
+        ObjectMapper json = new ObjectMapper();
+        var schema = request(RunId.random(), 0).outputSchema();
+        for (String output : List.of(
+                "```json\n{\"ok\":42}\n```",
+                "```\n{\"ok\":true,\"extra\":1}\n```")) {
+            assertEquals(ModelTaskOutputException.Reason.SCHEMA_MISMATCH,
+                    assertThrows(ModelTaskOutputException.class, () ->
+                            SpringAiModelTaskGateway.validatedOutput(json, schema, output)).reason());
+        }
+    }
+
+    @Test
     void everyPhysicalAttemptPersistsItsExactInputAndRawResponseAndTerminalOwnersAreRejected() throws Exception {
         var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 "jdbc:h2:mem:model-steps-" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
@@ -68,15 +266,15 @@ class SpringAiModelTaskGatewayTest {
         AtomicInteger calls = new AtomicInteger();
         SpringAiModelRegistry models = new SpringAiModelRegistry();
         models.register("test:model", prompt -> calls.getAndIncrement() == 0
-                ? response("not-json", 7, 3) : response("{\"ok\":true}", 5, 2));
+                ? response("not-json", 7, 3) : response("<tool_call>\n{\"ok\":true}", 5, 2));
         models.route("workspace", ModelTier.LIGHT, "test:model");
         var gateway = new SpringAiModelTaskGateway(models, ledger,
                 new com.javaclaw.framework.core.RunEventModelTaskAuditSink(runs), mapper, new DirectExecutor(), runs);
-        gateway.execute(request(owner, 1)).toCompletableFuture().get();
+        assertEquals(true, gateway.execute(request(owner, 1)).toCompletableFuture().get().output().path("ok").asBoolean());
         var steps = new com.javaclaw.framework.core.RunStepQuery(runs).steps(owner);
         assertEquals(2, steps.size());
         assertEquals("not-json", steps.getFirst().output().path("message").path("text").asText());
-        assertEquals("{\"ok\":true}", steps.getLast().output().path("message").path("text").asText());
+        assertEquals("<tool_call>\n{\"ok\":true}", steps.getLast().output().path("message").path("text").asText());
         assertEquals(7, steps.getFirst().usage().path("inputTokens").asLong());
         assertEquals("session", steps.getFirst().threadId());
         assertEquals(2, steps.getFirst().input().path("messages").size());
@@ -110,10 +308,10 @@ class SpringAiModelTaskGatewayTest {
         AtomicInteger calls = new AtomicInteger();
         ChatModel model = prompt -> {
             calls.incrementAndGet();
-            return response("{\"ok\":true}", 7, 3);
+            return response("{\"ok\":true}", 107, 3);
         };
         Fixture fixture = fixture(model, new RunBudget(
-                Duration.ofMinutes(1), 5, 100, 1, BigDecimal.TEN));
+                Duration.ofMinutes(1), 100, 100, 1, BigDecimal.TEN));
 
         ExecutionException failure = assertThrows(ExecutionException.class, () ->
                 fixture.gateway.execute(request(fixture.runId, 3))
@@ -122,7 +320,31 @@ class SpringAiModelTaskGatewayTest {
         assertInstanceOf(BudgetExceededException.class, failure.getCause());
         assertEquals(1, calls.get());
         assertEquals(1, fixture.audit.usageCalls.get());
-        assertEquals(7, fixture.ledger.snapshot(fixture.runId).inputTokens());
+        assertEquals(107, fixture.ledger.snapshot(fixture.runId).inputTokens());
+    }
+
+    @Test
+    void nextModelTaskIsNotSentWhenConservativePromptExceedsRemainingInputBudget() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            calls.incrementAndGet();
+            return response("{\"ok\":true}", 992, 1);
+        };
+        Fixture fixture = fixture(model, new RunBudget(
+                Duration.ofMinutes(1), 1_000, 100, 1, BigDecimal.TEN));
+
+        fixture.gateway.execute(request(fixture.runId, 0)).toCompletableFuture().get();
+        ExecutionException failure = assertThrows(ExecutionException.class, () ->
+                fixture.gateway.execute(request(fixture.runId, 0))
+                        .toCompletableFuture().get());
+
+        BudgetExceededException exceeded = assertInstanceOf(BudgetExceededException.class,
+                failure.getCause());
+        assertEquals(BudgetExceededException.Kind.MODEL_INPUT_TOKENS, exceeded.kind());
+        assertTrue(exceeded.getMessage().contains("remaining=8"));
+        assertEquals(1, calls.get());
+        assertEquals(1, fixture.audit.usageCalls.get());
+        assertEquals(992, fixture.ledger.snapshot(fixture.runId).inputTokens());
     }
 
     @Test
@@ -144,13 +366,20 @@ class SpringAiModelTaskGatewayTest {
         assertEquals(2, retrying.audit.usageCalls.get());
 
         calls.set(0);
-        Fixture budgeted = fixture(alwaysFails, new RunBudget(
-                Duration.ofMinutes(1), 3, 100, 1, BigDecimal.TEN));
+        ChatModel overBudgetFailure = prompt -> {
+            calls.incrementAndGet();
+            throw new ManagedInferenceChatModel.ManagedInferenceModelException(
+                    "inference_error", "failed", true,
+                    new com.javaclaw.inference.api.InferenceUsage(104, 1),
+                    "deliverance:test", null);
+        };
+        Fixture budgeted = fixture(overBudgetFailure, new RunBudget(
+                Duration.ofMinutes(1), 100, 100, 1, BigDecimal.TEN));
         ExecutionException failure = assertThrows(ExecutionException.class, () ->
                 budgeted.gateway.execute(request(budgeted.runId, 3)).toCompletableFuture().get());
         assertInstanceOf(BudgetExceededException.class, failure.getCause());
         assertEquals(1, calls.get());
-        assertEquals(4, budgeted.ledger.snapshot(budgeted.runId).inputTokens());
+        assertEquals(104, budgeted.ledger.snapshot(budgeted.runId).inputTokens());
     }
 
     @Test

@@ -1,8 +1,11 @@
 package com.javaclaw.infrastructure.settings;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.DiscoveryRequest;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.Usage;
+import com.javaclaw.application.settings.ModelDiscoveryUseCase;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.EmbeddingSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ProbeResult;
@@ -20,6 +23,7 @@ import com.javaclaw.inference.api.LocalInferenceGateway;
 
 import java.net.URI;
 import java.net.http.HttpRequest;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -29,12 +33,11 @@ import java.util.UUID;
 /** 通过共享 HTTP 网关或当前工作区 EmbeddingGateway 探测模型连接。 */
 public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePort {
 
-    private static final String MODEL_ENDPOINT_GUIDANCE =
-            "请检查 Base URL 和 API 路径（OpenAI 兼容服务通常需包含 /v1）";
     private final HttpGateway http;
     private final JsonCodec json;
     private final EmbeddingRuntimeProbePort runtimeEmbedding;
     private final LocalInferenceGateway localInference;
+    private final ModelDiscoveryApplicationService discovery;
 
     public HttpModelSettingsProbeAdapter(
             HttpGateway http, JsonCodec json, EmbeddingRuntimeProbePort runtimeEmbedding) {
@@ -44,10 +47,19 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
     public HttpModelSettingsProbeAdapter(
             HttpGateway http, JsonCodec json, EmbeddingRuntimeProbePort runtimeEmbedding,
             LocalInferenceGateway localInference) {
+        this(http, json, runtimeEmbedding, localInference,
+                new ModelDiscoveryUseCase(new DefaultModelProviderCatalog(),
+                        new HttpModelDiscoveryAdapter(http, json)));
+    }
+
+    public HttpModelSettingsProbeAdapter(
+            HttpGateway http, JsonCodec json, EmbeddingRuntimeProbePort runtimeEmbedding,
+            LocalInferenceGateway localInference, ModelDiscoveryApplicationService discovery) {
         this.http = Objects.requireNonNull(http, "http");
         this.json = Objects.requireNonNull(json, "json");
         this.runtimeEmbedding = Objects.requireNonNull(runtimeEmbedding, "runtimeEmbedding");
         this.localInference = localInference;
+        this.discovery = Objects.requireNonNull(discovery, "discovery");
     }
 
     @Override
@@ -65,47 +77,12 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
                     + " · " + elapsedMillis(started) + "ms · "
                     + response.usage().totalTokens() + " tokens");
         }
-        try {
-            CredentialUsage.requirePlaintext(settings.apiKey());
-        } catch (IllegalStateException unreadable) {
-            return new ProbeResult(false, unreadable.getMessage());
-        }
         long started = System.nanoTime();
-        URI endpoint = endpoint(settings.baseUrl(), "models");
-        var response = http.sendAndWait("settings-model-probe", () -> {
-            HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
-                    .timeout(Duration.ofSeconds(5)).GET();
-            if (!settings.apiKey().isBlank() && !"not-needed".equals(settings.apiKey())) {
-                request.header("Authorization", "Bearer " + settings.apiKey());
-            }
-            return request.build();
-        }, HttpRetryPolicy.none());
-        long elapsed = elapsedMillis(started);
-        if (!response.isSuccessful()) {
-            return new ProbeResult(false, "连接异常 (HTTP " + response.statusCode() + ")；"
-                    + MODEL_ENDPOINT_GUIDANCE);
-        }
-        JsonNode body;
-        try {
-            body = json.mapper().reader()
-                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-                    .readTree(response.bodyText());
-        } catch (JsonProcessingException invalidJson) {
-            return new ProbeResult(false, "模型接口未返回有效 JSON；" + MODEL_ENDPOINT_GUIDANCE);
-        }
-        if (body == null || body.isMissingNode() || body.isNull()) {
-            return new ProbeResult(false, "模型接口响应为空；" + MODEL_ENDPOINT_GUIDANCE);
-        }
-        if (body.has("error")) {
-            return new ProbeResult(false, "模型接口返回错误；" + MODEL_ENDPOINT_GUIDANCE);
-        }
-        String provider = new DefaultModelProviderCatalog().normalizeId(settings.provider());
-        if (("openai".equals(provider) || "dashscope".equals(provider))
-                && !body.path("data").isArray()) {
-            return new ProbeResult(false, "模型接口响应缺少 data 模型列表；" + MODEL_ENDPOINT_GUIDANCE);
-        }
-        return new ProbeResult(true,
-                "✓ 模型列表接口可达（尚未验证聊天调用） · " + elapsed + "ms");
+        var result = discovery.discover(new DiscoveryRequest(settings.provider(),
+                settings.baseUrl(), settings.apiKey(), Usage.CHAT));
+        if (!result.succeeded()) return new ProbeResult(false, result.message());
+        return new ProbeResult(true, "✓ 模型列表接口可达（尚未验证聊天调用） · "
+                + elapsedMillis(started) + "ms");
     }
 
     @Override
@@ -135,26 +112,48 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
             return new ProbeResult(false, "嵌入测试失败: " + error);
         }
 
-        String body = json.encode(Map.of(
-                "model", form.modelName(), "input", "嵌入连通性测试"));
-        URI endpoint = endpoint(form.baseUrl(), "embeddings");
+        String provider = new DefaultModelProviderCatalog().normalizeId(form.provider());
+        if ("anthropic".equals(provider) || "gemini".equals(provider)) {
+            return new ProbeResult(false, "该提供商当前不支持嵌入模型连接测试");
+        }
+        // The runtime uses OpenAiEmbeddingModel for external providers, including Ollama.
+        // Its Ollama base URL is normalized to /v1 before building the request.
+        String body = json.encode(Map.of("model", form.modelName(),
+                "input", "嵌入连通性测试"));
+        URI endpoint = endpoint("ollama".equals(provider) ? ollamaCompatibleBase(form.baseUrl())
+                : form.baseUrl(), "embeddings");
         long started = System.nanoTime();
-        var response = http.sendAndWait("settings-embedding-probe", () -> {
-            HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
-                    .timeout(Duration.ofSeconds(5))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body));
-            if (!form.apiKey().isBlank()) {
-                request.header("Authorization", "Bearer " + form.apiKey());
-            }
-            return request.build();
-        }, HttpRetryPolicy.none());
+        com.javaclaw.platform.http.HttpResult response;
+        try {
+            response = http.sendAndWait("settings-embedding-probe", () -> {
+                HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body));
+                if (!form.apiKey().isBlank() && !"not-needed".equals(form.apiKey())) {
+                    request.header("Authorization", "Bearer " + form.apiKey());
+                }
+                return request.build();
+            }, HttpRetryPolicy.none());
+        } catch (IOException unreachable) {
+            return new ProbeResult(false, "嵌入测试失败：无法连接接口，请检查 API 地址和网络");
+        } catch (IllegalArgumentException invalidRequest) {
+            return new ProbeResult(false, "嵌入测试失败：API Key 或 API 地址格式无效");
+        }
         long elapsed = elapsedMillis(started);
+        if (!endpoint.equals(response.uri())) {
+            return new ProbeResult(false, "嵌入接口发生重定向，请直接填写最终 API 地址");
+        }
         if (!response.isSuccessful()) {
             return new ProbeResult(false, "嵌入测试失败: HTTP " + response.statusCode());
         }
-        int actualDimensions = json.tree(response.bodyText())
-                .path("data").path(0).path("embedding").size();
+        JsonNode result;
+        try {
+            result = json.tree(response.bodyText());
+        } catch (JsonProcessingException invalidJson) {
+            return new ProbeResult(false, "嵌入测试失败：接口未返回有效 JSON");
+        }
+        int actualDimensions = result.path("data").path(0).path("embedding").size();
         if (actualDimensions <= 0) {
             return new ProbeResult(false, "嵌入测试失败: 响应中未找到嵌入向量");
         }
@@ -172,7 +171,14 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
     }
 
     private static URI endpoint(String baseUrl, String suffix) {
-        return URI.create(baseUrl.endsWith("/") ? baseUrl + suffix : baseUrl + "/" + suffix);
+        String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        if (base.endsWith("/" + suffix)) return URI.create(base);
+        return URI.create(base + "/" + suffix);
+    }
+
+    private static String ollamaCompatibleBase(String baseUrl) {
+        String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return base.endsWith("/v1") ? base : base + "/v1";
     }
 
     private static long elapsedMillis(long started) {

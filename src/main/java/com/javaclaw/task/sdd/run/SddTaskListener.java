@@ -12,4 +12,9 @@ public interface SddTaskListener {
 
     /** 任务追加一行日志。 */
     default void onLog(String taskId, String taskTitle, String message) {}
+
+    default void onLog(String taskId, String taskTitle, String message,
+                       com.javaclaw.task.sdd.SddProgress.LogKind kind) {
+        onLog(taskId, taskTitle, message);
+    }
 }

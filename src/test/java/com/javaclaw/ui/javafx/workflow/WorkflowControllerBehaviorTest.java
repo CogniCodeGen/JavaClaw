@@ -26,6 +26,7 @@ import com.javaclaw.workflow.runtime.ValidationIssue;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
@@ -181,6 +182,8 @@ class WorkflowControllerBehaviorTest {
         awaitFx(() -> service.saveCalls > saves
                 && system.id().equals(model.selectedWorkflowProperty().get().id()));
         assertTrue(callFx(() -> model.readOnlyProperty().get()));
+        assertTrue(callFx(() -> field(controller, "saveStateLabel", Label.class)
+                .getStyleClass().contains("workflow-save-readonly")));
 
         AtomicBoolean readOnlyContinuation = new AtomicBoolean();
         runFx(() -> invoke(controller, "saveDraft", new Class<?>[] {Runnable.class},
@@ -195,7 +198,12 @@ class WorkflowControllerBehaviorTest {
         service.saveFailure = new IllegalStateException("disk full");
         CompletableFuture<Boolean> rejectedClose = callFx(controller::prepareClose);
         assertFalse(rejectedClose.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
-        awaitFx(() -> "保存失败".equals(model.saveStateProperty().get()));
+        awaitFx(() -> model.saveStatusProperty().get() == WorkflowViewModel.SaveStatus.FAILED);
+        assertTrue(callFx(() -> field(controller, "saveStateLabel", Label.class)
+                .getStyleClass().contains("workflow-save-pending")));
+        runFx(() -> model.saveStateProperty().set("已保存"));
+        assertTrue(callFx(() -> field(controller, "saveStateLabel", Label.class)
+                .getStyleClass().contains("workflow-save-pending")));
         service.saveFailure = null;
 
         runFx(() -> {

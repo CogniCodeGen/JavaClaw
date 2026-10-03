@@ -3,6 +3,8 @@ package com.javaclaw.workflow.service;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.framework.api.TaskResult;
+import com.javaclaw.framework.api.TaskResultJson;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
 import com.javaclaw.workflow.runtime.NodeResult;
@@ -14,6 +16,8 @@ import java.util.function.Consumer;
 
 /** 把现有异步 ConversationCallbacks 管线适配为一个阻塞的系统图节点。 */
 public final class SystemPipelineAwaiter {
+    /** Checkpointed result of the nested execution, separate from graph run status. */
+    public static final String TASK_RESULT_KEY = "_system.taskResult";
     private SystemPipelineAwaiter() {}
 
     public static NodeResult await(NodeExecutionContext context,
@@ -22,6 +26,7 @@ public final class SystemPipelineAwaiter {
                                    Runnable cancelAction) throws Exception {
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicReference<TaskResult> taskResult = new AtomicReference<>();
         StringBuilder output = new StringBuilder();
         ConversationCallbacks inner = new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) {
@@ -35,6 +40,10 @@ public final class SystemPipelineAwaiter {
                 } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
                     failure.set(new java.util.concurrent.CancellationException(
                             "系统管线已取消: " + cancelled.reason()));
+                } else if (outcome instanceof ConversationOutcome.Completed completed) {
+                    taskResult.set(completed.taskResult() == null
+                            ? TaskResult.unverified("系统管线没有提供任务验收结论")
+                            : completed.taskResult());
                 }
                 done.countDown();
             }
@@ -53,6 +62,10 @@ public final class SystemPipelineAwaiter {
             if (failure.get() instanceof Exception e) throw e;
             throw new IllegalStateException("系统管线失败", failure.get());
         }
-        return NodeResult.output(StatePatch.builder().set("output", output.toString()).build(), output.toString());
+        StatePatch.Builder state = StatePatch.builder().set("output", output.toString());
+        if (taskResult.get() != null) {
+            state.setJson(TASK_RESULT_KEY, TaskResultJson.encode(taskResult.get()));
+        }
+        return NodeResult.output(state.build(), output.toString());
     }
 }

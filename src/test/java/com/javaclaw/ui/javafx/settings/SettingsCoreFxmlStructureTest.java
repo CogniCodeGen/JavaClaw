@@ -56,6 +56,27 @@ class SettingsCoreFxmlStructureTest {
     }
 
     @Test
+    void allExternalModelFieldsRemainEditableAndRefreshable() throws Exception {
+        for (var entry : Map.of(
+                "/fxml/settings/model-settings.fxml",
+                Map.of("modelNameField", "modelDiscoveryRefreshButton"),
+                "/fxml/settings/tiered-model-settings.fxml",
+                Map.of("normalModelNameField", "normalDiscoveryRefreshButton",
+                        "lightModelNameField", "lightDiscoveryRefreshButton"),
+                "/fxml/settings/embedding-settings.fxml",
+                Map.of("modelNameField", "modelDiscoveryRefreshButton"))
+                .entrySet()) {
+            Document document = load(entry.getKey());
+            for (var control : entry.getValue().entrySet()) {
+                Element model = elementById(document, control.getKey());
+                assertEquals("ComboBox", model.getTagName());
+                assertEquals("true", model.getAttribute("editable"));
+                assertEquals("Button", elementById(document, control.getValue()).getTagName());
+            }
+        }
+    }
+
+    @Test
     void inferenceProfileEditReusesTheExistingParametersAction() throws Exception {
         Document document = load("/fxml/settings/local-inference-profiles.fxml");
         assertEquals("#parametersRequested",

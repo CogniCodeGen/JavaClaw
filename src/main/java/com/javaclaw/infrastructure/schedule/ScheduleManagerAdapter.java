@@ -113,7 +113,8 @@ public final class ScheduleManagerAdapter implements SchedulePort {
                 : source.isEnabled() ? RuntimeState.ENABLED : RuntimeState.PAUSED;
         List<History> history = source.getExecRecords() == null ? List.of()
                 : source.getExecRecords().stream().map(record -> new History(
-                        record.getTime(), record.getStatus(), record.getDuration(), record.getNote()))
+                        record.getTime(), record.getStatus(), record.getDuration(), record.getNote(),
+                        record.getTaskResult()))
                 .toList();
         return new Task(source.getId(), source.getName(), source.getDescription(),
                 source.getTriggerType(), source.getIntervalMinutes(), source.getIntervalValue(),
@@ -124,7 +125,8 @@ public final class ScheduleManagerAdapter implements SchedulePort {
                 source.getNotifyChannel(), source.isUnattendedToolsAuthorized(), source.isBuiltin(),
                 source.getTriggerSummary(), source.getSourceModule(), state,
                 source.isBuiltin() ? null : manager.getNextFireTime(source.getId()),
-                source.isBuiltin() ? manager.hasBuiltinAction(source.getId()) : !active, history);
+                source.isBuiltin() ? manager.hasBuiltinAction(source.getId()) : !active, history,
+                source.getExecutionPolicy());
     }
 
     private static ScheduledTask toScheduledTask(SaveCommand source) {
@@ -138,6 +140,7 @@ public final class ScheduleManagerAdapter implements SchedulePort {
         target.setCronExpression(source.cronExpression());
         target.setOnceDateTime(source.onceDateTime());
         target.setPrompt(source.prompt());
+        target.setExecutionPolicy(source.executionPolicy());
         target.setEnabled(source.enabled());
         target.setVersion(source.version());
         target.setNotifyEnabled(source.notifyEnabled());

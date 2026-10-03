@@ -12,8 +12,9 @@ import java.util.Set;
  * 模型能力的项目文件隔离策略。
  *
  * <p>普通文件能力只能访问应用启动时确定的项目根目录。配置数据库仍由各专用管理器通过
- * JDBC 访问，不向模型暴露数据库文件路径。任意 Shell、JShell、本地 MCP 和桌面自动化
- * 无法在 Java 进程内可靠证明不会越界，因此在严格模式下统一禁用。</p>
+ * JDBC 访问，不向模型暴露数据库文件路径。任意 Shell、JShell、本地 MCP 和旧的通用桌面
+ * 输入无法在 Java 进程内可靠证明文件边界，因此在严格模式下统一禁用。目标绑定的
+ * {@code desktop_session_*} 只访问应用界面，由独立的设置开关和系统权限控制。</p>
  */
 public final class ProjectAccessPolicy {
 

@@ -357,6 +357,9 @@ public final class LoopService {
         // and evaluates it through the common Run/ModelTask paths.
         GoalDecomposition goal = new GoalDecomposition(
                 directives.goal(), List.of(directives.goal()), "完成用户目标", List.of());
+        // Even if the planner later starts proposing criteria again, a generated literal-content
+        // predicate must never become a completion gate without separate user authorization.
+        var criteria = LoopCriterionPolicy.fromModel(goal.getCriteria());
 
         Cadence cadence;
         if (directives.intervalSeconds() > 0) {
@@ -391,22 +394,14 @@ public final class LoopService {
         // LLM 可能产出五类之外的类型码（如 file_exists），这类准则在 CriterionVerifier 同样只能
         // 交验收员，漏计会让核验腿缺位却不触发自动启用。谓词直接复用 CriterionVerifier 的
         // 单一来源（其 verify 分派同口径），供下方自动启用与告警共用
-        long unverifiable = goal.getCriteria().stream()
+        long unverifiable = criteria.stream()
                 .filter(c -> !CriterionVerifier.isLocallyVerifiable(c.normalizedType()))
                 .count();
-        // 「提议 ∧ 核验」的核验腿缺位有两种形态，都必须兜底：① 分解不出任何准则——judge 关闭
-        // 的话完成判定完全取决于执行体自报 done，第一轮谎报即假完成收工；② 分解出的准则含
-        // freeform/external_check——judge 关闭时这些准则由 CONSERVATIVE_DENY 永远驳回，done
-        // 不可达，循环注定烧到轮数/墙钟上限以失败收场。两者都与「绝不默认放行」的承重墙矛盾。
-        // 用户未显式表态 judge 时自动启用验收员（代价：每次完成提议多一次模型调用）；
-        // 显式 @loop judge=off 视为知情选择，保留原语义、由下方告警明示风险
-        if ((goal.getCriteria().isEmpty() || unverifiable > 0) && directives.judge() == null && !useJudge) {
+        // Harness TaskResult 已是所有目标的完成裁决；额外 Loop 自由形式准则只有在验收员
+        // 启用时才能通过。用户未显式选择时为这类准则启用验收员，避免不可达的循环。
+        if (unverifiable > 0 && directives.judge() == null && !useJudge) {
             useJudge = true;
-            log.warn("循环目标{}：已自动启用模型验收员兜底完成判定"
-                    + "（执行体自报完成须经验收员核验才算数；如确要仅凭自报，可显式 @loop judge=off）",
-                    goal.getCriteria().isEmpty()
-                            ? "未分解出客观成功准则"
-                            : "含 " + unverifiable + " 条无法本地核验的准则（freeform/external_check/未知类型）");
+            log.warn("循环含 {} 条无法本地核验的额外准则，已自动启用模型验收员", unverifiable);
         }
 
         StopConditions conditions = new StopConditions(
@@ -431,7 +426,7 @@ public final class LoopService {
         LoopSpec spec = new LoopSpec(
                 directives.goal(),
                 workDir,
-                goal.getCriteria(),
+                criteria,
                 cadence,
                 conditions,
                 // SUMMARY 接力：历轮简述（loop_report 的 summary，零额外成本）+ 末轮全文，
@@ -439,16 +434,8 @@ public final class LoopService {
                 CarryForwardMode.SUMMARY,
                 useJudge);
 
-        // 完成判定的可信度告警：明示而非静默降级
-        if (spec.criteria().isEmpty() && !spec.useJudge()) {
-            // 只剩显式 judge=off 才会走到这里（未表态者已被上方自动启用验收员）：
-            // 自报即完成、无任何核验，明示风险由用户自担
-            log.warn("循环无客观成功准则且已显式关闭验收员（judge=off）：完成判定将完全依赖"
-                    + "执行体自报，自报 done 当轮即完成、无任何核验；「无进展」检测对自由文本也很弱。"
-                    + "建议去掉 judge=off 或把目标写得可核验（命令/文件/关键词）");
-        } else if (!spec.useJudge() && unverifiable > 0) {
-            // 静默死局明示（只剩显式 judge=off 可达此分支——未表态者已被上方自动启用验收员）：
-            // freeform/external_check 准则永远不通过 → done 不可达 → 循环必然烧到上限才停
+        // 显式关闭验收员时，无法本地核验的额外准则只会保守判不通过。
+        if (!spec.useJudge() && unverifiable > 0) {
             log.warn("循环有 {} 条准则（freeform/external_check/未知类型）无法本地核验且已显式关闭验收员，"
                     + "这些准则永远不会通过、循环无法判定完成，只能烧到轮数/时长上限。"
                     + "强烈建议去掉 judge=off", unverifiable);
@@ -463,10 +450,10 @@ public final class LoopService {
     }
 
     /**
-     * 非只读验证命令的一次性用户确认。
+     * 模型生成的验证命令的一次性用户确认。
      *
      * <p>command 类准则的命令文本由目标分解模型生成，验证器将绕过工具确认反复执行——
-     * 只读命令（查询类，零副作用）自动放行；其余命令整批向用户确认一次，拒绝即不启动。</p>
+     * 所有命令整批向用户确认一次，拒绝即不启动。自由 shell 文本不能靠词形获得免审资格。</p>
      *
      * @return 是否放行（无需确认或用户同意）
      */
@@ -474,14 +461,13 @@ public final class LoopService {
         // 用归一化类型过滤（与 CriterionVerifier 的分派同源）：LLM 分解产出的类型码可能带首尾
         // 空白，原始 equals 过滤不命中会跳过确认、而核验器 trim 后仍逐轮真实执行该命令——
         // 确认闸门与执行必须用同一份类型判定，否则治理被静默绕过
-        List<String> risky = spec.criteria().stream()
+        List<String> commands = spec.criteria().stream()
                 .filter(c -> com.javaclaw.loop.LoopConstants.CRITERION_COMMAND_EXIT_ZERO
                         .equals(c.normalizedType()))
                 .map(c -> c.predicate)
                 .filter(cmd -> cmd != null && !cmd.isBlank())
-                .filter(cmd -> !com.javaclaw.agent.risk.ReadOnlyCommands.isReadOnly(cmd))
                 .toList();
-        if (risky.isEmpty()) {
+        if (commands.isEmpty()) {
             return true;
         }
         // 独立确认（UNKNOWN 来源）：不吃任何任务级「同意全部」白名单——循环尚未启动、
@@ -490,10 +476,10 @@ public final class LoopService {
         // 的高风险命令同一待遇（全自动审核不应把它们纳入静默放行）
         boolean approved = ToolConfirmationManager.requestStandaloneConfirmation("loop_verify",
                 "循环验证将反复执行以下命令（每次核验成功准则时）：\n"
-                        + String.join("\n", risky)
+                        + String.join("\n", commands)
                         + "\n工作目录：" + spec.workDir());
         if (!approved) {
-            log.warn("循环验证命令未获用户批准，取消启动：{}", risky);
+            log.warn("循环验证命令未获用户批准，取消启动：{}", commands);
         }
         return approved;
     }

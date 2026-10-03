@@ -95,7 +95,12 @@ public class MemoryService implements AutoCloseable {
             this.storeLease = acquired;
             this.store = acquired.store();
             this.recaller = new Recaller(store, gate, settings);
-            this.distiller = new Distiller(modelTasks, store, gate, settings, json);
+            this.distiller = new Distiller(modelTasks, store, gate, settings, json,
+                    (episode, proposal) -> {
+                        if (graphScope != null && graphScope.kind() == MemoryGraphScope.Kind.THREAD) {
+                            rememberPreferenceProposal(graphScope, episode.turnId, proposal);
+                        }
+                    });
             this.habitReviewer = new HabitReviewer(modelTasks, store, gate, settings);
             this.correctionEngine = new CorrectionEngine(
                     store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
@@ -275,11 +280,12 @@ public class MemoryService implements AutoCloseable {
         return inScope(scope).prepareCorrectionTurn(input, previousReply);
     }
 
-    /** Explicit, first-person preferences need no model inference or embedding to be durable. */
-
-
-    public void rememberExplicitPreference(MemoryGraphScope scope, String turnId, String input) {
-        MemoryPreferenceWriter.remember(this, scope, scope.directory(graphRoot), turnId, input);
+    /** A structured preference proposal can be promoted only with its committed source turn. */
+    void rememberPreferenceProposal(MemoryGraphScope scope, String turnId,
+            com.javaclaw.memory.model.PreferenceProposal proposal) {
+        MemoryService owner = graphOwner == null ? this : graphOwner;
+        MemoryPreferenceWriter.remember(owner, scope, scope.directory(owner.graphRoot),
+                turnId, proposal);
     }
 
     public List<com.javaclaw.memory.model.CorrectionRecord> corrections(MemoryGraphScope scope) {
@@ -300,12 +306,12 @@ public class MemoryService implements AutoCloseable {
                              long eventSequence, String input, String reply, String trace,
                              boolean reviewHabits, String originThreadId, String originTurnId) {
         rememberTerminal(scope, runId, turnId, eventSequence, input, reply, trace, reviewHabits,
-                originThreadId, originTurnId, "completed");
+                originThreadId, originTurnId, MemoryTurnStatus.COMPLETED);
     }
 
     public void rememberTerminal(MemoryGraphScope scope, RunId runId, String turnId, long sequence,
             String input, String reply, String trace, boolean reviewHabits,
-            String originThreadId, String originTurnId, String status) {
+            String originThreadId, String originTurnId, MemoryTurnStatus status) {
         MemoryTurnWriter.remember(this, scope, runId, turnId, sequence, input, reply, trace,
                 reviewHabits, originThreadId, originTurnId, status);
     }

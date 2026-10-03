@@ -68,7 +68,7 @@ public final class PluginManagementUseCase
         if (id == null || id.isBlank()) {
             throw new RejectedException(
                     "无法安装该插件：descriptor 非法，或插件 API 与宿主不兼容。"
-                            + "当前宿主要求 Plugin API 3.x；旧插件请重新编译后再安装。");
+                            + "当前宿主要求 Plugin API 4.0；旧插件请重新编译后再安装。");
         }
         Catalog catalog = snapshot();
         boolean servicePlugin = plugins.isServicePlugin(id);

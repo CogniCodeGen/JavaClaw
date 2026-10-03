@@ -192,6 +192,18 @@
                           promptText="描述要自动执行的任务…&#10;例如：检索今天的中文科技要闻 Top 8 并推送到钉钉"
                           styleClass="skill-content-editor"/>
 
+                <Label text="执行策略" styleClass="grp-title"/>
+                <HBox spacing="12.0" alignment="CENTER_LEFT" styleClass="jc-card-sunken">
+                    <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                    <children>
+                        <VBox spacing="2.0" HBox.hgrow="ALWAYS">
+                            <children><Label text="后续触发" styleClass="jc-stat-value"/>
+                                <Label text="仅在系统确认目标完成后，目标模式才会自动停用" styleClass="sec-hint"/></children>
+                        </VBox>
+                        <ComboBox fx:id="executionPolicyCombo"/>
+                    </children>
+                </HBox>
+
                 <Separator/>
                 <Label text="完成后通知" styleClass="grp-title"/>
                 <HBox spacing="12.0" alignment="CENTER_LEFT" styleClass="jc-card-sunken">

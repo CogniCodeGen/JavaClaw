@@ -3,33 +3,19 @@ package com.javaclaw.loop;
 /**
  * 循环子系统的全局常量集中管理。
  *
- * <p>本类只承载「固定字符串」与「内置默认阈值」，杜绝这些字面量散落在各处形成魔法值：</p>
+ * <p>本类集中定义稳定协议标识与内部阈值：</p>
  * <ul>
- *   <li><b>收尾标记</b>——循环执行体每轮结尾自报判定用的标记文本，同时被提示词
- *       ({@link com.javaclaw.prompt.LoopPrompts}) 与解析器 ({@link SentinelParser}) 引用，
- *       保证「模型写的」与「代码认的」是同一份来源；</li>
  *   <li><b>成功准则类型码</b>——与 {@link com.javaclaw.agent.goal.SuccessCriterion#type} 的
  *       五种取值约定一致，集中于此供 {@link CriterionVerifier} 分派；</li>
  *   <li><b>事件流标识</b>——发给 UI 的进度/状态事件的稳定 id 与类型 kind；</li>
  *   <li><b>内置默认值</b>——面向用户的键已由 {@code AgentConfig} 读取（loop.* 配置项，两处数值
  *       有意各自维护、避免 config ↔ loop 依赖成环，见 CLAUDE.md）；本类保留引擎内部阈值
- *       （连败/空转/相似度等）不对用户暴露。</li>
+ *       （连败/空转等）不对用户暴露。</li>
  * </ul>
  */
 public final class LoopConstants {
 
     private LoopConstants() {}
-
-    // ==================== 收尾标记（执行体每轮结尾的自报判定行） ====================
-
-    /** 判定行统一前缀：代码只解析以此开头的行，其余正文一律忽略。 */
-    public static final String JUDGMENT_LINE_PREFIX = "【判定】";
-
-    /** 判定内容：已完成（执行体「提议」完成，是否采信由核验决定）。 */
-    public static final String JUDGMENT_DONE = "已完成";
-
-    /** 判定内容：未完成（执行体「提议」继续）。 */
-    public static final String JUDGMENT_NOT_DONE = "未完成";
 
     // ==================== 成功准则类型码（与 SuccessCriterion.type 约定一致） ====================
 
@@ -75,27 +61,6 @@ public final class LoopConstants {
     /** 连续无进展达到该轮数则判定「收敛不了」并停止。 */
     public static final int NO_PROGRESS_ROUND_LIMIT = 2;
     /**
-     * 全部客观准则已满足、但执行体连续沉默（未按协议 loop_report 也无未完成哨兵）达到该轮数后，
-     * 即以客观核验为准判定完成。给执行体几轮宽限按协议确认，超限则不再空等——尤其 INTERVAL
-     * 免停滞计数，否则「准则全过 + 执行体沉默」会空转烧满轮数/墙钟上限。执行体<b>主动</b>报未完成
-     * 时不走此路（继续尊重执行体），本阈值只治「沉默」。
-     */
-    public static final int CRITERIA_MET_SILENT_GRACE_ROUNDS = 2;
-    /**
-     * 本轮输出与上轮相似度高于该阈值即视为「雷同、无新意」（复用双字母组 Jaccard 相似度）。
-     *
-     * <p>注意：输出新颖度<b>只能作为无准则自由目标的最后兜底</b>——LLM 换措辞重写即可轻松
-     * 低于此阈值，文本变化不能证明工作推进。有准则目标的进展以准则高水位/行动指纹为准。</p>
-     */
-    public static final double OUTPUT_SIMILARITY_THRESHOLD = 0.92;
-
-    /** 判定行里「剩余」小节的标记词（提示词与解析器共用，保证单一来源）。 */
-    public static final String JUDGMENT_REMAINING_MARKER = "剩余";
-
-    /** 连续两轮自报「剩余」相似度达到该阈值即视为「卡在同一处」（自我供认的停滞）。 */
-    public static final double REMAINING_SIMILARITY_THRESHOLD = 0.85;
-
-    /**
      * 验收员/停滞仲裁单次结构化判定的阻塞超时（秒）。
      *
      * <p>与单轮超时（loop.iteration.timeout.seconds）、验证命令超时
@@ -105,7 +70,7 @@ public final class LoopConstants {
      */
     public static final long JUDGE_TIMEOUT_SECONDS = 120L;
 
-    // ==================== 结构化汇报工具（loop_report，取代哨兵行的首选通道） ====================
+    // ==================== 结构化汇报工具 ====================
 
     /** 轮次汇报工具名（执行体每轮结束必须调用；提示词与工具注册共用此常量）。 */
     public static final String REPORT_TOOL_NAME = "loop_report";

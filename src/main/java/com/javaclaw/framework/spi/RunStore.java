@@ -9,6 +9,7 @@ import com.javaclaw.framework.api.RunState;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /** Durable run/event/outbox boundary. Each mutation is one database transaction. */
 public interface RunStore {
@@ -22,6 +23,10 @@ public interface RunStore {
         return findByIdempotencyKey(scope.workspaceId(), key).filter(run -> run.request().scope().equals(scope));
     }
     default RunRequest prepare(RunRequest request) { return request; }
+    /** Hold the parent Run's state fence through evidence evaluation and outcome persistence. */
+    default <T> T withRunAcceptanceLock(RunId id, Supplier<T> work) {
+        throw new UnsupportedOperationException("RunStore has no atomic task acceptance fence");
+    }
     /** Public reads must honor thread tombstones; internal cancellation and recovery use raw find. */
     default boolean readable(com.javaclaw.framework.api.RunScope scope) { return true; }
     default boolean claim(RunId id) { return true; }
@@ -30,6 +35,16 @@ public interface RunStore {
     default void recoverClaims() { }
 
     List<StoredRun> nonTerminalRuns();
+
+    /**
+     * Complete history for one exact workspace/user/session scope, including terminal Runs.
+     * New turns inherit unresolved effects from cancelled, failed and completed turns;
+     * returning only active Runs would silently remove that safety boundary on restart.
+     * Implementations must override this with an authoritative scope-restricted query.
+     */
+    default List<StoredRun> scopeRuns(com.javaclaw.framework.api.RunScope scope) {
+        throw new UnsupportedOperationException("RunStore has no complete scope effect history");
+    }
 
     /** Includes terminal children: their physical charges still belong to the parent budget. */
     default List<StoredRun> childRuns(RunId parentId) {
@@ -48,4 +63,36 @@ public interface RunStore {
             RunEventDraft event,
             JsonNode output,
             String error);
+
+    /** Persist an ordered group of run events as one mutation. JDBC overrides this atomically. */
+    default Optional<List<RunEventEnvelope>> appendBatch(
+            RunId id, Set<RunState> expectedStates, RunState nextState,
+            List<RunEventDraft> events) {
+        List<RunEventEnvelope> appended = new java.util.ArrayList<>();
+        for (RunEventDraft event : events) {
+            Optional<RunEventEnvelope> value = append(id, expectedStates, nextState,
+                    event, null, null);
+            if (value.isEmpty()) return Optional.empty();
+            appended.add(value.get());
+        }
+        return Optional.of(List.copyOf(appended));
+    }
+
+    /** Only the trusted V2 verifier may supply a matched action-specific postcondition. */
+    default Optional<RunEventEnvelope> reconcileEffect(
+            RunId id, EffectReconciliationV1 proof) {
+        return Optional.empty();
+    }
+
+    /** A newer same-scope Run may repair a missed verifier write using the terminal source's own proof. */
+    default Optional<RunEventEnvelope> reconcileTerminalEffect(
+            RunId recoveryRunId, RunId sourceRunId, EffectReconciliationV1 proof) {
+        return Optional.empty();
+    }
+
+    /** Commit a verifier-derived local V2 checkpoint before releasing an uncertain input. */
+    default Optional<RunEventEnvelope> verifyEffectCheckpoint(
+            RunId id, EffectCheckpointV1 checkpoint) {
+        return Optional.empty();
+    }
 }

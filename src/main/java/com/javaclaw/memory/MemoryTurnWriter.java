@@ -9,14 +9,14 @@ final class MemoryTurnWriter {
     private MemoryTurnWriter() {}
     static void remember(MemoryService memory, MemoryGraphScope scope, RunId runId, String turnId,
                          long sequence, String input, String reply, String trace, boolean reviewHabits,
-                         String originThreadId, String originTurnId, String status) {
+                         String originThreadId, String originTurnId, MemoryTurnStatus status) {
         if (scope.kind() != MemoryGraphScope.Kind.THREAD || turnId == null || turnId.isBlank())
             throw new IllegalArgumentException("会话投影需要有效的 Thread 和 Turn 身份");
         MemoryService selected = memory.inScope(scope);
         Episode episode = new Episode(scope.threadId(), input, reply);
         episode.turnId = turnId;
-        episode.terminalStatus = status;
-        episode.distilled = !"completed".equals(status);
+        episode.terminalStatus = status.storageValue();
+        episode.distilled = status != MemoryTurnStatus.COMPLETED;
         episode.ownerRunId = runId == null || episode.distilled ? null : runId.value();
         episode.originThreadId = originThreadId;
         episode.originTurnId = originTurnId;

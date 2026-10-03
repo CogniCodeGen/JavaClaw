@@ -1,5 +1,10 @@
 package com.javaclaw.skill.curation;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.agent.execution.ExecutionTrace;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
@@ -12,16 +17,20 @@ import com.javaclaw.skill.SkillChangeRequest;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.framework.api.*;
+import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskRequest;
+import com.javaclaw.framework.spi.ModelTier;
+import com.javaclaw.framework.spi.JsonSchemaValidator;
 import com.javaclaw.runtime.WorkspaceContext;
-import org.springframework.ai.converter.BeanOutputConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 /**
@@ -49,6 +58,8 @@ import java.util.function.Supplier;
 public class SkillCurator {
 
     private static final Logger log = LoggerFactory.getLogger(SkillCurator.class);
+    private static final JsonSchemaValidator SCHEMAS = new JsonSchemaValidator();
+    private static final JsonNode DRAFT_SCHEMA = draftSchema();
 
     /** 结构化蒸馏调用超时（秒） */
     private static final long STRUCTURED_TIMEOUT_SEC = 120;
@@ -57,6 +68,8 @@ public class SkillCurator {
     private static final int MAX_CONTEXT_CHARS = 6000;
 
     private final AgentClient agents;
+    private final ModelTaskGateway modelTasks;
+    private final ObjectMapper json;
     private final WorkspaceContext workspace;
     private final SkillManager skills;
     private final SkillUsageTracker usage;
@@ -69,9 +82,10 @@ public class SkillCurator {
 
     /** 蒸馏互斥：同时最多一个蒸馏在跑，避免连续轮次并发烧 token */
     private final AtomicBoolean distilling = new AtomicBoolean(false);
-    private final AtomicLong runSequence = new AtomicLong();
 
     public SkillCurator(AgentClient agents,
+                        ModelTaskGateway modelTasks,
+                        ObjectMapper json,
                         WorkspaceContext workspace,
                         SkillManager skills,
                         SkillUsageTracker usage,
@@ -80,6 +94,8 @@ public class SkillCurator {
                         TaskSubmitter tasks,
                         Supplier<UserInteractionPort> portSupplier) {
         this.agents = java.util.Objects.requireNonNull(agents, "agents");
+        this.modelTasks = java.util.Objects.requireNonNull(modelTasks, "modelTasks");
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.workspace = java.util.Objects.requireNonNull(workspace, "workspace");
         this.skills = java.util.Objects.requireNonNull(skills, "skills");
         this.usage = java.util.Objects.requireNonNull(usage, "usage");
@@ -270,15 +286,11 @@ public class SkillCurator {
         return null;
     }
 
-    // ==================== 结构化模型调用（统一 AgentEngine） ====================
+    // ==================== 结构化模型任务（托管 Run 提供持久化归属） ====================
 
     private SkillCurationDraft callStructured(String userPrompt) {
+        ManagedTurn owner = null;
         try {
-            BeanOutputConverter<SkillCurationDraft> converter =
-                    new BeanOutputConverter<>(SkillCurationDraft.class);
-            var text = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode(
-                    SkillPrompts.CURATION_PROMPT + "\n\n" + converter.getFormat());
-            var disabled = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.booleanNode(true);
             RunRequest request = RunRequest.builder()
                     .agent(AgentDefinitionRef.latest("system.default"))
                     .profile(RunProfileRef.latest("subagent"))
@@ -289,28 +301,76 @@ public class SkillCurator {
                     .permissionCeiling(PermissionSet.NONE)
                     .budget(new RunBudget(java.time.Duration.ofSeconds(STRUCTURED_TIMEOUT_SEC),
                             100_000, 20_000, 0, new java.math.BigDecimal("20")))
-                    .idempotencyKey("skill-distillation:" + runSequence.incrementAndGet())
-                    .attributes(java.util.Map.of(
-                            "framework.systemPrompt", text,
-                            "framework.disableTools", disabled))
+                    .idempotencyKey("skill-distillation:" + UUID.randomUUID())
+                    .attributes(Map.of("framework.maintenance", JsonNodeFactory.instance.booleanNode(true)))
                     .build();
-            RunOutcome outcome = agents.start(request).completion().toCompletableFuture()
-                    .get(STRUCTURED_TIMEOUT_SEC + 5, java.util.concurrent.TimeUnit.SECONDS);
-            if (outcome.state() != RunState.COMPLETED || outcome.output() == null) return null;
-            String result = outcome.output().path("text").asText("");
-            return converter.convert(stripFence(result));
+            owner = agents.beginTurn(request);
+            owner.ready().toCompletableFuture().get(
+                    STRUCTURED_TIMEOUT_SEC + 5, java.util.concurrent.TimeUnit.SECONDS);
+            if (owner.completion().toCompletableFuture().isDone()) {
+                throw new IllegalStateException("skill curation owner Run ended before model task");
+            }
+            ObjectNode input = json.createObjectNode();
+            input.put("instructions", SkillPrompts.CURATION_PROMPT);
+            input.put("experience", userPrompt);
+            ManagedTurn active = owner;
+            JsonNode output = modelTasks.executeInline(new ModelTaskRequest(
+                    "skill.curation", ModelTier.LIGHT, input, List.of(), DRAFT_SCHEMA,
+                    active.id(), "skill-curation", java.time.Duration.ofSeconds(STRUCTURED_TIMEOUT_SEC),
+                    1, () -> Thread.currentThread().isInterrupted() || active.cancelled(), false)).output();
+            SkillCurationDraft draft = parseDraft(json, output.toString());
+            owner.complete(output);
+            return draft;
         } catch (Exception failure) {
             log.warn("技能蒸馏调用异常: {}", failure.getMessage());
+            if (owner != null) {
+                try { owner.fail(failure); }
+                catch (RuntimeException terminal) { log.debug("技能蒸馏 Run 已结束: {}", terminal.getMessage()); }
+            }
             return null;
+        } finally {
+            if (owner != null) owner.close();
         }
     }
 
-    private static String stripFence(String value) {
-        String text = value == null ? "" : value.trim();
-        if (!text.startsWith("```")) return text;
-        int start = text.indexOf('\n');
-        int end = text.lastIndexOf("```");
-        return start >= 0 && end > start ? text.substring(start + 1, end).trim() : text;
+    /** Model text is accepted only as one complete schema-valid JSON object. */
+    static SkillCurationDraft parseDraft(ObjectMapper json, String value) {
+        java.util.Objects.requireNonNull(json, "json");
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("missing skill curation result");
+        }
+        try (JsonParser parser = json.getFactory().createParser(value)) {
+            parser.enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+            JsonNode parsed = json.readTree(parser);
+            if (parsed == null || parser.nextToken() != null
+                    || !SCHEMAS.validate(DRAFT_SCHEMA, parsed, "$skillCuration").isEmpty()) {
+                throw new IllegalArgumentException("skill curation result violates JSON Schema");
+            }
+            return json.treeToValue(parsed, SkillCurationDraft.class);
+        } catch (Exception invalid) {
+            throw new IllegalArgumentException("invalid complete skill curation JSON", invalid);
+        }
+    }
+
+    private static JsonNode draftSchema() {
+        ObjectNode schema = JsonNodeFactory.instance.objectNode();
+        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+        schema.put("type", "object");
+        schema.put("additionalProperties", false);
+        ObjectNode fields = schema.putObject("properties");
+        fields.putObject("worthLearning").put("type", "boolean");
+        fields.putObject("action").put("type", "string")
+                .putArray("enum").add("none").add("create").add("patch");
+        for (String field : List.of("skillName", "reason", "description", "category", "content",
+                "oldString", "newString")) {
+            fields.putObject(field).put("type", "string");
+        }
+        fields.putObject("tags").put("type", "array")
+                .putObject("items").put("type", "string");
+        schema.putArray("required").add("worthLearning").add("action")
+                .add("skillName").add("reason");
+        SCHEMAS.requireValidSchema(schema, "skill curation result");
+        return schema;
     }
 
     // ==================== 提示词构建 ====================

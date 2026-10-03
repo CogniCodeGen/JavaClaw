@@ -8,6 +8,8 @@ import java.util.Objects;
 /** 模型设置用例：集中校验、持久化和连接探测编排。 */
 public final class ModelSettingsUseCase implements ModelSettingsApplicationService {
 
+    private static final ModelProviderCatalog PROVIDERS = new DefaultModelProviderCatalog();
+
     private final ModelSettingsPort settings;
     private final ModelSettingsProbePort probes;
 
@@ -74,8 +76,8 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
 
     private static ModelSettings validateModel(ModelSettings value) {
         Objects.requireNonNull(value, "settings");
-        required(value.provider(), "模型提供商");
-        if (managed(value.provider())) required(value.managedProfileId(), "本地模型档案");
+        ModelProviderCatalog.Provider provider = provider(value.provider(), "模型提供商");
+        if (provider.localManaged()) required(value.managedProfileId(), "本地模型档案");
         else {
             httpUri(value.baseUrl(), "API 地址");
             required(value.modelName(), "模型名称");
@@ -100,8 +102,8 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
     private static Tier validateTier(Tier value, String label) {
         Objects.requireNonNull(value, label);
         if (!value.enabled()) return new Tier(false, "", "", "", "", false, "");
-        required(value.provider(), label + "提供商");
-        if (managed(value.provider())) required(value.managedProfileId(), label + "本地模型档案");
+        ModelProviderCatalog.Provider provider = provider(value.provider(), label + "提供商");
+        if (provider.localManaged()) required(value.managedProfileId(), label + "本地模型档案");
         else {
             if (!value.baseUrl().isBlank()) httpUri(value.baseUrl(), label + " API 地址");
             required(value.modelName(), label + "名称");
@@ -111,8 +113,8 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
 
     private static EmbeddingSettings validateEmbedding(EmbeddingSettings value) {
         Objects.requireNonNull(value, "settings");
-        required(value.provider(), "嵌入模型提供商");
-        if (managed(value.provider())) required(value.managedProfileId(), "本地嵌入档案");
+        ModelProviderCatalog.Provider provider = provider(value.provider(), "嵌入模型提供商");
+        if (provider.localManaged()) required(value.managedProfileId(), "本地嵌入档案");
         else {
             httpUri(value.baseUrl(), "嵌入 API 地址");
             required(value.modelName(), "嵌入模型名称");
@@ -128,9 +130,11 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
         return value.strip();
     }
 
-    private static boolean managed(String provider) {
-        return DefaultModelProviderCatalog.DELIVERANCE.equalsIgnoreCase(provider)
-                || "Deliverance（本地托管）".equalsIgnoreCase(provider);
+    private static ModelProviderCatalog.Provider provider(String id, String label) {
+        String value = required(id, label);
+        return PROVIDERS.find(value)
+                .filter(candidate -> candidate.id().equals(value))
+                .orElseThrow(() -> new ValidationException(label + "必须使用有效的提供商 ID"));
     }
 
     private static URI httpUri(String value, String label) {

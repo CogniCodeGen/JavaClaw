@@ -1,3 +1,26 @@
+# 默认排除根目录的新文件，只保留项目源码、构建配置和文档。
+/*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/pom.xml
+!/.github/
+!/src/
+!/sample-plugins/
+!/scripts/
+!/docs/
+!/skills/
+
+# 仅保留仓库的 CI 与示例技能，避免本机配置和安装的个人技能混入提交。
+/.github/*
+!/.github/workflows/
+/skills/*
+!/skills/brainstorming/
+!/skills/code-review/
+!/skills/spec-driven-development/
+!/skills/systematic-debugging/
+!/skills/tdd/
+
 # Compiled class file
 *.class
 
@@ -36,3 +59,73 @@ replay_pid*
 # macOS 目录元数据
 .DS_Store
 /.qoder/
+/.javaclaw-bootstrap.lock
+
+# 所有模块的编译产物、缓存和本机工具配置。
+/sample-plugins/*/target/
+/sample-plugins/*/build/
+/sample-plugins/*/dist/
+/sample-plugins/*/out/
+.cache/
+.history/
+.idea/
+.vscode/
+.claude/
+.codex/
+.agents/
+.qoder/
+*.iml
+*.ipr
+*.iws
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.app/
+*.dSYM/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# 本机运行数据不属于源码；不要排除 Java 的 platform/data 包。
+/sample-plugins/*/data/
+/sample-plugins/*/logs/
+/sample-plugins/*/plugins/
+/sample-plugins/*/runtime/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+
+# 环境变量、个人配置与签名私钥，只允许无凭据的配置模板。
+.env
+.env.*
+!.env.example
+!.env.template
+*.local.*
+*.private.*
+credentials.json
+credentials.yaml
+credentials.yml
+secrets.json
+secrets.yaml
+secrets.yml
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# 本机界面截图可能包含对话、用户名和账号信息，保留在本地。
+/docs/images/screenshots/

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      styleClass="desktop-preview-root" onKeyPressed="#keyPressed" accessibleText="桌面实时预览悬浮窗口">
+    <BorderPane styleClass="desktop-preview-card" VBox.vgrow="ALWAYS" minWidth="0" minHeight="0">
+        <top>
+            <HBox alignment="CENTER_LEFT" spacing="10" styleClass="desktop-preview-header"
+                  onMousePressed="#dragStarted" onMouseDragged="#dragContinued" onMouseClicked="#headerClicked">
+                <Label text="J" styleClass="desktop-preview-brand"/>
+                <VBox spacing="3" HBox.hgrow="ALWAYS" minWidth="0">
+                    <Label fx:id="title" maxWidth="Infinity" styleClass="desktop-preview-title"/>
+                    <Label fx:id="subtitle" maxWidth="Infinity" styleClass="desktop-preview-subtitle"/>
+                </VBox>
+                <HBox spacing="3" alignment="CENTER_RIGHT">
+                    <Button fx:id="minimize" text="−" styleClass="desktop-preview-window-button"
+                            onAction="#minimizeRequested"/>
+                    <Button fx:id="maximize" text="□" styleClass="desktop-preview-window-button"
+                            onAction="#maximizeRequested"/>
+                    <Button text="×" styleClass="desktop-preview-window-button, desktop-preview-close"
+                            onAction="#stopRequested" accessibleText="停止并关闭桌面会话">
+                        <tooltip><Tooltip text="停止并关闭桌面会话"/></tooltip>
+                    </Button>
+                </HBox>
+            </HBox>
+        </top>
+        <center>
+            <StackPane fx:id="viewport" minWidth="0" minHeight="0" prefWidth="0" prefHeight="0"
+                       styleClass="desktop-preview-viewport" onMouseClicked="#headerClicked">
+                <ImageView fx:id="image" preserveRatio="true" smooth="true" mouseTransparent="true"/>
+                <Label fx:id="empty" text="等待实时画面…" styleClass="desktop-preview-empty" mouseTransparent="true"/>
+            </StackPane>
+        </center>
+        <bottom>
+            <VBox spacing="9" styleClass="desktop-preview-footer">
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Label fx:id="stateBadge" text="连接中" styleClass="desktop-preview-state"/>
+                    <Label fx:id="status" text="等待实时画面…" maxWidth="Infinity" minWidth="0"
+                           HBox.hgrow="ALWAYS" styleClass="desktop-preview-status"/>
+                    <Region fx:id="resizeGrip" prefWidth="12" prefHeight="12" styleClass="desktop-preview-resize"
+                            onMousePressed="#resizeStarted" onMouseDragged="#resizeContinued" accessibleText="拖动调整窗口大小"/>
+                </HBox>
+                <VBox fx:id="details" spacing="10">
+                    <Label fx:id="actionStatus" text="尚无操作" maxWidth="Infinity" wrapText="true"
+                           styleClass="desktop-preview-action"/>
+                    <HBox spacing="8" alignment="CENTER_RIGHT">
+                        <Label text="双击画面可放大" styleClass="desktop-preview-hint"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <Button fx:id="takeover" text="前台接管" onAction="#takeoverRequested"
+                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                        <Button text="停止" onAction="#stopRequested" styleClass="jc-btn, jc-btn-danger, jc-btn-sm"/>
+                    </HBox>
+                </VBox>
+            </VBox>
+        </bottom>
+    </BorderPane>
+</VBox>

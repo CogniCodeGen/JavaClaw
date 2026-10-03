@@ -177,7 +177,7 @@ class SddTaskFxmlLoadTest {
             details.show(task("completed", SddTaskState.COMPLETED, 100, "交付完成",
                     2_000_000, 1_100_000, 200_000,
                     "2026-08-10 09:00:00", "2026-08-12 11:00:00"), completedChange);
-            assertEquals("已完成", label(details, "stageValue").getText());
+            assertEquals("编排结束", label(details, "stageValue").getText());
             assertEquals("任务结果", label(details, "resultTitle").getText());
             assertTrue(label(details, "elapsedValue").getText().contains("d"));
 
@@ -390,9 +390,12 @@ class SddTaskFxmlLoadTest {
 
         @SuppressWarnings("unchecked")
         ListView<SddLogEntry> logs = field(details, "logList", ListView.class);
-        service.emit(new Event.Log("other", "Other", "ignored"));
-        service.emit(new Event.Log("task-1", "Selected", "[10:00] ✓ selected"));
+        service.emit(new Event.Log("other", "Other", "ignored",
+                com.javaclaw.task.sdd.SddProgress.LogKind.DEFAULT));
+        service.emit(new Event.Log("task-1", "Selected", "[10:00] ✓ selected",
+                com.javaclaw.task.sdd.SddProgress.LogKind.OK));
         awaitFx(() -> logs.getItems().size() == 1);
+        assertEquals(SddLogEntry.Kind.OK, logs.getItems().getFirst().kind());
 
         Task other = task("other", SddTaskState.PENDING, 0, null,
                 0, 0, 0, "bad", "bad");

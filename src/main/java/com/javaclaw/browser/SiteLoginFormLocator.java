@@ -8,23 +8,13 @@ final class SiteLoginFormLocator {
 
     private static final String[] USERNAME_CANDIDATES = {
         "input[autocomplete='username']",
-        "input[name='username']",
-        "input[name='email']",
         "input[type='email']",
-        "input[id*='user' i]",
-        "input[id*='email' i]",
-        "input[name*='login' i]",
-        "input[name*='account' i]"
+        "form:has(input[type='password']) input[type='text']"
     };
 
     private static final String[] SUBMIT_CANDIDATES = {
         "button[type='submit']",
-        "input[type='submit']",
-        "button:has-text('登 录')",
-        "button:has-text('登录')",
-        "button:has-text('Sign in')",
-        "button:has-text('Log in')",
-        "button:has-text('Login')"
+        "input[type='submit']"
     };
 
     private SiteLoginFormLocator() {}

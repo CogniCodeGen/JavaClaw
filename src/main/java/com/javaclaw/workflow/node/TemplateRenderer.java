@@ -17,6 +17,12 @@ public final class TemplateRenderer {
 
     private TemplateRenderer() {}
 
+    /** A frozen workflow contract may use only literal targets, never runtime slots. */
+    public static boolean isStaticLiteral(String value) {
+        return value != null && !value.isBlank()
+                && !value.contains("{{") && !value.contains("${");
+    }
+
     public static String render(String template, GraphState state) {
         if (template == null) return "";
         Matcher matcher = SLOT.matcher(template);

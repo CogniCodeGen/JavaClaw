@@ -10,6 +10,7 @@ import com.javaclaw.framework.api.RunScope;
 import com.javaclaw.framework.api.ToolCallOutcome;
 import com.javaclaw.framework.api.ToolCallRequest;
 import com.javaclaw.framework.api.ToolClient;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
@@ -109,28 +110,24 @@ public final class ToolNodeExecutor implements NodeExecutor {
             throw new IllegalStateException("工具执行被取消: " + toolName, cancelled);
         }
         context.cancellation().throwIfCancelled();
-        String resultText = outcome.output() == null ? ""
-                : outcome.output().isTextual() ? outcome.output().asText() : outcome.output().toString();
+        JsonNode rawOutput = outcome.output();
+        String resultText = rawOutput == null ? ""
+                : rawOutput.isTextual() ? rawOutput.asText() : rawOutput.toString();
         ConversationCallbacks callbacks = context.callbacks();
-        if (callbacks != null) callbacks.onEvent(new ConversationEvent.ToolResult(toolName, resultText));
-        if (isFailureResult(resultText)) {
-            throw new IllegalStateException("工具返回失败: " + resultText);
+        if (callbacks != null) callbacks.onEvent(new ConversationEvent.ToolResult(
+                toolName, resultText, context.invocationId(), rawOutput, outcome.status()));
+        if (outcome.status() != ToolExecutionStatus.SUCCEEDED) {
+            throw new com.javaclaw.framework.api.TurnPausedException(
+                    "工具节点状态为 " + outcome.status()
+                            + (outcome.errorCode().isBlank() ? "" : " (" + outcome.errorCode() + ")")
+                            + "；需要核对结果后才能继续或重试");
         }
         String outputKey = config.path("outputKey").asText("tool.output");
-        return NodeResult.next(StatePatch.builder().set(outputKey, resultText).build());
-    }
-
-    static boolean isFailureResult(String text) {
-        if (text == null) return true;
-        String normalized = text.stripLeading();
-        if (normalized.startsWith("Error:")) return true;
-        if (!normalized.startsWith("[")) return false;
-        int statusStart = normalized.indexOf("][");
-        if (statusStart < 2) return false;
-        int statusEnd = normalized.indexOf(']', statusStart + 2);
-        if (statusEnd < 0) return false;
-        String status = normalized.substring(statusStart + 2, statusEnd);
-        return "失败".equals(status) || "超时".equals(status);
+        var value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        value.put("status", outcome.status().name());
+        value.set("value", rawOutput == null
+                ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : rawOutput);
+        return NodeResult.next(StatePatch.builder().setJson(outputKey, value).build());
     }
 
     private static Throwable unwrap(Throwable failure) {

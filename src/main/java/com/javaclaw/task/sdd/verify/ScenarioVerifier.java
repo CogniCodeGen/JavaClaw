@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 统一的场景验收核验器 —— SDD 架构里唯一的"做到没有"判定机制。
@@ -19,8 +20,8 @@ import java.util.List;
  * <ul>
  *   <li>{@code artifact_exists}：产物路径在工作目录内存在 → 确定性</li>
  *   <li>{@code command_exit_zero}：命令在工作目录执行退出码 0 → 确定性</li>
- *   <li>{@code output_contains}：predicate 形如 {@code 命令 ||| 期望子串}，运行命令后输出含子串
- *       → 确定性；缺分隔符则降级交 critic</li>
+ *   <li>{@code output_contains}：仅当宿主显式注入用户原始结构化谓词且格式完整时运行命令；
+ *       缺授权或缺分隔符均保守判不通过</li>
  *   <li>{@code external_check} / {@code freeform}：交 {@link CriticJudge} 判定</li>
  * </ul>
  *
@@ -37,17 +38,31 @@ public final class ScenarioVerifier {
     private final String workDir;
     private final CommandRunner commandRunner;
     private final CriticJudge criticJudge;
+    private final Set<Criterion> userAuthorizedContentPredicates;
 
     public ScenarioVerifier(String workDir, CommandRunner commandRunner, CriticJudge criticJudge) {
+        this(workDir, commandRunner, criticJudge, Set.of());
+    }
+
+    /** Only a host-provided, user-authored criterion may authorize literal output matching. */
+    public ScenarioVerifier(String workDir, CommandRunner commandRunner, CriticJudge criticJudge,
+                            Set<Criterion> userAuthorizedContentPredicates) {
         this.workDir = workDir;
         this.commandRunner = commandRunner;
         this.criticJudge = criticJudge;
+        this.userAuthorizedContentPredicates = Set.copyOf(userAuthorizedContentPredicates);
     }
 
     /** 批量核验；保持入参顺序。 */
     public List<VerificationOutcome> verifyAll(List<Scenario> scenarios) {
         if (scenarios == null) return List.of();
         return scenarios.stream().map(this::verify).toList();
+    }
+
+    /** Literal output checks must be re-evaluated and cannot inherit an earlier authorization. */
+    public boolean cacheEligible(Scenario scenario) {
+        return scenario != null && scenario.criterion() != null
+                && !Criterion.OUTPUT_CONTAINS.equals(scenario.criterion().normalizedType());
     }
 
     /** 核验单个场景。 */
@@ -59,7 +74,10 @@ public final class ScenarioVerifier {
             return switch (type) {
                 case Criterion.ARTIFACT_EXISTS -> verifyArtifactExists(s, pred);
                 case Criterion.COMMAND_EXIT_ZERO -> verifyCommandExitZero(s, pred);
-                case Criterion.OUTPUT_CONTAINS -> verifyOutputContains(s, pred);
+                case Criterion.OUTPUT_CONTAINS -> userAuthorizedContentPredicates.contains(c)
+                        ? verifyOutputContains(s, pred)
+                        : VerificationOutcome.fail(s, true,
+                                "output_contains 未经用户结构化授权，拒绝执行内容匹配命令");
                 default -> judgeByCritic(s); // external_check / freeform / 未知
             };
         } catch (Exception e) {
@@ -87,30 +105,20 @@ public final class ScenarioVerifier {
     private VerificationOutcome verifyOutputContains(Scenario s, String pred) {
         int sep = pred.indexOf(OUTPUT_CONTAINS_SEP);
         if (sep < 0) {
-            // 无"命令 ||| 子串"结构，无法确定性核验 → 交 critic
-            return judgeByCritic(s);
+            return VerificationOutcome.fail(s, true, "output_contains 缺少命令与期望子串分隔符");
         }
         String cmd = pred.substring(0, sep).trim();
         String needle = pred.substring(sep + OUTPUT_CONTAINS_SEP.length()).trim();
+        if (cmd.isBlank() || needle.isBlank()) {
+            return VerificationOutcome.fail(s, true, "output_contains 命令或期望子串为空");
+        }
         if (commandRunner == null) return VerificationOutcome.fail(s, true, "无命令执行器，无法核验：" + cmd);
         CommandRunner.Result r = commandRunner.run(cmd, workDir);
-        // 自愈：构建横幅（如 "BUILD SUCCESS"）会被 -q/--quiet 抑制、且随构建工具语言/版本变化，
-        // 用它做 output_contains 必然误判（命令成功却匹配不到横幅 → 场景永远不过 → 无限补做循环）。
-        // 这类谓词的真实意图是"命令成功"，故降级为按退出码判定。详见死循环根因分析。
-        if (isBuildSuccessBanner(needle)) {
-            return new VerificationOutcome(s, r.success(), true,
-                    "命令 [" + cmd + "] 退出码=" + r.exitCode() + "（构建横幅谓词自愈为退出码判定）");
-        }
         boolean contains = r.output() != null && r.output().contains(needle);
-        return new VerificationOutcome(s, contains, true,
-                "命令 [" + cmd + "] 输出" + (contains ? "包含" : "不含") + " [" + needle + "]");
-    }
-
-    /** 识别构建成功横幅（不可作 output_contains 子串，会被 quiet 标志抑制 + 受语言/版本影响）。 */
-    private static boolean isBuildSuccessBanner(String needle) {
-        if (needle == null) return false;
-        String n = needle.trim().toUpperCase();
-        return n.equals("BUILD SUCCESS") || n.equals("BUILD SUCCESSFUL");
+        boolean passed = r.success() && contains;
+        return new VerificationOutcome(s, passed, true,
+                "命令 [" + cmd + "] 退出码=" + r.exitCode()
+                        + "，输出" + (contains ? "包含" : "不含") + " [" + needle + "]");
     }
 
     private VerificationOutcome judgeByCritic(Scenario s) {

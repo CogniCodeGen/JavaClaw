@@ -66,5 +66,23 @@ class SensitiveDataRedactorTest {
 
         assertEquals("<敏感内容已隐藏>", redacted);
         assertFalse(redacted.contains("opaque-token-value"));
+        assertTrue(SensitiveDataRedactor.redactTextWithStatus(
+                "请求失败：https://example.com/mcp?token=opaque-token-value").redacted());
+        assertFalse(SensitiveDataRedactor.redactTextWithStatus("<敏感内容已隐藏>").redacted());
+    }
+
+    @Test
+    void preservesDesktopSessionErrorsButStillHidesStandaloneSessionSecrets() {
+        String windowError = "[desktop_session_open][失败] 无法打开桌面会话: "
+                + "Target window is closed, minimized, or not shareable";
+
+        assertFalse(SensitiveDataRedactor.containsLikelyCredential(windowError));
+        assertEquals(windowError, SensitiveDataRedactor.redactText(windowError));
+        assertFalse(SensitiveDataRedactor.containsLikelyCredential("桌面会话不是可用状态"));
+
+        assertTrue(SensitiveDataRedactor.containsLikelyCredential("会话: opaque-session-12345"));
+        assertEquals("<敏感内容已隐藏>", SensitiveDataRedactor.redactText("会话: opaque-session-12345"));
+        assertTrue(SensitiveDataRedactor.containsLikelyCredential("\"会话\":\"opaque-session-12345\""));
+        assertTrue(SensitiveDataRedactor.containsLikelyCredential("会话不是 oldSecret123"));
     }
 }

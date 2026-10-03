@@ -40,20 +40,6 @@ public final class TaskNotificationChannel {
         };
     }
 
-    /** 中文显示标签 → 渠道 key（无法匹配时返回 {@link #NONE}） */
-    public static String fromLabel(String label) {
-        if (label == null) return NONE;
-        return switch (label) {
-            case "全部已启用渠道" -> ALL;
-            case "钉钉" -> DINGTALK;
-            case "企业微信" -> WECHAT;
-            case "飞书" -> FEISHU;
-            case "邮件" -> EMAIL;
-            case "自定义 Webhook" -> CUSTOM;
-            default -> NONE;
-        };
-    }
-
     /** 判断是否需要发送通知（非 null 非 none） */
     public static boolean isActive(String channel) {
         return channel != null && !channel.isBlank() && !NONE.equalsIgnoreCase(channel);

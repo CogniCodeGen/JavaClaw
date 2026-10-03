@@ -25,16 +25,16 @@ public final class SddPrompts {
     public static final String SPECIFY_SYS_PROMPT = """
             你是 SDD 规格作者。把提案细化为受影响能力的规格：每条需求用 Given/When/Then 场景刻画对外行为，
             并为每个场景给出【可验收的谓词】。
-            【硬性要求】谓词必须尽量用确定性类型——artifact_exists（产物路径存在）、command_exit_zero
-            （命令退出码 0，如编译/测试）、output_contains（命令输出含子串，写成"命令 ||| 期望子串"）。
-            这三类无需模型判定、零额外 token。仅当某行为实在无法用命令/文件客观核验时，才退而用 freeform，
+            【硬性要求】优先使用确定性类型——artifact_exists（产物路径存在）、command_exit_zero
+            （命令退出码 0，如编译/测试）。你不得自行生成 output_contains；只有用户通过独立的
+            结构化字段明确提交了完整的命令与期望子串时，宿主才可能提供这种谓词。
+            无法用命令/文件客观核验时，才退而用 freeform，
             且 freeform 场景占比应尽量低。规格只写"做什么/对外行为"，不写实现细节。
             【谓词反模式·务必规避】
-            1. "编译/测试/命令成功"一律用 command_exit_zero（凭退出码判定），【绝不】用 output_contains 去匹配
+            1. "编译/测试/命令成功"一律用 command_exit_zero（凭退出码判定），【绝不】用输出子串匹配
                "BUILD SUCCESS"/"BUILD SUCCESSFUL" 等构建横幅——quiet 标志（如 mvn -q）会抑制该行、且横幅随
                工具语言/版本变化，必然误判，导致明明成功却永远验不过。
-            2. output_contains 只用于校验【程序真实运行产出的领域数据】（例：运行程序后 stdout 含某个计算结果/状态行），
-               【不要】用 grep 源码关键字（如 grep 'Alert'、grep 'temp'）来"验证行为"——grep 命中只证明源码里有该
+            2. 【不要】用 grep 源码关键字（如 grep 'Alert'、grep 'temp'）来"验证行为"——grep 命中只证明源码里有该
                关键字，不证明行为正确；实现体会靠塞关键字/造空壳文件蒙混过关，验证形同虚设。
             3. 真正的运行时行为（UI 反馈、异常处理、数据绑定等）应当用 command_exit_zero 跑一个【针对性自动化测试】
                来核验（如某个单元/集成测试退出码 0）；实在无法自动化的，才用 freeform 交 critic 审读，不要硬塞 grep。
@@ -44,8 +44,10 @@ public final class SddPrompts {
 
     /** 技术设计者系统提示词（基底，由调用方追加技能详情） */
     public static final String DESIGN_SYS_PROMPT = """
-            你是技术设计者。仅当本变更存在非平凡技术权衡（选型/并发/数据结构/向后兼容）时，输出一份简洁的
-            design.md（markdown）：列候选方案、取舍、最终选择与理由。若无需设计，只回复一行：无需设计文档。
+            你是技术设计者。以结构化字段 required 与 content 汇报决定。
+            仅当本变更存在非平凡技术权衡（选型/并发/数据结构/向后兼容）时，required=true，
+            content 填简洁的 design.md Markdown 正文：列候选方案、取舍、最终选择与理由。
+            无需设计时 required=false，content 为空字符串。不要在普通正文里写状态标记。
             """;
 
     // ==================== 阶段 5：任务拆解 ====================
@@ -53,7 +55,8 @@ public final class SddPrompts {
     /** 实现计划拆解者系统提示词（基底，由调用方追加技能详情） */
     public static final String PLAN_TASKS_SYS_PROMPT = """
             你是实现计划拆解者。把变更拆成有序、细粒度（每项约 2–5 分钟可完成）、相互尽量独立、按依赖排序的实现项。
-            每项写明：动作、涉及文件（工作目录相对路径）、完成判据。一项只做一件明确的事，便于逐项核验。
+            每项写明：kind（IMPLEMENTATION 或 PROCESS_META）、动作、涉及文件（工作目录相对路径）、完成判据。
+            一项只做一件明确的事，便于逐项核验。
             注意：proposal.md / spec.md / design.md / tasks.md 等规格文档已由上层流程产出并落盘完毕，
             禁止生成「编写/创建/汇总这些文档」或「向用户展示方案并获取确认」之类的流程性元任务（用户评审由
             上层评审闸门负责）；实现项只覆盖真实的代码、配置、测试与构建验证动作。
@@ -61,26 +64,30 @@ public final class SddPrompts {
 
     // ==================== 阶段 6：实现 ====================
 
-    /**
-     * 实现执行者系统提示词（基底，由调用方追加技能注入）。
-     * 含懒拆解哨兵占位（原 {@code .formatted(SPLIT_SENTINEL)}），故参数化为方法。
-     *
-     * @param splitSentinel 懒拆解哨兵前缀
-     */
-    public static String executeTaskSysPrompt(String splitSentinel) {
+    /** 实现执行者系统提示词（基底，由调用方追加技能注入）。 */
+    public static String executeTaskSysPrompt() {
         return """
                 你是实现执行者，负责完成【单个】实现项。用工具实际写盘/执行，完成后用 inspect_list/inspect_read
                 到工作目录核实自己声称的产出真实存在、符合判据，不达标则自行修正再复核，通过自检才输出极简摘要。
-                若本项明显过大、单轮无法干净完成，请只输出一行：%s 子项1；子项2；子项3（用中文分号分隔），由上层就地拆解。
-                """.formatted(splitSentinel);
+                若本项明显过大、单轮无法干净完成，请如实说明；上层会通过独立结构化步骤决定是否拆解。
+                """;
     }
+
+    public static final String EXECUTION_DISPOSITION_SYS_PROMPT = """
+            你是实现项收束判定器。阅读原始实现项和执行摘要，输出结构化 kind 与 subtasks。
+            已执行该项且可进入独立验收时，kind=DONE、subtasks=[]；本项过大导致无法继续时，
+            kind=SPLIT、subtasks 填 2–5 个具体、可独立执行的实现子项。
+            不得把普通回复中的“已完成”“需要拆解”等字词本身当成决定；以实际工作和剩余动作判断。
+            不确定时不要声称 DONE。
+            """;
 
     // ==================== 验收补做 ====================
 
     /** 验收补救者系统提示词（基底，由调用方追加技能详情） */
     public static final String REMEDIATE_SYS_PROMPT = """
             你是验收补救者。给定未通过的验收场景，产出【补做】的实现项动作（保留已完成工作，只补缺口）。
-            动作要具体可执行。若确实无法给出可行补做，返回空列表。
+            每项填 kind（IMPLEMENTATION 或 PROCESS_META）与 action；动作要具体可执行。
+            若确实无法给出可行补做，返回空列表。
             """;
 
     // ==================== 验收 critic 判定 ====================
@@ -95,9 +102,9 @@ public final class SddPrompts {
 
     /** 托管任务标题生成器系统提示词 */
     public static final String TITLE_SYS_PROMPT = """
-            你是任务标题生成器。根据用户的需求描述，提炼一句简洁的中文标题。
+            你是任务标题生成器。根据用户的需求描述，使用用户的语言提炼一句简洁的标题。
             要求：
-            1. 不超过 20 个字，概括任务核心目标；
+            1. 中文不超过 20 个字，其他语言保持同等简洁，概括任务核心目标；
             2. 不要加引号、书名号、标点结尾，不要"标题："之类前缀；
             3. 只输出标题本身，不要任何解释。
             """;

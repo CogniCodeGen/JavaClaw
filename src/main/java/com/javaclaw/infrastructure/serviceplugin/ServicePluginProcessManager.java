@@ -8,6 +8,7 @@ import com.javaclaw.application.serviceplugin.ServicePluginManagementApplication
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.EndpointConfiguration;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.ResourceConfiguration;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.ServicePluginInfo;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.StartupPolicy;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.State;
 import com.javaclaw.platform.data.DataRoot;
@@ -289,6 +290,7 @@ public final class ServicePluginProcessManager implements
         session.shutdownGracefully(DRAIN_TIMEOUT, EXIT_TIMEOUT);
         synchronized (lifecycle) {
             entry.lastLogs = session.recentLogs(200);
+            entry.lastLogEntries = session.recentLogEntries(200);
             entry.state = State.STOPPED;
             entry.startedAt = null;
             leases.delete(pluginId);
@@ -560,6 +562,17 @@ public final class ServicePluginProcessManager implements
         }
     }
 
+    /** Returns source-classified process logs without inspecting their display text. */
+    public List<ServicePluginLogEntry> recentLogEntries(String pluginId, int max) {
+        synchronized (lifecycle) {
+            Entry entry = require(pluginId);
+            List<ServicePluginLogEntry> values = entry.session == null
+                    ? entry.lastLogEntries : entry.session.recentLogEntries(max);
+            return List.copyOf(values.subList(
+                    Math.max(0, values.size() - Math.max(0, max)), values.size()));
+        }
+    }
+
     private ServicePluginSession launch(
             Entry entry, ServicePluginResourceBudget.Lease lease) throws Exception {
         return launcher.launch(entry.definition, lease, new ServicePluginProcessLauncher.LaunchObserver() {
@@ -616,6 +629,7 @@ public final class ServicePluginProcessManager implements
             entry.session = null;
             entry.startedAt = null;
             entry.lastLogs = session.recentLogs(200);
+            entry.lastLogEntries = session.recentLogEntries(200);
             leases.delete(pluginId);
             boolean abnormal = !closed.get() && !entry.explicitlyStopping && !session.expectedStop();
             if (!abnormal) {
@@ -801,6 +815,7 @@ public final class ServicePluginProcessManager implements
         private boolean explicitlyStopping;
         private String lastError = "";
         private List<String> lastLogs = List.of();
+        private List<ServicePluginLogEntry> lastLogEntries = List.of();
 
         private Entry(ServicePluginDefinition definition) { this.definition = definition; }
     }

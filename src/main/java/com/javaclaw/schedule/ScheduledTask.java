@@ -1,5 +1,7 @@
 package com.javaclaw.schedule;
 
+import com.javaclaw.framework.api.TaskResult;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -58,6 +60,9 @@ public class ScheduledTask {
     /** 要发送给智能体的提示词 */
     private String prompt;
 
+    /** 到点执行策略；旧任务和新任务均默认持续执行。 */
+    private ExecutionPolicy executionPolicy = ExecutionPolicy.RECURRING;
+
     /** 是否启用 */
     private boolean enabled;
 
@@ -67,7 +72,7 @@ public class ScheduledTask {
     /** 上次执行时间 */
     private String lastRunTime;
 
-    /** 上次执行结果（成功/失败） */
+    /** 上次执行结果的稳定枚举码（SUCCESS/FAILURE/CANCELLED） */
     private String lastRunStatus;
 
     /** 上次执行耗时（如 "6.2s"） */
@@ -120,14 +125,22 @@ public class ScheduledTask {
         private String status = "";
         private String duration = "—";
         private String note = "";
+        /** Null for historical executions recorded before task acceptance existed. */
+        private TaskResult taskResult;
 
         public ExecRecord() {}
 
         public ExecRecord(String time, String status, String duration, String note) {
+            this(time, status, duration, note, null);
+        }
+
+        public ExecRecord(String time, String status, String duration, String note,
+                          TaskResult taskResult) {
             this.time = time;
             this.status = status;
             this.duration = duration;
             this.note = note;
+            this.taskResult = taskResult;
         }
 
         public String getTime() { return time; }
@@ -138,6 +151,8 @@ public class ScheduledTask {
         public void setDuration(String duration) { this.duration = duration; }
         public String getNote() { return note; }
         public void setNote(String note) { this.note = note; }
+        public TaskResult getTaskResult() { return taskResult; }
+        public void setTaskResult(TaskResult taskResult) { this.taskResult = taskResult; }
     }
 
     public ScheduledTask() {
@@ -156,6 +171,7 @@ public class ScheduledTask {
         this.cronExpression = "";
         this.onceDateTime = "";
         this.prompt = "";
+        this.executionPolicy = ExecutionPolicy.RECURRING;
         this.enabled = false;
         this.version = 0L;
         this.lastRunTime = "";
@@ -171,7 +187,7 @@ public class ScheduledTask {
     /** 记录一次执行结果（更新时间/状态/计数） */
     public void recordExecution(boolean success) {
         this.lastRunTime = LocalDateTime.now().format(FORMATTER);
-        this.lastRunStatus = success ? "成功" : "失败";
+        this.lastRunStatus = success ? "SUCCESS" : "FAILURE";
         this.runCount++;
         if (!success) this.failCount++;
     }
@@ -179,7 +195,7 @@ public class ScheduledTask {
     /** 记录一次由用户停用等原因造成的取消；取消计入运行总数，但不计为失败。 */
     public void recordCancellation() {
         this.lastRunTime = LocalDateTime.now().format(FORMATTER);
-        this.lastRunStatus = "已取消";
+        this.lastRunStatus = "CANCELLED";
         this.runCount++;
     }
 
@@ -200,6 +216,7 @@ public class ScheduledTask {
         out.cronExpression = cronExpression;
         out.onceDateTime = onceDateTime;
         out.prompt = prompt;
+        out.executionPolicy = executionPolicy;
         out.enabled = enabled;
         out.version = version;
         out.lastRunTime = lastRunTime;
@@ -214,7 +231,8 @@ public class ScheduledTask {
         if (execRecords != null) {
             for (ExecRecord record : execRecords) {
                 out.execRecords.add(new ExecRecord(
-                        record.time, record.status, record.duration, record.note));
+                        record.time, record.status, record.duration, record.note,
+                        record.taskResult));
             }
         }
         out.builtin = builtin;
@@ -322,6 +340,11 @@ public class ScheduledTask {
 
     public String getPrompt() { return prompt; }
     public void setPrompt(String prompt) { this.prompt = prompt; }
+
+    public ExecutionPolicy getExecutionPolicy() { return executionPolicy; }
+    public void setExecutionPolicy(ExecutionPolicy executionPolicy) {
+        this.executionPolicy = java.util.Objects.requireNonNull(executionPolicy, "executionPolicy");
+    }
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }

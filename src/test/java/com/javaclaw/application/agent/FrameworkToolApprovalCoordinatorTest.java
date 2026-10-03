@@ -92,7 +92,7 @@ class FrameworkToolApprovalCoordinatorTest {
         FrameworkToolApprovalCoordinator.resolve(
                 agents, handle, null,
                 event(new ToolApprovalChallenge(
-                        "sys_file_write", JsonNodeFactory.instance.arrayNode(),
+                        "sys_file_write", object(),
                         "auto-fingerprint", "CONFIRM", "write file")));
         ResumeCommand automatic = agents.resumes.getLast();
         assertFalse(automatic.payload().path("humanApproved").asBoolean());

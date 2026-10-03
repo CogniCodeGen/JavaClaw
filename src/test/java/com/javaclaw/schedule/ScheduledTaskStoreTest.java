@@ -1,14 +1,49 @@
 package com.javaclaw.schedule;
 
 import com.javaclaw.config.FileDatabaseAccess;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ScheduledTaskStoreTest {
+
+    @Test
+    void executionPolicyPersistsAcrossDefinitionAndResultWrites() {
+        ScheduledTaskStore store = store();
+        ScheduledTask draft = task("policy", true);
+        assertEquals(ExecutionPolicy.RECURRING, draft.getExecutionPolicy());
+        draft.setExecutionPolicy(ExecutionPolicy.UNTIL_CONDITION);
+        ScheduledTask saved = store.insert("ws", draft);
+        assertEquals(ExecutionPolicy.UNTIL_CONDITION, store.find("ws", saved.getId()).getExecutionPolicy());
+
+        ScheduledTask updated = saved.copy();
+        updated.setExecutionPolicy(ExecutionPolicy.RECURRING);
+        store.updateDefinition("ws", updated);
+        store.recordExecution("ws", saved.getId(), new ScheduledTaskStore.ExecutionResult(
+                ScheduledTaskStore.ExecutionStatus.SUCCESS, "1s", "完成"));
+        assertEquals(ExecutionPolicy.RECURRING, store.find("ws", saved.getId()).getExecutionPolicy());
+    }
+
+    @Test
+    void scheduledExecutionPersistsTechnicalCompletionAndSeparateTaskOutcome() {
+        ScheduledTaskStore store = store();
+        ScheduledTask task = store.insert("ws", task("typed-result", true));
+        TaskResult acceptance = new TaskResult(TaskOutcome.PARTIAL,
+                List.of("日程观察"), "观察失败", List.of("receipt:launch"), List.of("启动日历"));
+        store.recordExecution("ws", task.getId(), new ScheduledTaskStore.ExecutionResult(
+                ScheduledTaskStore.ExecutionStatus.SUCCESS, "1s", "运行完成", acceptance));
+
+        ScheduledTask reloaded = store.find("ws", task.getId());
+        assertEquals("SUCCESS", reloaded.getLastRunStatus());
+        assertEquals("SUCCESS", reloaded.getExecRecords().getFirst().getStatus());
+        assertEquals(acceptance, reloaded.getExecRecords().getFirst().getTaskResult());
+    }
 
     @TempDir
     Path dataDir;
@@ -80,10 +115,10 @@ class ScheduledTaskStoreTest {
         ScheduledTask cancelled = store.recordExecution("ws", saved.getId(),
                 new ScheduledTaskStore.ExecutionResult(
                         ScheduledTaskStore.ExecutionStatus.CANCELLED, "40ms", "disabled"));
-        assertEquals("已取消", cancelled.getLastRunStatus());
+        assertEquals("CANCELLED", cancelled.getLastRunStatus());
         assertEquals(1, cancelled.getRunCount());
         assertEquals(0, cancelled.getFailCount());
-        assertEquals("已取消", cancelled.getExecRecords().getFirst().getStatus());
+        assertEquals("CANCELLED", cancelled.getExecRecords().getFirst().getStatus());
     }
 
     @Test

@@ -1,7 +1,7 @@
 package com.javaclaw.infrastructure.inference;
 
 import com.javaclaw.infrastructure.inference.serviceplugin.DeliveranceServicePluginGateway;
-import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.platform.data.ApplicationHome;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,9 +24,7 @@ final class DeliverancePluginLayout {
     }
 
     static DeliverancePluginLayout production() {
-        Path root = ProjectAccessPolicy.requireProjectFilePath(
-                ProjectAccessPolicy.projectRoot().resolve("plugins"));
-        return new DeliverancePluginLayout(root);
+        return new DeliverancePluginLayout(ApplicationHome.resolve().pluginsDirectory());
     }
 
     /** Validates the canonical plugin directory without opening plugin classes. */

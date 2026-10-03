@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -84,16 +85,17 @@ public final class SpringAiModelFactory implements AutoCloseable {
             ChatModel high = create(new TierSpec(
                     config.getProviderType(), config.getBaseUrl(), config.getModelName(),
                     config.getApiKey(), config.isThinkingEnabled(),
-                    bindings.get(InferenceCatalogPort.ModelTier.HIGH)));
+                    bindings.get(InferenceCatalogPort.ModelTier.HIGH), ModelTier.HIGH));
             ChatModel normal = create(new TierSpec(
                     config.getNormalProviderType(), config.getNormalBaseUrl(),
                     config.getNormalModelName(), config.getNormalApiKey(),
                     config.isNormalThinkingEnabled(), binding(bindings,
-                    InferenceCatalogPort.ModelTier.NORMAL)));
+                    InferenceCatalogPort.ModelTier.NORMAL), ModelTier.NORMAL));
             ChatModel light = create(new TierSpec(
                     config.getLightProviderType(), config.getLightBaseUrl(),
-                    config.getLightModelName(), config.getLightApiKey(), false,
-                    binding(bindings, InferenceCatalogPort.ModelTier.LIGHT)));
+                    config.getLightModelName(), config.getLightApiKey(),
+                    config.isLightThinkingEnabled(),
+                    binding(bindings, InferenceCatalogPort.ModelTier.LIGHT), ModelTier.LIGHT));
             Map<String, ChatModel> generation = Map.of(
                     refs.high(), high, refs.normal(), normal, refs.light(), light);
             SpringAiModelRegistry.Registration registration = registry.installWorkspace(
@@ -138,7 +140,8 @@ public final class SpringAiModelFactory implements AutoCloseable {
                     .model(config.getRagEmbeddingModelName())
                     .dimensions(config.getRagEmbeddingDimensions())
                     .apiKey(apiKey(config.getRagEmbeddingApiKey()))
-                    .baseUrl(config.getRagEmbeddingBaseUrl())
+                    .baseUrl(embeddingBaseUrl(config.getRagEmbeddingProvider(),
+                            config.getRagEmbeddingBaseUrl()))
                     .timeout(Duration.ofSeconds(config.getModelRequestTimeoutSeconds()))
                     .maxRetries(3)
                     .build();
@@ -150,6 +153,14 @@ public final class SpringAiModelFactory implements AutoCloseable {
                     ? failure.getClass().getSimpleName() : failure.getMessage();
             return embeddingProvider(true, null, "嵌入模型创建失败: " + message);
         }
+    }
+
+    /** Ollama's chat API uses its root URL; its OpenAI-compatible embedding API lives at /v1. */
+    private static String embeddingBaseUrl(String provider, String baseUrl) {
+        if (!"ollama".equals(PROVIDERS.normalizeId(provider)) || baseUrl == null) return baseUrl;
+        String trimmed = baseUrl.strip();
+        while (trimmed.endsWith("/")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        return trimmed.endsWith("/v1") ? trimmed : trimmed + "/v1";
     }
 
     private ChatModel create(TierSpec spec) {
@@ -207,6 +218,10 @@ public final class SpringAiModelFactory implements AutoCloseable {
                 .streamUsage(true);
         if (spec.thinking()) {
             builder.reasoningEffort("medium");
+        } else if (isLocalQwen35Light(spec)) {
+            // LM Studio's Qwen3.5 chat template needs this OpenAI field to omit
+            // reasoning tokens; enable_thinking=false alone does not do so.
+            builder.reasoningEffort("none");
         } else if (isDashScope(spec)) {
             builder.extraBody(java.util.Map.of("enable_thinking", false));
         }
@@ -262,6 +277,27 @@ public final class SpringAiModelFactory implements AutoCloseable {
         return provider.equals("dashscope") || url.contains("dashscope") || url.contains("aliyuncs");
     }
 
+    private static boolean isLocalQwen35Light(TierSpec spec) {
+        if (spec.tier() != ModelTier.LIGHT || spec.thinking()
+                || !"openai".equals(PROVIDERS.normalizeId(spec.provider()))) {
+            return false;
+        }
+        String model = spec.model() == null ? "" : spec.model().toLowerCase(Locale.ROOT);
+        String name = model.substring(model.lastIndexOf('/') + 1);
+        if (!name.equals("qwen3.5") && !name.startsWith("qwen3.5-")) {
+            return false;
+        }
+        try {
+            URI endpoint = URI.create(spec.baseUrl());
+            String host = endpoint.getHost();
+            return "http".equalsIgnoreCase(endpoint.getScheme()) && host != null
+                    && (host.equalsIgnoreCase("localhost") || host.equals("127.0.0.1")
+                    || host.equals("[::1]"));
+        } catch (IllegalArgumentException | NullPointerException invalidUrl) {
+            return false;
+        }
+    }
+
     private static String apiKey(String value) {
         return CredentialUsage.requirePlaintext(
                 value == null || value.isBlank() ? "not-needed" : value);
@@ -297,7 +333,7 @@ public final class SpringAiModelFactory implements AutoCloseable {
 
     private record TierSpec(
             String provider, String baseUrl, String model, String apiKey,
-            boolean thinking, UUID profileId) {}
+            boolean thinking, UUID profileId, ModelTier tier) {}
 
     private record UnavailableCredentialChatModel(String error) implements ChatModel {
         @Override

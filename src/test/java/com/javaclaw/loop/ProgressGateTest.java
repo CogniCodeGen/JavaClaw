@@ -30,11 +30,6 @@ class ProgressGateTest {
         return IterationResult.ok(text, 0L, 0L, List.of(tools));
     }
 
-    private static String withRemaining(String body, String remaining) {
-        return body + "\n" + LoopConstants.JUDGMENT_LINE_PREFIX + LoopConstants.JUDGMENT_NOT_DONE
-                + "｜已完成：无｜" + LoopConstants.JUDGMENT_REMAINING_MARKER + "：" + remaining;
-    }
-
     @Test
     void 有准则目标_纯文本变化不算进展() {
         ProgressGate gate = new ProgressGate();
@@ -75,14 +70,14 @@ class ProgressGateTest {
         // 不同的事、只是「剩余」措辞照抄上轮时，正在推进的循环两轮就被 NO_PROGRESS 误杀
         ProgressGate gate = new ProgressGate();
         assertTrue(gate.madeProgress(noCriteria(),
-                reply(withRemaining("处理文件A", "继续整理剩余文件"), "edit#a1")));
+                reply("处理文件A", "edit#a1")));
         assertTrue(gate.madeProgress(noCriteria(),
-                reply(withRemaining("处理文件B", "继续整理剩余文件"), "edit#b2")),
-                "工具指纹全新（真干了新的事）时，剩余措辞照抄不构成停滞");
+                reply("处理文件B", "edit#b2")),
+                "工具指纹全新时构成可观察进展");
         // 无新行动 + 剩余照抄 → 才是停滞
         assertFalse(gate.madeProgress(noCriteria(),
-                reply(withRemaining("空聊一轮", "继续整理剩余文件"))),
-                "无行动且剩余卡住 → 停滞");
+                reply("空聊一轮")),
+                "无新行动且准则不变 → 停滞");
     }
 
     @Test
@@ -99,14 +94,12 @@ class ProgressGateTest {
     }
 
     @Test
-    void 无准则目标_剩余清单卡住判停滞() {
+    void 无准则目标_正文变化不能重置停滞() {
         ProgressGate gate = new ProgressGate();
-        assertTrue(gate.madeProgress(noCriteria(), reply(withRemaining("干活A", "把报表数据补全"))));
-        // 第二轮剩余原样重复 → 自我供认卡住（哪怕正文换了说法）
-        assertFalse(gate.madeProgress(noCriteria(), reply(withRemaining("换了套说法", "把报表数据补全"))),
-                "连续两轮剩余相同 → 停滞");
-        // 剩余实质变化 → 进展
-        assertTrue(gate.madeProgress(noCriteria(), reply(withRemaining("推进了", "发送邮件到指定邮箱"))),
-                "剩余清单变化 → 有进展");
+        assertTrue(gate.madeProgress(noCriteria(), reply("干活A")));
+        assertFalse(gate.madeProgress(noCriteria(), reply("换了套说法")),
+                "正文变化不能作为进展证据");
+        assertFalse(gate.madeProgress(noCriteria(), reply("剩余清单改变了")),
+                "剩余清单在普通文本中也不能作为进展证据");
     }
 }

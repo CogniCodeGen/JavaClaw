@@ -1,5 +1,7 @@
 package com.javaclaw.application.inference;
 
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
+
 import java.util.List;
 
 /** 保存公开 API 配置后原子重载监听器的应用端口。 */
@@ -50,12 +52,23 @@ public interface InferenceApiServerControlPort {
 
     record ServiceSnapshot(ApiServerStatus api, String processState, long pid,
                            int activeRequests, List<String> recentLogs,
-                           boolean invocationLoggingSupported) {
+                           boolean invocationLoggingSupported,
+                           List<ServicePluginLogEntry> recentLogEntries) {
         public ServiceSnapshot {
             api = api == null ? new ApiServerStatus(State.DISABLED, "", "") : api;
             processState = processState == null || processState.isBlank()
                     ? "STOPPED" : processState.strip();
             recentLogs = recentLogs == null ? List.of() : List.copyOf(recentLogs);
+            recentLogEntries = recentLogEntries == null ? List.of() : List.copyOf(recentLogEntries);
+        }
+
+        public ServiceSnapshot(ApiServerStatus api, String processState, long pid,
+                               int activeRequests, List<String> recentLogs,
+                               boolean invocationLoggingSupported) {
+            this(api, processState, pid, activeRequests, recentLogs,
+                    invocationLoggingSupported, recentLogs == null ? List.of()
+                            : recentLogs.stream().map(line -> new ServicePluginLogEntry(
+                                    ServicePluginLogEntry.Kind.RUNTIME, line)).toList());
         }
     }
 

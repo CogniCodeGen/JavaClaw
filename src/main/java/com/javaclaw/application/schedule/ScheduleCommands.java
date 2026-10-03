@@ -15,6 +15,7 @@ public final class ScheduleCommands {
         return new SaveCommand(task.id(), task.name(), task.description(), task.triggerType(),
                 task.intervalValue(), task.intervalUnit(), task.dailyTime(), task.cronExpression(),
                 task.onceDateTime(), task.prompt(), task.enabled(), task.version(),
-                task.notifyEnabled(), task.notifyChannel(), task.unattendedToolsAuthorized(), false);
+                task.notifyEnabled(), task.notifyChannel(), task.unattendedToolsAuthorized(), false,
+                task.executionPolicy());
     }
 }

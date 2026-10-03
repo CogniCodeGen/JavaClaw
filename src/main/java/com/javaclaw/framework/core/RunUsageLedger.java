@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 /** Direct response charges are recorded once; ancestors enforce the sum of their subtree. */
 public final class RunUsageLedger {
@@ -34,7 +36,8 @@ public final class RunUsageLedger {
                 || !parent.scope.userId().equals(scope.userId())))
             throw new IllegalArgumentException("parent usage account belongs to another workspace or user");
         accounts.put(runId, new Account(budget, scope, parentRunId,
-                parent == null ? new ReentrantLock(true) : parent.calls));
+                parent == null ? new ReentrantLock(true) : parent.calls,
+                parent == null ? new AtomicInteger() : parent.abandonedCalls));
     }
 
     public synchronized boolean contains(RunId runId) { return accounts.containsKey(runId); }
@@ -82,16 +85,30 @@ public final class RunUsageLedger {
     /** Serializes physical model requests sharing a budget so siblings observe settled usage. */
     public ModelCall beginModelCall(RunId runId) {
         ReentrantLock lock;
-        synchronized (this) { lock = require(runId).calls; }
-        try { lock.lockInterruptibly(); }
+        AtomicInteger abandoned;
+        synchronized (this) {
+            Account account = require(runId);
+            lock = account.calls;
+            abandoned = account.abandonedCalls;
+        }
+        try {
+            do { requireNoAbandonedCall(abandoned); }
+            while (!lock.tryLock(50, TimeUnit.MILLISECONDS));
+        }
         catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             throw new com.javaclaw.framework.spi.RunCancelledException();
         }
         try {
+            requireNoAbandonedCall(abandoned);
             synchronized (this) { checkLineage(runId, true); }
-            return new ModelCall(lock);
+            return new ModelCall(this, runId, lock, abandoned);
         } catch (RuntimeException failure) { lock.unlock(); throw failure; }
+    }
+
+    private static void requireNoAbandonedCall(AtomicInteger abandoned) {
+        if (abandoned.get() > 0) throw new com.javaclaw.framework.api.TurnPausedException(
+                "上一次模型调用已超时或取消，但提供方仍在处理中；已暂停后续模型请求，旧调用结束后可继续。");
     }
 
     public synchronized RunBudget remainingBudget(RunId runId) {
@@ -129,6 +146,19 @@ public final class RunUsageLedger {
         }
     }
 
+    private synchronized void requireInputCapacity(RunId runId, long promptTokenFloor) {
+        if (promptTokenFloor < 0) throw new IllegalArgumentException("negative prompt floor");
+        for (RunId current : lineage(runId)) {
+            Account account = require(current);
+            long used = aggregateSnapshot(current).inputTokens();
+            long remaining = Math.max(0, account.budget.maxInputTokens() - used);
+            if (promptTokenFloor > remaining) {
+                throw BudgetExceededException.modelInputPreflight(
+                        used, remaining, promptTokenFloor, account.budget.maxInputTokens());
+            }
+        }
+    }
+
     private List<RunId> lineage(RunId id) {
         List<RunId> values = new ArrayList<>();
         var seen = new HashSet<RunId>();
@@ -154,6 +184,7 @@ public final class RunUsageLedger {
         var expired = new HashSet<RunId>();
         for (var entry : accounts.entrySet()) {
             if (entry.getValue().parent != null) continue;
+            if (entry.getValue().calls.isLocked()) continue;
             var family = accounts.keySet().stream().filter(id -> belongsTo(id, entry.getKey())).toList();
             if (family.stream().allMatch(id -> require(id).closedAtNanos != 0
                     && now - require(id).closedAtNanos >= TERMINAL_RETENTION_NANOS)) expired.addAll(family);
@@ -165,21 +196,52 @@ public final class RunUsageLedger {
         static final UsageSnapshot ZERO = new UsageSnapshot(0, 0, BigDecimal.ZERO);
     }
     public static final class ModelCall implements AutoCloseable {
+        private final RunUsageLedger ledger;
+        private final RunId runId;
         private final ReentrantLock lock;
+        private final AtomicInteger abandonedCalls;
         private boolean closed;
-        private ModelCall(ReentrantLock lock) { this.lock = lock; }
-        @Override public void close() { if (!closed) { closed = true; lock.unlock(); } }
+        private boolean abandoned;
+        private ModelCall(RunUsageLedger ledger, RunId runId, ReentrantLock lock,
+                          AtomicInteger abandonedCalls) {
+            this.ledger = ledger; this.runId = runId; this.lock = lock;
+            this.abandonedCalls = abandonedCalls;
+        }
+        /** Check the prompt while this physical call still holds its shared budget lock. */
+        public void requireInputCapacity(long promptTokenFloor) {
+            if (closed || !lock.isHeldByCurrentThread()) {
+                throw new IllegalStateException("model call admission lease is not active");
+            }
+            ledger.requireInputCapacity(runId, promptTokenFloor);
+        }
+        /** 逻辑收尾不释放物理预算锁，但阻止后续请求无限等待同一个旧提供方。 */
+        public synchronized void markAbandoned() {
+            if (!closed && !abandoned) {
+                abandoned = true;
+                abandonedCalls.incrementAndGet();
+            }
+        }
+        @Override public synchronized void close() {
+            if (!closed) {
+                closed = true;
+                if (abandoned) abandonedCalls.decrementAndGet();
+                lock.unlock();
+            }
+        }
     }
     private static final class Account {
         private final RunBudget budget;
         private final RunScope scope;
         private final RunId parent;
         private final ReentrantLock calls;
+        private final AtomicInteger abandonedCalls;
         private UsageSnapshot direct = UsageSnapshot.ZERO;
         private long closedAtNanos;
-        private Account(RunBudget budget, RunScope scope, RunId parent, ReentrantLock calls) {
+        private Account(RunBudget budget, RunScope scope, RunId parent, ReentrantLock calls,
+                        AtomicInteger abandonedCalls) {
             this.budget = Objects.requireNonNull(budget); this.scope = Objects.requireNonNull(scope);
             this.parent = parent; this.calls = calls;
+            this.abandonedCalls = abandonedCalls;
         }
     }
 }

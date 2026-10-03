@@ -7,7 +7,6 @@ import com.javaclaw.api.interaction.ChoiceOption;
 import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
-import com.javaclaw.agent.risk.ReadOnlyCommands;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.ToolReviewMode;
 import org.slf4j.Logger;
@@ -29,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p><b>归属凭据制</b>：调用来源由 {@link ToolCallOrigin} 令牌在工具装配期绑定、确认时随调用
  * 传入——托管任务来源可命中本任务的「同意全部」白名单（{@link #TASK_ALLOW_ALL}）、
- * 确定性只读命令放行、确认超时放宽（60s→600s）；交互/定时/未知来源一律逐次确认。归属是构造期
+     * 确认超时放宽（60s→600s）；交互/定时/未知来源一律逐次确认。归属是构造期
  * 事实而非运行时推断，任务授权不可能串染到其它来源的调用（旧的场景栈 + 交互回合计数推断机制
  * 已整体移除，其三面漏风——交互调用借任务授权、定时任务无登记照借、交互在飞误挂起已授权任务
  * ——随之消失）。</p>
@@ -161,7 +160,10 @@ public class ToolConfirmationManager {
      * 由 {@link #requestConfirmation(ToolCallOrigin, String, String)} 内部按等级分派处理。</p>
      */
     public static boolean requiresConfirmation(String toolName) {
-        if (!enabled || !ToolRiskRegistry.isManaged(toolName)) return false;
+        if (ToolRiskRegistry.isKnownHostReadOnly(toolName)) return false;
+        if (!ToolRiskRegistry.isManaged(toolName)
+                && !ToolRiskRegistry.isKnownHostTool(toolName)) return true;
+        if (!enabled) return false;
         return reviewMode() != ToolReviewMode.AUTO;
     }
 
@@ -184,6 +186,13 @@ public class ToolConfirmationManager {
                 toolName, description, false);
     }
 
+    public static ConfirmOutcome requestConfirmationOutcome(
+            ToolCallOrigin origin, String toolName, String description,
+            java.util.Map<String, String> operationParameters) {
+        return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin,
+                toolName, description, false, operationParameters);
+    }
+
     /**
      * 高风险 shell 命令专用确认：<b>AUTO 总闸对其不生效</b>，其余漏斗与统一路径一致。
      *
@@ -199,6 +208,15 @@ public class ToolConfirmationManager {
     public static ConfirmOutcome requestHighRiskCommandConfirmation(
             ToolCallOrigin origin, String toolName, String description) {
         return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin, toolName, description, true);
+    }
+
+    public static ConfirmOutcome requestHighRiskCommandConfirmation(
+            ToolCallOrigin origin, String toolName, String description,
+            String command, String workingDirectory) {
+        return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin,
+                toolName, description, true,
+                java.util.Map.of("command", command == null ? "" : command,
+                        "workDir", workingDirectory == null ? "" : workingDirectory));
     }
 
     /**
@@ -283,6 +301,18 @@ public class ToolConfirmationManager {
      */
     private static ConfirmOutcome confirmInternal(ToolCallOrigin origin, String toolName,
                                                   String description, boolean humanGateInAuto) {
+        return confirmInternal(origin, toolName, description, humanGateInAuto, java.util.Map.of());
+    }
+
+    private static ConfirmOutcome confirmInternal(ToolCallOrigin origin, String toolName,
+            String description, boolean humanGateInAuto,
+            java.util.Map<String, String> operationParameters) {
+        if (ToolRiskRegistry.isKnownHostReadOnly(toolName)) return ConfirmOutcome.ALLOWED_AUTO;
+        ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
+        if (level == null && !ToolRiskRegistry.isKnownHostTool(toolName)) {
+            log.warn("拒绝未登记的工具调用: {}", toolName);
+            return ConfirmOutcome.DENIED;
+        }
         var frameworkGrant = com.javaclaw.framework.api.ToolApprovalScope.current()
                 .filter(grant -> grant.approved()
                         && grant.tool().equals(toolName));
@@ -291,8 +321,7 @@ public class ToolConfirmationManager {
                     ? ConfirmOutcome.ALLOWED_HUMAN : ConfirmOutcome.ALLOWED_AUTO;
         }
         if (!enabled) return ConfirmOutcome.ALLOWED_AUTO;
-        ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
-        if (level == null) return ConfirmOutcome.ALLOWED_AUTO;
+        if (level == null) level = ToolRiskLevel.CONFIRM;
 
         ToolReviewMode reviewMode = reviewMode();
         if (reviewMode == ToolReviewMode.AUTO && !humanGateInAuto) {
@@ -338,21 +367,6 @@ public class ToolConfirmationManager {
             return ConfirmOutcome.ALLOWED_AUTO;
         }
 
-        // 托管任务的目录作用域工具可按确定性只读命令规则放行；其余仍需人工确认。
-        if (!manualReview && managedTask && ToolRiskRegistry.isDirScopedTool(toolName)
-                && taskRiskAutoApproveEnabled()) {
-            // 确定性只读命令直接放行：零副作用，越界读取（如 ls ~/.m2）也无需人工。
-            //    无人值守时这类命令走人工确认只会等满超时按拒绝处理，浪费时间且诱发执行体重试。
-            if ("cmd_execute".equals(toolName)) {
-                String cmd = extractCommand(description);
-                if (cmd != null && ReadOnlyCommands.isReadOnly(cmd)) {
-                    log.info("[只读命令·自动放行] cmd={}", cmd);
-                    p.notify(new ToastRequest(toolName, "已自动放行（只读命令，无副作用）：" + cmd));
-                    return ConfirmOutcome.ALLOWED_AUTO;
-                }
-            }
-        }
-
         ConfirmKind kind = (effectiveLevel == ToolRiskLevel.DOUBLE_CONFIRM)
                 ? ConfirmKind.DOUBLE_CONFIRM : ConfirmKind.CONFIRM;
         // 「同意全部」选项只对托管任务令牌展示：授权登记落到令牌自带的 taskId，
@@ -362,7 +376,7 @@ public class ToolConfirmationManager {
                 toolName, riskLabel(effectiveLevel), description,
                 kind, timeoutSeconds(origin),
                 kind == ConfirmKind.DOUBLE_CONFIRM ? DOUBLE_CONFIRM_KEYWORD : "",
-                offerAllowAll));
+                offerAllowAll, operationParameters));
 
         if (decision == ConfirmDecision.ALLOW_ALL && offerAllowAll) {
             recordAllowAll(origin.taskId());
@@ -372,37 +386,14 @@ public class ToolConfirmationManager {
         return decision.isAllow() ? ConfirmOutcome.ALLOWED_HUMAN : ConfirmOutcome.DENIED;
     }
 
-    /** cmd_execute 确认描述的命令前缀（拼接与解析共用单一来源，见 {@link #buildCommandDescription}）。 */
+    /** Command details are display only; no authorization decision parses this text. */
     private static final String CMD_DESC_PREFIX = "命令: ";
     /** cmd_execute 确认描述中命令与目录的分隔标记。 */
     private static final String CMD_DESC_DIR_SEP = " | 目录: ";
 
-    /**
-     * 拼装 cmd_execute 的确认描述（与 {@link #extractCommand} 的解析格式配对）。
-     *
-     * <p>只读命令免确认通道靠 extractCommand 反解析该描述还原命令文本——拼接与解析必须
-     * 共用同一份格式定义，调用方自拼字面量的话，任何文案调整都会让解析静默失配：
-     * 托管任务的 ls/grep 等只读命令全部退回人工确认、无人值守等满超时按拒绝。
-     * 调用方可在返回值之后追加说明文字（解析按「前缀 + 最后一个目录分隔标记」定位，
-     * 追加内容只要不含分隔标记即不影响还原）。</p>
-     */
+    /** Format a human-readable command description. */
     public static String buildCommandDescription(String command, String dir) {
         return CMD_DESC_PREFIX + command + CMD_DESC_DIR_SEP + dir;
-    }
-
-    /**
-     * 从 cmd_execute 的确认描述中解析出命令文本。
-     *
-     * <p>描述由 {@link #buildCommandDescription} 固定拼为 {@code "命令: <cmd> | 目录: <dir>"}，
-     * 目录后缀在命令之后，故取最后一个分隔符即可无歧义还原命令（命令内部的管道符不受影响）。
-     * 格式不符返回 null（回落到人工确认）。</p>
-     */
-    private static String extractCommand(String description) {
-        if (description == null || !description.startsWith(CMD_DESC_PREFIX)) return null;
-        int sep = description.lastIndexOf(CMD_DESC_DIR_SEP);
-        if (sep < 0) return null;
-        String cmd = description.substring(CMD_DESC_PREFIX.length(), sep).trim();
-        return cmd.isEmpty() ? null : cmd;
     }
 
     /** 风险等级的人类可读标签 */
@@ -444,8 +435,4 @@ public class ToolConfirmationManager {
         return config == null ? ToolReviewMode.SMART : config.getToolReviewMode();
     }
 
-    private static boolean taskRiskAutoApproveEnabled() {
-        AgentConfig config = settings;
-        return config == null || config.isTaskRiskAutoApproveEnabled();
-    }
 }

@@ -5,6 +5,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StepPayloadRedactorTest {
+    @Test void preservesDesktopSessionFailureForModelRecovery() {
+        String error = "[desktop_session_open][失败] 无法打开桌面会话: "
+                + "Target window is closed, minimized, or not shareable";
+        var safe = StepPayloadRedactor.redact(new ObjectMapper().valueToTree(java.util.Map.of("modelOutput", error)));
+        assertEquals(error, safe.path("modelOutput").asText());
+    }
+
     @Test void masksNestedCredentialsAndProviderTokensWithoutChangingUsageOrCallerData() throws Exception {
         var original = new ObjectMapper().readTree("""
                 {"arguments":{"password":"hidden-password","nested":[{"api_key":"hidden-key"}]},

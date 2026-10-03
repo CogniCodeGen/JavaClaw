@@ -3,11 +3,16 @@ package com.javaclaw.framework.springai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.api.AgentStep;
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.StepId;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.framework.core.ReasoningRequest;
 import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.StepEvents;
+import com.javaclaw.framework.core.ToolArgumentValidationException;
 import com.javaclaw.framework.core.ToolInvocationFingerprint;
 import com.javaclaw.framework.core.ToolInvocationGateway;
 import com.javaclaw.framework.core.ToolInvocationResult;
@@ -32,15 +37,25 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import static com.javaclaw.framework.springai.PersistedToolCallCodec.callFingerprint;
+import static com.javaclaw.framework.springai.PersistedToolCallCodec.recoveryRequired;
+import static com.javaclaw.framework.springai.PersistedToolCallCodec.replay;
+
 /** Provider-call journal and conservative tool continuation reconstruction. */
 final class ModelStepJournal {
-    private static final String REJECT_UNAVAILABLE_BATCH = "reject_unavailable_tool_batch";
+    private static final String REJECT_UNAVAILABLE_BATCH = PersistedToolCallCodec.UNAVAILABLE_BATCH;
+    static final String LEGACY_DESKTOP_REOBSERVE = "legacy_desktop_reobserve";
     private static final int MAX_REJECTED_BATCHES = 2;
+    private static final int MAX_INVALID_ARGUMENT_FEEDBACKS = 2;
     private final ReasoningRequest request;
     private final RunStepQuery steps;
     private final RunStore runs;
     private final ObjectMapper json;
     private final StepContextProjector projector;
+    private final PersistedProviderTools providerTools;
+    private final HarnessDecisionToolCallback decisionCallback;
+    private final LegacyDesktopBatchRecovery legacyDesktopRecovery;
+    private final BatchObservationReuse observationReuse;
     private StepId currentModel;
     private final List<AssistantMessage.ToolCall> pendingCalls = new ArrayList<>();
 
@@ -49,8 +64,15 @@ final class ModelStepJournal {
         this.steps = new RunStepQuery(runs);
         this.runs = runs;
         this.json = json;
-        this.projector = new StepContextProjector(request.plan().descriptor().stepContextPolicy());
+        this.projector = new StepContextProjector(
+                request.plan().descriptor().stepContextPolicy(), json);
+        this.providerTools = new PersistedProviderTools(request, steps, runs);
+        this.decisionCallback = new HarnessDecisionToolCallback(this, json);
+        this.legacyDesktopRecovery = new LegacyDesktopBatchRecovery(
+                request, steps, providerTools, json);
+        this.observationReuse = new BatchObservationReuse(request, steps, json);
     }
+    HarnessDecisionToolCallback decisionCallback() { return decisionCallback; }
     StepId started(Prompt prompt, int attempt, String toolCandidateStepId) {
         StepId id = StepId.random();
         var input = JsonNodeFactory.instance.objectNode();
@@ -107,47 +129,270 @@ final class ModelStepJournal {
         }
         throw new IllegalStateException("tool callback is not associated with a durable model response: " + name);
     }
-    private static String invocationId(StepId model, AssistantMessage.ToolCall call) {
-        return "model/" + model.value() + "/" + call.id();
+
+    /** Persist the model's control proposal separately from its display prose. */
+    synchronized JsonNode submitDecision(ModelDecisionV1 decision, JsonNode arguments) {
+        if (currentModel == null || pendingCalls.size() != 1
+                || !HarnessDecisionToolCallback.NAME.equals(pendingCalls.getFirst().name())) {
+            throw new ToolRecoveryRequiredException(request.runId().value(),
+                    "a harness decision must be the sole call in its provider batch");
+        }
+        validateUnmetCriterionIds(decision);
+        validateEvidenceRefs(decision);
+        String invocation = invocationId(HarnessDecisionToolCallback.NAME, arguments);
+        return persistDecision(currentModel, invocation, decision, arguments);
     }
 
+    /** Invalid control arguments are durable feedback, never a completion proposal. */
+    synchronized JsonNode rejectInvalidDecision(String rawArguments, Exception invalid) {
+        if (currentModel == null || pendingCalls.size() != 1
+                || !HarnessDecisionToolCallback.NAME.equals(pendingCalls.getFirst().name())
+                || !java.util.Objects.equals(
+                        pendingCalls.getFirst().arguments(), rawArguments)) {
+            throw new ToolRecoveryRequiredException(request.runId().value(),
+                    "invalid harness decision has no sole durable provider call");
+        }
+        AssistantMessage.ToolCall call = pendingCalls.removeFirst();
+        return persistInvalidDecision(currentModel, invocationId(currentModel, call),
+                invalidDecisionFeedback(invalid));
+    }
+
+    private JsonNode persistInvalidDecision(StepId modelStep, String invocation, JsonNode feedback) {
+        StepId step = StepId.tool(request.runId(), invocation);
+        AgentStep existing = steps.step(request.runId(), step).orElse(null);
+        if (existing != null && (existing.kind() != AgentStep.Kind.ORCHESTRATION
+                || existing.input() == null
+                || !"harness.decision_invalid".equals(
+                        existing.input().path("phase").asText(""))
+                || !modelStep.value().equals(
+                        existing.input().path("modelStepId").asText(""))
+                || !invocation.equals(existing.input().path("invocationId").asText("")))) {
+            throw new ToolRecoveryRequiredException(step.value(),
+                    "persisted invalid harness decision step conflicts with provider call");
+        }
+        if (runs.eventsAfter(request.runId(), 0).stream().anyMatch(event ->
+                event.type().equals("core.harness.decision_submitted")
+                        && event.schemaVersion() == 1
+                        && event.producer().equals("framework.springai")
+                        && modelStep.value().equals(
+                                event.payload().path("modelStepId").asText("")))) {
+            throw new ToolRecoveryRequiredException(step.value(),
+                    "invalid harness decision conflicts with a submitted decision");
+        }
+        if (existing != null && existing.state() == AgentStep.State.COMPLETED) {
+            if (existing.output() == null || !existing.output().has("modelOutput")) {
+                throw new ToolRecoveryRequiredException(step.value(),
+                        "persisted invalid harness decision feedback is unavailable");
+            }
+            return existing.output().path("modelOutput");
+        }
+        if (existing != null && existing.input().has("feedback")) {
+            // A restart must reproduce the original rejection, even if later receipts exist.
+            feedback = existing.input().path("feedback");
+        } else if (feedback == null) {
+            // Older interrupted rejection steps did not persist their detailed feedback.
+            feedback = invalidDecisionFeedback(new IllegalArgumentException());
+        }
+        if (existing == null) {
+            var input = JsonNodeFactory.instance.objectNode()
+                    .put("phase", "harness.decision_invalid")
+                    .put("modelStepId", modelStep.value())
+                    .put("invocationId", invocation);
+            input.set("feedback", feedback);
+            StepEvents.started(request.events(), step, AgentStep.Kind.ORCHESTRATION,
+                    input, modelStep.value());
+        }
+        var output = JsonNodeFactory.instance.objectNode().put("durationMillis", 0);
+        output.set("rawOutput", feedback);
+        output.set("modelOutput", feedback);
+        output.put("status", ToolExecutionStatus.FAILED.name());
+        StepEvents.completed(request.events(), step, output, null);
+        return feedback;
+    }
+
+    private JsonNode invalidDecisionFeedback(Exception invalid) {
+        String reasonCode;
+        String detail;
+        if (invalid instanceof DecisionValidationException validation) {
+            reasonCode = validation.reasonCode;
+            detail = validation.getMessage();
+        } else if (invalid instanceof com.fasterxml.jackson.core.JsonProcessingException) {
+            reasonCode = "DECISION_JSON_INVALID";
+            detail = "Arguments must be a JSON object matching the harness_submit_decision schema.";
+        } else {
+            reasonCode = "DECISION_SCHEMA_INVALID";
+            detail = "Arguments must match the harness_submit_decision schema: decision must be "
+                    + "CLAIM_DONE, CONTINUE, NEEDS_INPUT or BLOCKED; userMessage and "
+                    + "unmetCriterionIds are required; no extra properties are allowed.";
+        }
+        var feedback = JsonNodeFactory.instance.objectNode()
+                .put("accepted", false)
+                .put("errorCode", "INVALID_DECISION_ARGUMENTS")
+                .put("reasonCode", reasonCode)
+                .put("message", detail + " Correct only the control arguments; do not repeat "
+                        + "business tools just to repair this rejection.");
+        var refs = feedback.putArray("availableEvidenceRefs");
+        List<String> trusted = HarnessDecisionEvidence.trustedRefs(runs, request.runId());
+        trusted.stream().skip(Math.max(0, trusted.size() - 4)).forEach(refs::add);
+        var criteria = feedback.putArray("availableCriterionIds");
+        availableCriterionIds().stream().limit(32).forEach(criteria::add);
+        return feedback;
+    }
+
+    private List<String> availableCriterionIds() {
+        return com.javaclaw.framework.core.TaskResultEvaluator.latestContractV3(
+                runs.eventsAfter(request.runId(), 0), json)
+                .filter(contract -> contract.applicable())
+                .map(contract -> contract.criteria().stream()
+                        .map(com.javaclaw.framework.api.TaskCriterionV3::id).toList())
+                .orElse(List.of());
+    }
+
+    private static final class DecisionValidationException extends IllegalArgumentException {
+        private final String reasonCode;
+
+        private DecisionValidationException(String reasonCode, String detail) {
+            super(detail);
+            this.reasonCode = reasonCode;
+        }
+    }
+
+    private JsonNode persistDecision(StepId modelStep, String invocation,
+            ModelDecisionV1 decision, JsonNode arguments) {
+        StepId step = StepId.tool(request.runId(), invocation);
+        JsonNode acknowledgement = JsonNodeFactory.instance.objectNode()
+                .put("accepted", true).put("decision", decision.decision().name());
+        var prior = runs.eventsAfter(request.runId(), 0).stream()
+                .filter(event -> event.type().equals("core.harness.decision_submitted")
+                        && event.schemaVersion() == 1
+                        && event.producer().equals("framework.springai")
+                        && modelStep.value().equals(
+                                event.payload().path("modelStepId").asText("")))
+                .toList();
+        if (prior.size() > 1 || prior.size() == 1
+                && (!invocation.equals(prior.getFirst().payload().path("invocationId").asText(""))
+                    || !decision.toJson().equals(prior.getFirst().payload().path("value")))) {
+            throw new ToolRecoveryRequiredException(step.value(),
+                    "conflicting harness decisions for one model step");
+        }
+        AgentStep existing = steps.step(request.runId(), step).orElse(null);
+        if (existing != null && existing.state() == AgentStep.State.COMPLETED) {
+            if (prior.isEmpty() || existing.kind() != AgentStep.Kind.ORCHESTRATION
+                    || !"harness.decision".equals(existing.input().path("phase").asText(""))) {
+                throw new ToolRecoveryRequiredException(step.value(),
+                        "completed harness decision lacks a matching control event");
+            }
+            return existing.output().path("modelOutput");
+        }
+        if (existing == null) {
+            var input = JsonNodeFactory.instance.objectNode()
+                    .put("phase", "harness.decision")
+                    .put("modelStepId", modelStep.value())
+                    .put("invocationId", invocation);
+            input.set("arguments", arguments);
+            StepEvents.started(request.events(), step, AgentStep.Kind.ORCHESTRATION,
+                    input, modelStep.value());
+        } else if (existing.kind() != AgentStep.Kind.ORCHESTRATION
+                || !"harness.decision".equals(existing.input().path("phase").asText(""))
+                || !modelStep.value().equals(existing.input().path("modelStepId").asText(""))) {
+            throw new ToolRecoveryRequiredException(step.value(),
+                    "persisted harness decision step does not match provider step");
+        }
+        if (prior.isEmpty()) {
+            var payload = JsonNodeFactory.instance.objectNode()
+                    .put("modelStepId", modelStep.value())
+                    .put("invocationId", invocation)
+                    .put("decision", decision.decision().name())
+                    .put("userMessage", decision.userMessage());
+            payload.set("evidenceRefs", decision.toJson().path("evidenceRefs"));
+            payload.set("unmetCriterionIds", decision.toJson().path("unmetCriterionIds"));
+            payload.set("value", decision.toJson());
+            request.events().emit("core.harness.decision_submitted", 1,
+                    "framework.springai", payload);
+        }
+        var output = JsonNodeFactory.instance.objectNode().put("durationMillis", 0);
+        output.set("rawOutput", acknowledgement);
+        output.set("modelOutput", acknowledgement);
+        output.put("status", ToolExecutionStatus.SUCCEEDED.name());
+        StepEvents.completed(request.events(), step, output, null);
+        return acknowledgement;
+    }
+
+    private void validateEvidenceRefs(ModelDecisionV1 decision) {
+        if (decision.evidenceRefs().isEmpty()) return;
+        Set<String> trusted = new HashSet<>(
+                HarnessDecisionEvidence.trustedRefs(runs, request.runId()));
+        if (!trusted.containsAll(decision.evidenceRefs())) {
+            throw new DecisionValidationException("UNKNOWN_EVIDENCE_REFERENCE",
+                    "evidenceRefs must contain exact host-issued IDs from tool response "
+                            + "evidenceRefs or availableEvidenceRefs. Do not use tool names, "
+                            + "result summaries, failed receipts or invented IDs. If no suitable "
+                            + "evidence is available, omit evidenceRefs or use []; explain the "
+                            + "blocker in userMessage and use NEEDS_INPUT or BLOCKED when appropriate.");
+        }
+    }
+
+    private void validateUnmetCriterionIds(ModelDecisionV1 decision) {
+        if (decision.unmetCriterionIds().isEmpty()) return;
+        if (!availableCriterionIds().containsAll(decision.unmetCriterionIds())) {
+            throw new DecisionValidationException("UNKNOWN_CRITERION_ID",
+                    "unmetCriterionIds must contain only IDs from the frozen task contract, "
+                            + "listed in availableCriterionIds. Do not invent IDs or use condition "
+                            + "descriptions; use [] when none apply.");
+        }
+    }
     synchronized ToolExecutionResult rejectUnavailableToolBatch(Prompt prompt, AssistantMessage assistant) {
         if (currentModel == null || !pendingCalls.equals(assistant.getToolCalls())) {
             throw new IllegalStateException("unavailable tool batch has no durable model response");
         }
-        long previousBatches = steps.steps(request.runId()).stream()
-                .filter(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
-                        && REJECT_UNAVAILABLE_BATCH.equals(step.input().path("phase").asText()))
-                .map(step -> step.input().path("modelStepId").asText())
-                .distinct().count();
-        if (previousBatches >= MAX_REJECTED_BATCHES) {
+        AgentStep modelStep = steps.step(request.runId(), currentModel).orElseThrow(() ->
+                new ToolRecoveryRequiredException(currentModel.value(),
+                        "Persisted provider prompt is unavailable for the rejected tool batch"));
+        List<String> offeredTools = providerTools.offeredNames(modelStep);
+        List<String> requestedTools = assistant.getToolCalls().stream()
+                .map(AssistantMessage.ToolCall::name).distinct().toList();
+        if (consecutiveRejectedBatches() >= MAX_REJECTED_BATCHES) {
             throw new ToolRecoveryRequiredException(currentModel.value(),
-                    "Model repeatedly requested tools absent from its provider prompt; review step "
-                            + currentModel.value());
+                    "Model repeatedly requested tools absent from its provider prompt; "
+                            + "requested=" + requestedTools + "; offered=" + offeredTools
+                            + "; no calls in this batch were executed; review step "
+                            + currentModel.value(), requestedTools, offeredTools);
         }
+        return persistUnavailableToolBatch(prompt.getInstructions(), assistant,
+                modelStep, offeredTools);
+    }
+
+    /** Count only rejected batches since the last completed business tool with a receipt. */
+    long consecutiveRejectedBatches() {
+        return ModelStepRejectionHistory.count(request.runId(), steps, runs,
+                REJECT_UNAVAILABLE_BATCH);
+    }
+
+    private ToolExecutionResult persistUnavailableToolBatch(
+            List<Message> promptMessages, AssistantMessage assistant, AgentStep modelStep,
+            List<String> offeredTools) {
         Set<String> callIds = new HashSet<>();
         for (var call : assistant.getToolCalls()) {
             if (!callIds.add(call.id())) {
-                throw new ToolRecoveryRequiredException(currentModel.value(),
-                        "Model returned duplicate tool call IDs; review step " + currentModel.value());
+                throw recoveryRequired(modelStep, "model returned duplicate tool call IDs");
             }
-            StepId id = StepId.tool(request.runId(), invocationId(currentModel, call));
+            StepId id = StepId.tool(request.runId(), invocationId(modelStep.id(), call));
             if (steps.step(request.runId(), id).isPresent()) {
                 throw new ToolRecoveryRequiredException(id.value());
             }
         }
         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
         for (var call : assistant.getToolCalls()) {
-            StepId id = StepId.tool(request.runId(), invocationId(currentModel, call));
+            StepId id = StepId.tool(request.runId(), invocationId(modelStep.id(), call));
             var input = JsonNodeFactory.instance.objectNode();
             input.put("phase", REJECT_UNAVAILABLE_BATCH);
-            input.put("modelStepId", currentModel.value());
+            input.put("modelStepId", modelStep.id().value());
             input.put("callId", call.id());
             input.put("toolName", call.name());
             input.put("callFingerprint", callFingerprint(call));
             StepEvents.started(request.events(), id, AgentStep.Kind.ORCHESTRATION,
-                    input, currentModel.value());
-            var feedback = unavailableToolFeedback(call);
+                    input, modelStep.id().value());
+            var feedback = UnavailableToolFeedback.current(call, offeredTools);
             var output = JsonNodeFactory.instance.objectNode();
             output.put("rejectedUnavailableToolBatch", true);
             output.set("modelOutput", feedback);
@@ -156,31 +401,160 @@ final class ModelStepJournal {
             responses.add(new ToolResponseMessage.ToolResponse(
                     call.id(), call.name(), feedback.toString()));
         }
-        List<Message> messages = new ArrayList<>(prompt.getInstructions());
+        List<Message> messages = new ArrayList<>(promptMessages);
         messages.add(assistant);
         messages.add(ToolResponseMessage.builder().responses(responses).build());
         return ToolExecutionResult.builder().conversationHistory(messages).returnDirect(false).build();
     }
+
+    /** A durable hint for selecting the next provider tools after an unavailable-tool batch. */
+    PendingUnavailableRepair pendingUnavailableRepair(ToolCatalogSession catalog) {
+        AgentStep last = steps.steps(request.runId()).stream()
+                .filter(step -> step.kind() == AgentStep.Kind.MODEL)
+                .max(Comparator.comparingLong(AgentStep::startSequence)).orElse(null);
+        if (last == null || last.state() != AgentStep.State.COMPLETED
+                || last.input() == null || last.output() == null
+                || !last.output().has("message")) return null;
+        if (providerTools.inputRedacted(last.id()) || providerTools.outputRedacted(last.id())) {
+            throw recoveryRequired(last, "persisted unavailable-tool model step was redacted");
+        }
+        // A pre-observation-token desktop action has already been rejected as a
+        // whole batch during recovery. Its old schema is never restored or run.
+        if (legacyDesktopRecovery.legacyDesktopBatch(last)) return null;
+        providerTools.validate(last, catalog, decisionCallback);
+        AssistantMessage assistant = (AssistantMessage) StepMessageCodec.message(
+                last.output().path("message"));
+        if (assistant.getToolCalls().isEmpty()) return null;
+        List<String> offered = providerTools.offeredNames(last);
+        Set<String> visible = new HashSet<>(offered);
+        if (assistant.getToolCalls().stream().allMatch(call -> visible.contains(call.name()))) {
+            return null;
+        }
+        boolean rejected = rejectedUnavailableBatch(last, assistant.getToolCalls());
+        if (!rejected && !pausedUnavailableBatchWithoutExecution(last, assistant.getToolCalls())) {
+            return null;
+        }
+        List<String> requested = assistant.getToolCalls().stream()
+                .map(AssistantMessage.ToolCall::name).distinct().toList();
+        return new PendingUnavailableRepair(last.id().value(), requested, offered, rejected);
+    }
+
+    private boolean pausedUnavailableBatchWithoutExecution(
+            AgentStep modelStep, List<AssistantMessage.ToolCall> calls) {
+        Set<String> ids = new HashSet<>();
+        for (var call : calls) {
+            if (!ids.add(call.id()) || steps.step(request.runId(), StepId.tool(
+                    request.runId(), invocationId(modelStep.id(), call))).isPresent()) {
+                return false;
+            }
+        }
+        return runs.eventsAfter(request.runId(), modelStep.lastSequence()).stream()
+                .anyMatch(event -> event.type().equals("core.run.paused")
+                        && event.payload().path("output").path("kind").asText()
+                                .equals("tool.recovery_required")
+                        && event.payload().path("output").path("stepId").asText()
+                                .equals(modelStep.id().value()));
+    }
     ToolInvocationResult invoke(FrameworkTool tool, JsonNode arguments, ToolInvocationGateway gateway) {
         String invocation = invocationId(tool.descriptor().name(), arguments);
-        return invoke(tool, arguments, gateway, invocation);
+        return invoke(tool, arguments, gateway, invocation, currentModel);
+    }
+
+    ObjectNode invokeForModel(
+            FrameworkTool tool, JsonNode arguments, ToolInvocationGateway gateway) {
+        String invocation = invocationId(tool.descriptor().name(), arguments);
+        ToolInvocationResult result = invoke(tool, arguments, gateway, invocation, currentModel);
+        return SpringAiToolCallback.modelVisibleResult(
+                result, runs, request.runId(), observationReuse.evidenceInvocation(invocation));
     }
     private ToolInvocationResult invoke(FrameworkTool tool, JsonNode arguments,
-                                        ToolInvocationGateway gateway, String invocation) {
+                                        ToolInvocationGateway gateway, String invocation, StepId modelStep) {
         StepId id = StepId.tool(request.runId(), invocation);
         var existing = steps.step(request.runId(), id);
         if (existing.isPresent()) {
             AgentStep step = existing.get();
+            if (BatchObservationReuse.isAlias(step)) {
+                return observationReuse.reuse(tool, arguments, invocation, modelStep, step);
+            }
             if (step.kind() != AgentStep.Kind.TOOL
                     || step.state() != AgentStep.State.COMPLETED) {
                 throw new ToolRecoveryRequiredException(id.value());
             }
             return replay(step);
         }
-        return SpringAiToolCallback.invoke(tool, arguments, request, gateway, invocation);
+        ToolInvocationResult reused = observationReuse.reuse(tool, arguments, invocation, modelStep, null);
+        if (reused != null) return reused;
+        try {
+            return SpringAiToolCallback.invoke(tool, arguments, request, gateway, invocation);
+        } catch (ToolArgumentValidationException invalid) {
+            return rejectInvalidArguments(tool, arguments, invocation, invalid);
+        }
+    }
+
+    private ToolInvocationResult rejectInvalidArguments(
+            FrameworkTool tool, JsonNode arguments, String invocation,
+            ToolArgumentValidationException invalid) {
+        long rejected = steps.steps(request.runId()).stream()
+                .filter(step -> step.kind() == AgentStep.Kind.TOOL
+                        && step.state() == AgentStep.State.COMPLETED
+                        && step.output().path("validationRejected").asBoolean(false))
+                .count();
+        if (rejected >= MAX_INVALID_ARGUMENT_FEEDBACKS) {
+            throw new ToolRecoveryRequiredException(
+                    StepId.tool(request.runId(), invocation).value(),
+                    "Model repeatedly supplied invalid tool arguments; review and correct "
+                            + "the tool call before continuing");
+        }
+        var descriptor = tool.descriptor();
+        ToolInvocationResult rejectedResult = SpringAiToolCallback.invalidArgumentsResult(
+                tool, invalid);
+        JsonNode feedback = rejectedResult.output();
+        StepId id = StepId.tool(request.runId(), invocation);
+        var input = JsonNodeFactory.instance.objectNode()
+                .put("tool", descriptor.name())
+                .put("invocationId", invocation)
+                .put("fingerprint", ToolInvocationFingerprint.create(
+                        descriptor.name(), arguments));
+        input.set("arguments", arguments);
+        StepEvents.started(request.events(), id, AgentStep.Kind.TOOL, input,
+                currentModel == null ? null : currentModel.value());
+        var output = JsonNodeFactory.instance.objectNode()
+                .put("validationRejected", true)
+                .put("durationMillis", 0)
+                .put("status", rejectedResult.status().name())
+                .put("errorCode", rejectedResult.errorCode())
+                .put("displayMessage", rejectedResult.displayMessage());
+        output.set("rawOutput", feedback);
+        output.set("modelOutput", feedback);
+        StepEvents.completed(request.events(), id, output, null);
+        request.events().emit("core.tool.arguments_rejected", 1,
+                "framework.springai", JsonNodeFactory.instance.objectNode()
+                        .put("tool", descriptor.name())
+                        .put("invocationId", invocation)
+                        .set("feedback", feedback));
+        return rejectedResult;
     }
 
     /** Uses the latest actual provider request, including all preceding tool response messages. */
+    private boolean humanContractRevisionAfter(long modelSequence) {
+        List<RunEventEnvelope> events = runs.eventsAfter(request.runId(), modelSequence);
+        for (RunEventEnvelope revision : events) {
+            if (!revision.type().equals("core.task.contract_revised") || revision.schemaVersion() != 3
+                    || !revision.producer().equals("framework.core")
+                    || revision.payload().path("version").asInt() != 3
+                    || !java.util.Set.of("model", "model-repair", "unknown")
+                            .contains(revision.payload().path("source").asText())) continue;
+            if (events.stream().anyMatch(resumed -> resumed.sequence() < revision.sequence()
+                    && resumed.type().equals("core.run.resumed") && resumed.schemaVersion() == 1
+                    && resumed.producer().equals("framework.core")
+                    && ("core.run.resumed:" + resumed.sequence()).equals(revision.causationId())
+                    && resumed.payload().path("commandType").asText().equals("user.input")
+                    && resumed.payload().path("command").path("text").isTextual()
+                    && !resumed.payload().path("command").path("text").asText().isBlank())) return true;
+        }
+        return false;
+    }
+
     Recovery recover(List<FrameworkTool> tools, ToolInvocationGateway gateway,
             boolean appendResume) {
         return recover(tools, gateway, null, appendResume);
@@ -192,7 +566,11 @@ final class ModelStepJournal {
         AgentStep last = null;
         for (AgentStep step : history) if (step.kind() == AgentStep.Kind.MODEL) last = step;
         if (last == null) return null;
-        if (modelInputRedacted(last.id())) {
+        if (humanContractRevisionAfter(last.lastSequence())) {
+            // Keep durable receipts and effect fences, but do not dispatch the old goal's batch.
+            return null;
+        }
+        if (providerTools.inputRedacted(last.id())) {
             throw new ToolRecoveryRequiredException(last.id().value(),
                     "Persisted provider prompt was redacted; reconcile before replaying model step "
                             + last.id().value());
@@ -201,7 +579,8 @@ final class ModelStepJournal {
                 || !last.input().path("toolNames").isArray()) {
             throw recoveryRequired(last, "persisted provider prompt or tool directory is unavailable");
         }
-        validateProviderTools(last, catalog);
+        boolean legacyDesktopBatch = legacyDesktopRecovery.legacyDesktopBatch(last);
+        if (!legacyDesktopBatch) providerTools.validate(last, catalog, decisionCallback);
         List<Message> messages = new ArrayList<>(StepMessageCodec.messages(last.input().path("messages")));
         if (request.plan().descriptor().stepContextPolicy() != null) {
             UserMessage original = SpringAiPromptFactory.originalTaskMessage(request);
@@ -215,41 +594,139 @@ final class ModelStepJournal {
             }
         }
         ChatResponse finalResponse = null;
+        RunEventEnvelope protocolRepair = null;
         if (last.state() == AgentStep.State.COMPLETED && last.output().has("message")) {
             AssistantMessage assistant = (AssistantMessage) StepMessageCodec.message(last.output().path("message"));
-            messages.add(assistant);
-            if (assistant.getToolCalls().isEmpty()) {
+            var matchedRepair = HarnessProtocolRepairContext.recover(
+                    request.runId(), runs, last, history, assistant);
+            if (matchedRepair.isPresent()) {
+                if (providerTools.outputRedacted(last.id())) {
+                    throw recoveryRequired(last, "protocol repair model output was redacted");
+                }
+                protocolRepair = matchedRepair.get();
+                messages.add(TaskRepairContext.fromEvent(
+                        protocolRepair, request.runId().value(), last.id().value()));
+            } else {
+                messages.add(assistant);
+            }
+            if (protocolRepair == null && assistant.getToolCalls().isEmpty()) {
                 finalResponse = new ChatResponse(List.of(new Generation(assistant)),
                         org.springframework.ai.chat.metadata.ChatResponseMetadata.builder()
                                 .model(last.output().path("model").asText(request.plan().descriptor().modelPolicyRef())).build());
-            } else {
-                boolean rejected = rejectedUnavailableBatch(last, assistant.getToolCalls());
-                if (!rejected) validatePersistedToolVisibility(last, assistant.getToolCalls());
+            } else if (protocolRepair == null) {
+                long decisions = assistant.getToolCalls().stream()
+                        .filter(call -> HarnessDecisionToolCallback.NAME.equals(call.name())).count();
+                if (decisions > 0 && (decisions != 1 || assistant.getToolCalls().size() != 1)) {
+                    throw new ToolRecoveryRequiredException(last.id().value(),
+                            "persisted harness decision batch contains other calls; no pending call was executed");
+                }
+                if (legacyDesktopBatch) legacyDesktopRecovery.persistLegacyDesktopBatch(
+                        last, assistant.getToolCalls());
+                boolean rejectedLegacy = legacyDesktopRecovery.rejectedLegacyDesktopBatch(last);
+                boolean rejected = !rejectedLegacy
+                        && rejectedUnavailableBatch(last, assistant.getToolCalls());
+                if (!rejected && !rejectedLegacy && pausedUnavailableBatchWithoutExecution(
+                        last, assistant.getToolCalls())) {
+                    if (providerTools.outputRedacted(last.id())) {
+                        throw recoveryRequired(last,
+                                "paused unavailable-tool model output was redacted");
+                    }
+                    List<String> offered = providerTools.offeredNames(last);
+                    if (assistant.getToolCalls().stream().allMatch(call ->
+                            offered.contains(call.name()))) {
+                        throw recoveryRequired(last,
+                                "paused unavailable-tool batch has no unadvertised call");
+                    }
+                    persistUnavailableToolBatch(messages.subList(0, messages.size() - 1),
+                            assistant, last, offered);
+                    rejected = rejectedUnavailableBatch(last, assistant.getToolCalls());
+                }
+                if (!rejected && !rejectedLegacy) {
+                    validatePersistedToolVisibility(last, assistant.getToolCalls());
+                }
                 List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
-                boolean redacted = modelOutputRedacted(last.id());
+                boolean redacted = providerTools.outputRedacted(last.id());
                 for (var call : assistant.getToolCalls()) {
                     String invocation = invocationId(last.id(), call);
                     StepId toolStep = StepId.tool(request.runId(), invocation);
                     var persisted = steps.step(request.runId(), toolStep);
                     ToolInvocationResult result;
                     if (persisted.isPresent()) {
-                        if (persisted.get().state() != AgentStep.State.COMPLETED)
+                        if (persisted.get().state() != AgentStep.State.COMPLETED) {
+                            if (!HarnessDecisionToolCallback.NAME.equals(call.name()) || redacted) {
+                                throw new ToolRecoveryRequiredException(toolStep.value());
+                            }
+                            result = recoverDecision(last.id(), invocation, call.arguments());
+                            responses.add(new ToolResponseMessage.ToolResponse(
+                                    call.id(), call.name(), result.output().toString()));
+                            continue;
+                        }
+                        if (!rejected && !rejectedLegacy
+                                && persisted.get().kind() != AgentStep.Kind.TOOL
+                                && !BatchObservationReuse.isAlias(persisted.get())
+                                && !(HarnessDecisionToolCallback.NAME.equals(call.name())
+                                    && persisted.get().kind() == AgentStep.Kind.ORCHESTRATION))
                             throw new ToolRecoveryRequiredException(toolStep.value());
-                        if (!rejected && persisted.get().kind() != AgentStep.Kind.TOOL)
-                            throw new ToolRecoveryRequiredException(toolStep.value());
-                        // Completed work needs only its processed result, never the original credentials.
-                        result = replay(persisted.get());
+                        // A control response is usable only with its separate durable decision event.
+                        if (HarnessDecisionToolCallback.NAME.equals(call.name())) {
+                            result = recoverDecision(last.id(), invocation, call.arguments());
+                        } else if (BatchObservationReuse.isAlias(persisted.get())) {
+                            FrameworkTool tool = tools.stream().filter(candidate ->
+                                    candidate.descriptor().name().equals(call.name())).findFirst().orElseThrow(() ->
+                                    new ToolRecoveryRequiredException(toolStep.value()));
+                            result = observationReuse.reuse(tool, parse(call.arguments()),
+                                    invocation, last.id(), persisted.get());
+                        } else {
+                            // Completed work needs only its processed result, never the original credentials.
+                            result = replay(persisted.get());
+                        }
                     } else {
                         if (redacted) throw new ToolRecoveryRequiredException(toolStep.value(),
                                 "Pending tool input contains redacted credentials; reconcile the input before continuing step " + toolStep.value());
-                        FrameworkTool tool = tools.stream().filter(candidate ->
-                                candidate.descriptor().name().equals(call.name())).findFirst().orElseThrow(() ->
-                                new IllegalStateException("persisted tool no longer exists: " + call.name()));
-                        result = invoke(tool, parse(call.arguments()), gateway, invocation);
+                        if (HarnessDecisionToolCallback.NAME.equals(call.name())) {
+                            result = recoverDecision(last.id(), invocation, call.arguments());
+                        } else {
+                            FrameworkTool tool = tools.stream().filter(candidate ->
+                                    candidate.descriptor().name().equals(call.name())).findFirst().orElseThrow(() ->
+                                    new IllegalStateException("persisted tool no longer exists: " + call.name()));
+                            result = invoke(tool, parse(call.arguments()), gateway, invocation, last.id());
+                        }
                     }
-                    responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), result.output().toString()));
+                    String visible = HarnessDecisionToolCallback.NAME.equals(call.name())
+                            || rejected || rejectedLegacy
+                            ? result.output().toString()
+                            : SpringAiToolCallback.modelVisibleResult(
+                                    result, runs, request.runId(), observationReuse.evidenceInvocation(invocation)).toString();
+                    responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), visible));
                 }
                 messages.add(ToolResponseMessage.builder().responses(responses).build());
+                if (!rejected && !rejectedLegacy && decisions == 1) {
+                    // returnDirect control calls terminate the live provider loop. A restart
+                    // after that call must use its persisted decision, not ask the model again.
+                    finalResponse = new ChatResponse(List.of(new Generation(assistant)),
+                            org.springframework.ai.chat.metadata.ChatResponseMetadata.builder()
+                                    .model(last.output().path("model").asText(
+                                            request.plan().descriptor().modelPolicyRef())).build());
+                }
+            }
+        }
+        // A completion check can reject an otherwise final model response. The feedback is
+        // durable and tied to that exact model step, so recovery continues the same Run
+        // without accepting the old final answer or repeating an already completed tool.
+        if (last.state() == AgentStep.State.COMPLETED && protocolRepair == null) {
+            String finalModelStepId = last.id().value();
+            var repair = runs.eventsAfter(request.runId(), last.lastSequence()).stream()
+                    .filter(event -> TaskRepairContext.trusted(
+                            event, request.runId().value(), finalModelStepId))
+                    .findFirst();
+            if (repair.isPresent()) {
+                String feedback = repair.get().payload().path("feedback").asText("");
+                if (feedback.isBlank()) {
+                    throw recoveryRequired(last, "task repair feedback is unavailable");
+                }
+                messages.add(TaskRepairContext.fromEvent(
+                        repair.get(), request.runId().value(), finalModelStepId));
+                finalResponse = null;
             }
         }
         UserMessage resume = appendResume ? SpringAiPromptFactory.resumeCommandMessage(request) : null;
@@ -257,8 +734,9 @@ final class ModelStepJournal {
             messages.add(resume);
             finalResponse = null;
         }
+        boolean replayPrompt = last.state() != AgentStep.State.COMPLETED && resume == null;
         StepContextProjector.Projection projection;
-        if (request.plan().descriptor().onDemandContextPolicy() != null) {
+        if (replayPrompt || request.plan().descriptor().onDemandContextPolicy() != null) {
             int characters = messages.stream().mapToInt(StepContextProjector::characters).sum();
             projection = new StepContextProjector.Projection(List.copyOf(messages),
                     new StepContextProjector.Statistics(messages.size(), messages.size(),
@@ -279,28 +757,42 @@ final class ModelStepJournal {
         });
         return new Recovery(
                 system, projectedMessages, projection.statistics(), finalResponse,
-                last.state() != AgentStep.State.COMPLETED && resume == null,
+                replayPrompt,
                 List.copyOf(visibleTools),
                 last.input().path("toolCandidateStepId").isTextual()
-                        ? last.input().path("toolCandidateStepId").asText() : null);
+                        ? last.input().path("toolCandidateStepId").asText() : null,
+                projection.messages());
+    }
+
+    private ToolInvocationResult recoverDecision(
+            StepId modelStep, String invocation, String rawArguments) {
+        AgentStep existing = steps.step(request.runId(),
+                StepId.tool(request.runId(), invocation)).orElse(null);
+        if (existing != null && "harness.decision_invalid".equals(
+                existing.input().path("phase").asText(""))) {
+            return new ToolInvocationResult(
+                    persistInvalidDecision(modelStep, invocation, null),
+                    Duration.ZERO, ToolExecutionStatus.FAILED);
+        }
+        JsonNode arguments;
+        ModelDecisionV1 decision;
+        try {
+            arguments = json.readTree(rawArguments);
+            decision = ModelDecisionV1.fromJson(arguments);
+            validateUnmetCriterionIds(decision);
+            validateEvidenceRefs(decision);
+        } catch (Exception invalid) {
+            return new ToolInvocationResult(
+                    persistInvalidDecision(modelStep, invocation, invalidDecisionFeedback(invalid)),
+                    Duration.ZERO, ToolExecutionStatus.FAILED);
+        }
+        return new ToolInvocationResult(
+                persistDecision(modelStep, invocation, decision, arguments),
+                Duration.ZERO, ToolExecutionStatus.SUCCEEDED);
     }
     private void validatePersistedToolVisibility(
             AgentStep modelStep, List<AssistantMessage.ToolCall> calls) {
-        JsonNode input = modelStep.input();
-        if (input == null || !input.path("toolNames").isArray()) {
-            throw recoveryRequired(modelStep, "persisted provider tool directory is unavailable");
-        }
-        Set<String> visible = new HashSet<>();
-        input.path("toolNames").forEach(name -> {
-            if (name.isTextual()) visible.add(name.asText());
-        });
-        for (var call : calls) {
-            if (visible.contains(call.name())) continue;
-            StepId toolStep = StepId.tool(request.runId(), invocationId(modelStep.id(), call));
-            throw new ToolRecoveryRequiredException(toolStep.value(),
-                    "Persisted model response requested a tool absent from its provider prompt: "
-                            + call.name() + "; reconcile step " + toolStep.value());
-        }
+        PersistedToolCallCodec.validatePersistedToolVisibility(request.runId(), modelStep, calls);
     }
 
     private boolean rejectedUnavailableBatch(
@@ -310,7 +802,9 @@ final class ModelStepJournal {
             StepId id = StepId.tool(request.runId(), invocationId(modelStep.id(), call));
             steps.step(request.runId(), id).ifPresent(persisted::add);
         }
-        if (persisted.stream().noneMatch(step -> step.kind() == AgentStep.Kind.ORCHESTRATION)) {
+        if (persisted.stream().noneMatch(step -> step.kind() == AgentStep.Kind.ORCHESTRATION
+                && step.input() != null && REJECT_UNAVAILABLE_BATCH.equals(
+                        step.input().path("phase").asText()))) {
             return false;
         }
         Set<String> visible = new HashSet<>();
@@ -321,6 +815,7 @@ final class ModelStepJournal {
                 || calls.stream().allMatch(call -> visible.contains(call.name()))) {
             throw recoveryRequired(modelStep, "persisted unavailable-tool rejection is incomplete");
         }
+        List<String> offeredTools = providerTools.offeredNames(modelStep);
         for (var call : calls) {
             StepId id = StepId.tool(request.runId(), invocationId(modelStep.id(), call));
             AgentStep step = steps.step(request.runId(), id).orElseThrow(() ->
@@ -334,161 +829,27 @@ final class ModelStepJournal {
                     || !call.name().equals(step.input().path("toolName").asText())
                     || !callFingerprint(call).equals(step.input().path("callFingerprint").asText())
                     || !step.output().path("rejectedUnavailableToolBatch").asBoolean(false)
-                    || !unavailableToolFeedback(call).equals(step.output().path("modelOutput"))
-                    || modelInputRedacted(id) || modelOutputRedacted(id)) {
+                    || !(UnavailableToolFeedback.current(call, offeredTools)
+                            .equals(step.output().path("modelOutput"))
+                            || UnavailableToolFeedback.previous(call, offeredTools)
+                            .equals(step.output().path("modelOutput"))
+                            || UnavailableToolFeedback.legacy(call)
+                            .equals(step.output().path("modelOutput")))
+                    || providerTools.inputRedacted(id) || providerTools.outputRedacted(id)) {
                 throw recoveryRequired(modelStep, "persisted unavailable-tool rejection has changed");
             }
         }
         return true;
     }
 
-    private static String callFingerprint(AssistantMessage.ToolCall call) {
-        var value = JsonNodeFactory.instance.objectNode();
-        value.put("id", call.id());
-        value.put("name", call.name());
-        value.put("arguments", call.arguments());
-        return ToolInvocationFingerprint.create(REJECT_UNAVAILABLE_BATCH, value);
+    private static String invocationId(StepId model, AssistantMessage.ToolCall call) {
+        return PersistedToolCallCodec.invocationId(model, call);
     }
 
-    private static JsonNode unavailableToolFeedback(AssistantMessage.ToolCall call) {
-        return JsonNodeFactory.instance.objectNode()
-                .put("error", "tool_not_offered")
-                .put("tool", call.name())
-                .put("message", "At least one tool in this batch was not offered for this step. "
-                        + "No calls in the batch were executed. Answer directly or use only "
-                        + "tools offered in the next step.");
-    }
-
-    /** Validate the frozen candidate mapping before any pending tool can execute. */
-    private void validateProviderTools(AgentStep model, ToolCatalogSession catalog) {
-        var onDemand = request.plan().descriptor().onDemandContextPolicy();
-        if (onDemand == null) return;
-        JsonNode input = model.input();
-        if (input == null || !input.path("toolNames").isArray()
-                || !input.path("toolFingerprints").isObject()) {
-            throw recoveryRequired(model, "persisted provider tool definitions are unavailable");
-        }
-        Set<String> candidates = candidateNamesFor(model, catalog);
-        Set<String> activated = activatedBefore(model);
-        Set<String> seen = new HashSet<>();
-        JsonNode fingerprints = input.path("toolFingerprints");
-        for (JsonNode value : input.path("toolNames")) {
-            String name = value.asText("");
-            String fingerprint = fingerprints.path(name).asText("");
-            if (!value.isTextual() || name.isBlank() || !seen.add(name)
-                    || fingerprint.isBlank() || catalog == null
-                    || !catalog.matchesProviderDefinition(name, fingerprint)) {
-                throw recoveryRequired(model, "persisted provider tool is no longer authorized or has changed: "
-                        + name);
-            }
-            if (!name.equals(ToolCatalogSession.NAME)
-                    && !candidates.contains(name) && !activated.contains(name)) {
-                throw recoveryRequired(model,
-                        "persisted provider tool has no authorized candidate mapping: " + name);
-            }
-        }
-        if (fingerprints.size() != seen.size()) {
-            throw recoveryRequired(model, "persisted provider tool fingerprints do not match tool names");
-        }
-    }
-
-    private Set<String> candidateNamesFor(AgentStep model, ToolCatalogSession catalog) {
-        JsonNode candidateId = model.input().path("toolCandidateStepId");
-        if (candidateId.isMissingNode()) return Set.of();
-        if (!candidateId.isTextual() || candidateId.asText().isBlank()) {
-            throw recoveryRequired(model, "persisted tool candidate mapping ID is invalid");
-        }
-        String id = candidateId.asText();
-        AgentStep candidate = steps.step(request.runId(), new StepId(id)).orElseThrow(() ->
-                recoveryRequired(model, "persisted tool candidate mapping is unavailable: " + id));
-        long priorCompletedModel = steps.steps(request.runId()).stream()
-                .filter(step -> step.kind() == AgentStep.Kind.MODEL
-                        && step.state() == AgentStep.State.COMPLETED
-                        && step.startSequence() < model.startSequence())
-                .mapToLong(AgentStep::startSequence).max().orElse(0);
-        if (candidate.kind() != AgentStep.Kind.ORCHESTRATION
-                || candidate.state() != AgentStep.State.COMPLETED
-                || candidate.startSequence() <= priorCompletedModel
-                || candidate.startSequence() >= model.startSequence()
-                || !candidate.input().path("phase").asText().equals("tool_search_v2")
-                || modelInputRedacted(candidate.id()) || modelOutputRedacted(candidate.id())
-                || !candidate.output().path("candidates").isArray()) {
-            throw recoveryRequired(model, "persisted tool candidate mapping is unavailable: " + id);
-        }
-        Set<String> names = new HashSet<>();
-        int index = 0;
-        for (JsonNode entry : candidate.output().path("candidates")) {
-            String name = entry.path("name").asText();
-            String fingerprint = entry.path("fingerprint").asText();
-            if (!entry.path("id").asText().equals("t" + index++)
-                    || name.isBlank() || entry.path("group").asText().isBlank()
-                    || fingerprint.isBlank() || !names.add(name) || catalog == null
-                    || !catalog.matchesCandidate(name, fingerprint)) {
-                throw recoveryRequired(model,
-                        "persisted tool candidate is no longer authorized or has changed: " + name);
-            }
-        }
-        return names;
-    }
-
-    /** Catalog activation is consumed by the next completed MODEL, including a catalog listing. */
-    private Set<String> activatedBefore(AgentStep model) {
-        Set<String> active = Set.of();
-        List<AgentStep> earlier = steps.steps(request.runId()).stream()
-                .filter(step -> step.state() == AgentStep.State.COMPLETED
-                        && step.lastSequence() < model.startSequence())
-                .sorted(Comparator.comparingLong(AgentStep::lastSequence)).toList();
-        for (AgentStep step : earlier) {
-            if (step.kind() == AgentStep.Kind.MODEL) {
-                active = Set.of();
-            } else if (step.kind() == AgentStep.Kind.TOOL
-                    && step.input().path("tool").asText().equals(ToolCatalogSession.NAME)
-                    && step.input().path("arguments").path("action").asText().equals("activate")) {
-                if (modelOutputRedacted(step.id())) {
-                    throw recoveryRequired(model, "persisted tool catalog activation was redacted");
-                }
-                JsonNode output = step.output().path("rawOutput");
-                if (!output.path("success").asBoolean(false)
-                        || !output.path("action").asText().equals("activate")) continue;
-                JsonNode values = output.path("activated");
-                if (!values.isArray() || values.isEmpty()) {
-                    throw recoveryRequired(model, "persisted tool catalog activation is invalid");
-                }
-                Set<String> names = new HashSet<>();
-                for (JsonNode value : values) {
-                    if (!value.isTextual() || value.asText().isBlank()
-                            || !names.add(value.asText())) {
-                        throw recoveryRequired(model, "persisted tool catalog activation is invalid");
-                    }
-                }
-                active = names;
-            }
-        }
-        return active;
-    }
-
-    private static ToolRecoveryRequiredException recoveryRequired(AgentStep model, String reason) {
-        return new ToolRecoveryRequiredException(model.id().value(), reason);
-    }
-    private boolean modelOutputRedacted(StepId id) {
-        return runs.eventsAfter(request.runId(), 0).stream().anyMatch(event ->
-                event.type().equals("core.step.completed") && event.payload().path("stepId").asText().equals(id.value())
-                        && event.payload().path("credentialRedacted").asBoolean(false));
-    }
-    private boolean modelInputRedacted(StepId id) {
-        return runs.eventsAfter(request.runId(), 0).stream().anyMatch(event ->
-                event.type().equals("core.step.started")
-                        && event.payload().path("stepId").asText().equals(id.value())
-                        && event.payload().path("credentialRedacted").asBoolean(false));
-    }
-    private static ToolInvocationResult replay(AgentStep step) {
-        return new ToolInvocationResult(step.output().path("modelOutput"),
-                Duration.ofMillis(step.output().path("durationMillis").asLong()));
-    }
     private JsonNode parse(String value) {
-        try { return json.readTree(value); }
-        catch (Exception failure) { throw new IllegalStateException("invalid persisted tool arguments", failure); }
+        return PersistedToolCallCodec.parse(json, value);
     }
+
     record Recovery(
             String systemPrompt,
             List<Message> messages,
@@ -496,5 +857,36 @@ final class ModelStepJournal {
             ChatResponse finalResponse,
             boolean replayPrompt,
             List<String> toolNames,
-            String toolCandidateStepId) { }
+            String toolCandidateStepId,
+            List<Message> providerMessages) {
+        Recovery {
+            messages = List.copyOf(messages);
+            toolNames = List.copyOf(toolNames);
+            providerMessages = List.copyOf(providerMessages);
+        }
+
+        /** Compatibility for callers without a separately frozen provider message list. */
+        Recovery(String systemPrompt, List<Message> messages,
+                StepContextProjector.Statistics statistics, ChatResponse finalResponse,
+                boolean replayPrompt, List<String> toolNames, String toolCandidateStepId) {
+            this(systemPrompt, messages, statistics, finalResponse, replayPrompt,
+                    toolNames, toolCandidateStepId, legacyProviderMessages(systemPrompt, messages));
+        }
+
+        /** Exact system role boundaries and host metadata, before any next-step rebuilding. */
+        List<SystemMessage> systemMessages() {
+            return providerMessages.stream().filter(SystemMessage.class::isInstance)
+                    .map(SystemMessage.class::cast).toList();
+        }
+
+        private static List<Message> legacyProviderMessages(String systemPrompt,
+                List<Message> messages) {
+            List<Message> provider = new ArrayList<>();
+            if (!systemPrompt.isBlank()) provider.add(new SystemMessage(systemPrompt));
+            provider.addAll(messages);
+            return List.copyOf(provider);
+        }
+    }
+    record PendingUnavailableRepair(String modelStepId, List<String> requestedNames,
+                                    List<String> offeredNames, boolean alreadyRejected) { }
 }

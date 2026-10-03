@@ -11,6 +11,7 @@ import com.javaclaw.application.serviceplugin.ServicePluginInvocationPort.Servic
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.EndpointConfiguration;
 import com.javaclaw.application.serviceplugin.ServicePluginHostServiceRouter;
 import com.javaclaw.application.serviceplugin.ServicePluginHostServiceRouter.HostServiceException;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -68,7 +69,7 @@ final class ServicePluginSession implements AutoCloseable {
     private final AtomicBoolean accepting = new AtomicBoolean(true);
     private final AtomicBoolean expectedStop = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final Deque<String> logs;
+    private final Deque<ServicePluginLogEntry> logs;
     private TaskHandle<Void> reader;
     private TaskHandle<Void> processMonitor;
 
@@ -77,7 +78,7 @@ final class ServicePluginSession implements AutoCloseable {
                          ManagedTaskExecutor tasks, ObjectMapper json,
                          ServicePluginResourceBudget.Lease resourceLease,
                          ServicePluginHostServiceRouter hostServices,
-                         Deque<String> logs,
+                         Deque<ServicePluginLogEntry> logs,
                          Runnable disconnected) {
         this.definition = definition;
         this.desktopGeneration = desktopGeneration;
@@ -292,8 +293,12 @@ final class ServicePluginSession implements AutoCloseable {
     Set<String> services() { return Set.copyOf(services); }
     Map<String, Object> health() { return health.get(); }
     List<String> recentLogs(int max) {
+        return recentLogEntries(max).stream().map(ServicePluginLogEntry::text).toList();
+    }
+
+    List<ServicePluginLogEntry> recentLogEntries(int max) {
         synchronized (logs) {
-            List<String> values = new ArrayList<>(logs);
+            List<ServicePluginLogEntry> values = new ArrayList<>(logs);
             return values.subList(Math.max(0, values.size() - Math.max(0, max)), values.size());
         }
     }
@@ -329,11 +334,34 @@ final class ServicePluginSession implements AutoCloseable {
                 health.set(Map.copyOf(value));
             }
             case EVENT -> event(frame);
+            case LOG -> logEvent(frame);
             case RESPONSE, ERROR -> response(frame);
             case REQUEST -> reverseRequest(frame);
             case CANCEL -> cancelReverse(frame.requestId());
             default -> throw new IOException("服务插件返回了意外帧: " + frame.type());
         }
+    }
+
+    private void logEvent(ServicePluginWire.Frame frame) throws IOException {
+        addLog(parseLogEvent(frame));
+    }
+
+    static ServicePluginLogEntry parseLogEvent(ServicePluginWire.Frame frame) throws IOException {
+        JsonNode payload = frame.payload();
+        if (payload == null || !payload.isObject()
+                || !payload.path("kind").isTextual()
+                || !payload.path("message").isTextual()) {
+            throw new IOException("服务插件日志帧缺少类型或消息");
+        }
+        ServicePluginLogEntry.Kind kind;
+        try {
+            kind = ServicePluginLogEntry.Kind.valueOf(payload.path("kind").asText());
+        } catch (IllegalArgumentException unknownKind) {
+            throw new IOException("服务插件日志帧类型无效", unknownKind);
+        }
+        String message = payload.path("message").asText();
+        if (message.length() > 16_384) throw new IOException("服务插件日志帧消息过长");
+        return new ServicePluginLogEntry(kind, message);
     }
 
     private void hotConfigureAcknowledged(ServicePluginWire.Frame frame) {
@@ -638,6 +666,10 @@ final class ServicePluginSession implements AutoCloseable {
     }
 
     private void addLog(String value) {
+        addLog(new ServicePluginLogEntry(ServicePluginLogEntry.Kind.RUNTIME, value));
+    }
+
+    private void addLog(ServicePluginLogEntry value) {
         synchronized (logs) {
             if (logs.size() >= LOG_LINES) logs.removeFirst();
             logs.addLast(value);

@@ -11,6 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class JShellRunnerIsolationTest {
 
     @Test
+    void structureCheckStatusDoesNotDependOnLocalizedReportText() {
+        JShellRunner.CheckResult valid = JShellRunner.checkResult("int value = 1;");
+        JShellRunner.CheckResult incomplete = JShellRunner.checkResult("int value = (");
+
+        assertTrue(valid.valid());
+        assertFalse(incomplete.valid());
+        assertTrue(valid.lines().stream().anyMatch(line -> line.contains("结构检查通过")));
+    }
+
+    @Test
     void directRunnerCannotBypassStrictIsolation() {
         try (ManagedTaskExecutor tasks = new ManagedTaskExecutor()) {
             JShellRunner.ExecResult result = new JShellRunner(tasks).run(

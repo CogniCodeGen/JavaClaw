@@ -114,12 +114,18 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         List<ChatSession> valid = new ArrayList<>(loaded.stream()
                 .filter(session -> history.hasMessages(workspace, session.getId()))
                 .toList());
-        var durable = chatService.get().sessions();
+        ChatService service = chatService.get();
+        // Chat history created before the thread journal still needs a durable thread identity.
+        // startSession is idempotent and keeps the existing title and messages in chat history.
+        for (ChatSession session : valid) {
+            service.startSession(session.getId(), session.getTitle());
+        }
+        var durable = service.sessions();
         for (var thread : durable) {
             if (valid.stream().noneMatch(session -> session.getId().equals(thread.scope().sessionId()))) {
-                valid.add(new ChatSession(thread.scope().sessionId(), thread.title(),
+                valid.add(recoverDurableSession(thread.scope().sessionId(), thread.title(),
                         java.time.LocalDateTime.ofInstant(thread.createdAt(), java.time.ZoneId.systemDefault()),
-                        List.of()));
+                        loaded));
             }
         }
         valid.forEach(session -> durable.stream()
@@ -132,7 +138,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         valid.sort(java.util.Comparator.comparing(ChatSession::isArchived)
                 .thenComparing(ChatSession::getCreatedAt, java.util.Comparator.reverseOrder()));
         if (valid.isEmpty()) {
-            currentSession = new ChatSession("新的对话");
+            currentSession = ChatSession.untitled();
             sessions.add(currentSession);
             history.saveSessions(workspace, sessionSnapshots(sessions));
             sidebar.addSession(currentSession, true);
@@ -153,7 +159,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             messages.forEach(this::renderPersistedMessage);
         }
         if (currentSession.isArchived()) newSession();
-        else chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
+        else service.startSession(currentSession.getId(), currentSession.getTitle());
         status.refreshTitle();
     }
 
@@ -173,7 +179,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             clearRuntimeHistory();
         }
         removeEmptyCurrentSession();
-        currentSession = new ChatSession("新的对话");
+        currentSession = ChatSession.untitled();
         chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
         sessions.addFirst(currentSession);
         sidebar.insertSessionAtTop(currentSession, true);
@@ -323,7 +329,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         sessions.remove(currentSession);
         sidebar.removeSession(deletedId);
         disposeTranscript();
-        currentSession = new ChatSession("新的对话");
+        currentSession = ChatSession.untitled();
         chatService.get().startSession(currentSession.getId(), currentSession.getTitle());
         sessions.addFirst(currentSession);
         sidebar.insertSessionAtTop(currentSession, true);
@@ -364,6 +370,12 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         ChatMessage message = new ChatMessage(ChatMessage.Role.USER, text, attachments);
         currentSession.getMessages().add(message);
         transcript.addMessage(createMessageRow(message, List.of()).root());
+        // Title must be visible as soon as the first user message is sent. An empty or failed
+        // model reply may never reach storeAssistantMessage.
+        if (currentSession.autoTitle()) {
+            status.refreshTitle();
+            sidebar.updateSessionTitle(currentSession.getId(), currentSession.getTitle());
+        }
     }
 
     @Override
@@ -381,9 +393,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     @Override
     public void storeAssistantMessage(ChatSession target, ChatMessage message) {
         target.getMessages().add(message);
-        target.autoTitle();
         if (target == currentSession) status.refreshTitle();
-        sidebar.updateSessionTitle(target.getId(), target.getTitle());
         saveSessionMessages(target);
     }
 
@@ -581,12 +591,24 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     private static List<SessionSnapshot> sessionSnapshots(List<ChatSession> sessions) {
         return sessions.stream()
                 .map(session -> new SessionSnapshot(
-                        session.getId(), session.getTitle(), session.getCreatedAt()))
+                        session.getId(), session.getTitle(), session.getCreatedAt(),
+                        session.isAutoTitlePending()))
                 .toList();
     }
 
     private static ChatSession sessionFrom(SessionSnapshot session) {
-        return new ChatSession(session.id(), session.title(), session.createdAt(), List.of());
+        return new ChatSession(session.id(), session.title(), session.createdAt(), List.of(),
+                session.autoTitlePending());
+    }
+
+    /** Empty sessions can lack message rows; retain their saved title policy by session ID. */
+    static ChatSession recoverDurableSession(String id, String title,
+                                             java.time.LocalDateTime createdAt,
+                                             List<ChatSession> savedSessions) {
+        boolean pending = savedSessions.stream()
+                .filter(saved -> saved.getId().equals(id))
+                .findFirst().map(ChatSession::isAutoTitlePending).orElse(false);
+        return new ChatSession(id, title, createdAt, List.of(), pending);
     }
 
     private static MessageSnapshot messageSnapshot(ChatMessage message) {

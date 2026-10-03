@@ -72,6 +72,10 @@ public final class GraphRun {
     public GraphDefinition definition() { return definition; }
     public List<ExtensionLock> extensionLocks() { return extensionLocks; }
     public GraphState state() { return state; }
+    /** Nested task acceptance checkpoint, when an execution stage published one. */
+    public com.javaclaw.framework.api.TaskResult taskResult() {
+        return com.javaclaw.framework.api.TaskResultJson.decode(state.get("_system.taskResult"));
+    }
     public RunStatus status() { return status; }
     public String currentNodeId() { return currentNodeId; }
     public String nextNodeId() { return nextNodeId; }

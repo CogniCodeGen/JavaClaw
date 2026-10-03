@@ -39,7 +39,6 @@ import com.javaclaw.task.sdd.spec.Scenario;
 import com.javaclaw.task.sdd.spec.TaskItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.converter.BeanOutputConverter;
 import reactor.core.Disposable;
 
 import java.math.BigDecimal;
@@ -55,13 +54,11 @@ import java.util.stream.Collectors;
 
 /**
  * SDD model behavior implemented as child Runs of the one AgentEngine. Structured phases reuse
- * Spring AI's {@link BeanOutputConverter}; implementation phases use the same run-scoped tool
+ * a strict JSON Schema; implementation phases use the same run-scoped tool
  * gateway as Chat, Loop and Workflow.
  */
 public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(FrameworkSddAgents.class);
-    public static final String SPLIT_SENTINEL = "[需要拆解]";
-
     private final AgentClient agents;
     private final WorkspaceContext workspace;
     private final AgentConfig settings;
@@ -129,7 +126,8 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
                 .input(InputBlock.text(ctx.description()))
                 .permissionCeiling(PermissionSet.UNRESTRICTED)
                 .idempotencyKey("sdd:" + ctx.id() + ":coordinator")
-                .attributes(Map.of("framework.managedTaskId", JsonNodeFactory.instance.textNode(ctx.id())))
+                .attributes(Map.of(
+                        "framework.managedTaskId", JsonNodeFactory.instance.textNode(ctx.id())))
                 .build());
         ownerRunId = coordinator.id();
         try {
@@ -189,9 +187,10 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
                     if (requirement.scenarios != null) {
                         for (SddDrafts.ScenarioDraft scenario : requirement.scenarios) {
                             if (scenario == null || blank(scenario.title)) continue;
+                            Criterion criterion = criterionFromGeneratedScenario(scenario);
                             scenarios.add(new Scenario(scenario.title, nz(scenario.given),
                                     nz(scenario.when), nz(scenario.then),
-                                    new Criterion(scenario.criterionType, scenario.criterionPredicate)));
+                                    criterion));
                         }
                     }
                     requirements.add(new Requirement(requirement.title, scenarios));
@@ -202,13 +201,24 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
         return capabilities;
     }
 
+    static Criterion criterionFromGeneratedScenario(SddDrafts.ScenarioDraft scenario) {
+        if (scenario.criterionType == null) {
+            throw new IllegalArgumentException("SDD scenario is missing criterion kind");
+        }
+        return new Criterion(scenario.criterionType.name().toLowerCase(java.util.Locale.ROOT),
+                scenario.criterionPredicate);
+    }
+
     @Override
     public String design(TaskContext ctx, Proposal proposal, List<Capability> capabilities) {
-        String text = invoke(ctx, "design",
+        SddDrafts.DesignDraft draft = structured(ctx, "design",
                 withSkills(SddPrompts.DESIGN_SYS_PROMPT, "规格驱动开发"),
                 "需求：" + ctx.description() + "\n能力数：" + capabilities.size(),
-                structuredTimeoutSec, false);
-        return blank(text) || text.contains("无需设计") ? null : text;
+                SddDrafts.DesignDraft.class);
+        if (draft == null) throw new IllegalStateException("SDD design 阶段未返回结构化决定");
+        if (!draft.required) return null;
+        if (blank(draft.content)) throw new IllegalStateException("SDD design 决定需要设计但正文为空");
+        return draft.content;
     }
 
     @Override
@@ -227,7 +237,8 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
         List<TaskItem> result = new ArrayList<>();
         int index = 1;
         for (SddDrafts.TaskItemDraft task : draft.tasks) {
-            if (task == null || blank(task.action) || isMetaTask(task)) continue;
+            if (task == null || blank(task.action)
+                    || task.kind != SddDrafts.TaskKind.IMPLEMENTATION) continue;
             result.add(new TaskItem(index++, task.action,
                     task.files == null ? List.of() : task.files, task.criterion, false));
         }
@@ -238,7 +249,7 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
     public ExecutionResult executeTask(TaskContext ctx, TaskItem current, List<TaskItem> doneItems,
                                        List<Capability> specs) {
         String system = withSkillsCompact(
-                withSkills(SddPrompts.executeTaskSysPrompt(SPLIT_SENTINEL)),
+                withSkills(SddPrompts.executeTaskSysPrompt()),
                 "测试驱动开发", "系统化调试", "代码评审");
         StringBuilder user = new StringBuilder()
                 .append("当前实现项 #").append(current.index()).append("：")
@@ -254,8 +265,22 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
         if (!projectMap.isBlank()) user.append("\n【项目文件清单】\n").append(projectMap).append('\n');
 
         String text = invoke(ctx, "implement", system, user.toString(), execTimeoutSec, true);
-        List<String> split = parseSplit(text);
-        if (!split.isEmpty()) return ExecutionResult.split(split);
+        SddDrafts.ExecutionDispositionDraft disposition = structured(ctx,
+                "implement-disposition", SddPrompts.EXECUTION_DISPOSITION_SYS_PROMPT,
+                "实现项：" + current.action() + "\n完成判据：" + nz(current.criterion())
+                        + "\n执行摘要：" + nz(text),
+                SddDrafts.ExecutionDispositionDraft.class);
+        if (disposition == null || disposition.kind == null) {
+            throw new IllegalStateException("SDD 实现项缺少结构化收束决定");
+        }
+        if (disposition.kind == SddDrafts.ExecutionDisposition.SPLIT) {
+            List<String> subtasks = disposition.subtasks == null ? List.of()
+                    : disposition.subtasks.stream().filter(item -> !blank(item)).map(String::strip).toList();
+            if (subtasks.size() < 2 || subtasks.size() > 5) {
+                throw new IllegalStateException("SDD 拆解决定需要 2–5 个具体子项");
+            }
+            return ExecutionResult.split(subtasks);
+        }
         SddWorkNotes.appendLedger(ctx.workDir(), "#" + current.index() + " " + current.action()
                 + " — " + SddWorkNotes.oneLine(text, 120));
         return ExecutionResult.done(blank(text) ? "（执行体未输出摘要）" : text);
@@ -272,25 +297,24 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
                         + "\n\n工作目录：" + ctx.workDir(),
                 SddDrafts.RemediationDraft.class);
         if (draft == null || draft.fixes == null) return List.of();
-        return draft.fixes.stream().filter(value -> !blank(value))
-                .filter(value -> !isMetaTaskText(value)).toList();
+        return draft.fixes.stream()
+                .filter(value -> value != null
+                        && value.kind == SddDrafts.TaskKind.IMPLEMENTATION
+                        && !blank(value.action))
+                .map(value -> value.action).toList();
     }
 
     private <T> T structured(
             TaskContext ctx, String phase, String system, String user, Class<T> type) {
-        BeanOutputConverter<T> converter = new BeanOutputConverter<>(type);
+        SddStructuredOutput<T> structured = new SddStructuredOutput<>(type, json);
         String output = invoke(ctx, phase,
-                system + "\n\n" + converter.getFormat(), user, structuredTimeoutSec, false);
-        if (blank(output)) return null;
+                system + "\n\n" + structured.formatInstructions(),
+                user, structuredTimeoutSec, false);
         try {
-            return converter.convert(stripFence(output));
-        } catch (RuntimeException failure) {
-            log.warn("[SDD] {} 阶段结构化输出解析失败: {}", phase, failure.toString());
-            try {
-                return json.readValue(stripFence(output), type);
-            } catch (Exception ignored) {
-                return null;
-            }
+            return structured.parse(output);
+        } catch (Exception invalid) {
+            log.warn("[SDD] {} 阶段结构化输出无效: {}", phase, invalid.toString());
+            throw new IllegalStateException("SDD " + phase + " 阶段结构化 JSON 无效", invalid);
         }
     }
 
@@ -375,36 +399,6 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
         FrameworkToolApprovalCoordinator.resolve(agents, handle, origin, payload);
     }
 
-    static List<String> parseSplit(String text) {
-        if (text == null) return List.of();
-        for (String line : text.split("\n")) {
-            String value = line.strip();
-            int position = value.indexOf(SPLIT_SENTINEL);
-            if (position < 0) continue;
-            String rest = value.substring(position + SPLIT_SENTINEL.length())
-                    .replaceFirst("^[：:\\s]+", "");
-            List<String> parts = new ArrayList<>();
-            for (String part : rest.split("[；;]")) if (!part.isBlank()) parts.add(part.strip());
-            if (!parts.isEmpty()) return parts;
-        }
-        return List.of();
-    }
-
-    private static boolean isMetaTask(SddDrafts.TaskItemDraft task) {
-        StringBuilder text = new StringBuilder(nz(task.action));
-        if (task.files != null) task.files.forEach(file -> text.append(' ').append(file));
-        if (task.criterion != null) text.append(' ').append(task.criterion);
-        return isMetaTaskText(text.toString());
-    }
-
-    private static boolean isMetaTaskText(String text) {
-        if (text.contains("proposal.md") || text.contains("design.md")
-                || text.contains("tasks.md") || text.contains("spec.md")) return true;
-        return text.contains("向用户展示") || text.contains("获取用户确认")
-                || text.contains("等待用户确认") || text.contains("征得用户")
-                || text.contains("用户书面") || text.contains("获取书面确认");
-    }
-
     private String withSkills(String base, String... names) {
         StringBuilder result = new StringBuilder(base);
         for (String name : names) {
@@ -431,14 +425,6 @@ public final class FrameworkSddAgents implements SddAgents, AutoCloseable {
         }
         return catalog.isEmpty() ? base : base + "\n\n【可用技能】" + catalog
                 + "\n需要完整步骤时使用 skill_read。";
-    }
-
-    private static String stripFence(String value) {
-        String text = value == null ? "" : value.trim();
-        if (!text.startsWith("```")) return text;
-        int start = text.indexOf('\n');
-        int end = text.lastIndexOf("```");
-        return start >= 0 && end > start ? text.substring(start + 1, end).trim() : text;
     }
 
     private static boolean blank(String value) {

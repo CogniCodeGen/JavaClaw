@@ -1,0 +1,42 @@
+{
+  "summary": "LM Studio 的 Models 窗口停留在 My Models 本地模型列表页，主区域以表格展示 Embedding Model 与 LLM 两组共 10 个本地模型，底部显示总数与磁盘占用，右侧为选中模型详情面板。",
+  "visibleText": "Models\nMy Models\nView All\nLLMs\nText Embedding\nDrafters\nMy Models\n筛选模型... (⌘F)\n架构\n参数量\n发布者\nEmbedding Model\n量化规格\n操作\nqwen3\n0.6B\nQwen\ntext-embedding-qwen3-em...\nQ8_0\nbert\n335M\nRalriki\ntext-embedding-multilingual...\nQ8_0\nqwen3\n8B\nQwen\ntext-embedding-qwen3-em...\nQ4_K_M\n架构\n参数量\n发布者\nLLM\n量化规格\n操作\nqwen2_vl\n7B\nmlx-community\nui-tars-7b-dpo\n8bit\nqwen3_5\n27B\norcarouter\nqwen3.8-27b-uncens...\n4bit\nqwen35\nMTP\n27B\nlmstudio-community\nqwen/qwen3.8-2...\nQ4_K_M\nqwen3\n0.6B\nmlx-community\nqwen3-embedding-0.6b-dwq\n4bit\nqwen35\n9B\nHauhauCS\nqwen3.5-9b-unc...\nQ4_K_M\nqwen3vl\n2B\nDevQuasar\nqwen.qwen3-vl-embe...\nQ5_K_S\nqwen3\n0.6B\nlmstudio-community\nqwen3-0.6b\nQ8_0\n您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。\n[models directory]\nUI-TARS-7B-DPO-8bit\nUse in New Chat\nLoad Model\nInfo\nLoad\nInference\nModel Information\nModel\nmlx-community/UI-TARS-7B-DPO-8...\nFormat\nMLX\nQuantization\n8bit\nArch\nqwen2_vl\nCapabilities\nVision\nDomain\nllm\nSize on disk\n9.46 GB",
+  "targets": [],
+  "activeView": {
+    "label": "My Models",
+    "heading": {
+      "label": "My Models",
+      "role": "heading",
+      "x": 665,
+      "y": 100,
+      "width": 150,
+      "height": 35,
+      "confidence": 0.95
+    },
+    "content": {
+      "label": "Embedding Model: text-embedding-qwen3-em... / text-embedding-multilingual... / text-embedding-qwen3-em...; LLM: ui-tars-7b-dpo, qwen3.8-27b-uncens..., qwen/qwen3.8-2..., qwen3-embedding-0.6b-dwq, qwen3.5-9b-unc..., qwen.qwen3-vl-embe..., qwen3-0.6b。您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。",
+      "role": "table",
+      "x": 665,
+      "y": 175,
+      "width": 1340,
+      "height": 1500,
+      "confidence": 0.93
+    }
+  },
+  "conditionEvidence": [
+    {
+      "criterionId": "observe_local_models",
+      "subject": "本地模型列表",
+      "region": "main-content",
+      "content": {
+        "label": "Embedding Model 组: text-embedding-qwen3-em... / text-embedding-multilingual... / text-embedding-qwen3-em...；LLM 组: ui-tars-7b-dpo, qwen3.8-27b-uncens..., qwen/qwen3.8-2..., qwen3-embedding-0.6b-dwq, qwen3.5-9b-unc..., qwen.qwen3-vl-embe..., qwen3-0.6b。您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。",
+        "role": "table",
+        "x": 665,
+        "y": 175,
+        "width": 1340,
+        "height": 1500,
+        "confidence": 0.93
+      }
+    }
+  ]
+}

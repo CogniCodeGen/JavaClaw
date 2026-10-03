@@ -7,9 +7,10 @@ import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.site.SiteCredential;
 
 import java.net.URI;
-import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 站点登录流程中的纯逻辑辅助。
@@ -22,86 +23,50 @@ final class SiteLoginSupport {
     private SiteLoginSupport() {
     }
 
-    record LoginSignals(
-            String url,
-            int httpStatus,
-            boolean visiblePasswordField,
-            boolean visibleIdentityField,
-            boolean visibleLoginControl,
-            boolean visibleSignedInControl
-    ) {
+    record LoginSignals(int httpStatus, boolean credentialForm, boolean challengeForm) { }
+
+    enum LoginEvidence { HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, CREDENTIAL_FORM, CHALLENGE_FORM }
+
+    record LoginAssessment(boolean loginRequired, Set<LoginEvidence> evidence) {
+        LoginAssessment { evidence = Set.copyOf(evidence); }
+
+        String reason() {
+            return evidence.stream().map(value -> switch (value) {
+                case HTTP_UNAUTHORIZED -> "HTTP 401";
+                case HTTP_FORBIDDEN -> "HTTP 403";
+                case CREDENTIAL_FORM -> "凭据表单";
+                case CHALLENGE_FORM -> "验证表单";
+            }).collect(java.util.stream.Collectors.joining("、"));
+        }
     }
 
-    record LoginAssessment(boolean loginRequired, int score, String reason) {
+    enum VerificationStatus { AUTHENTICATED, LOGIN_REQUIRED, UNVERIFIED }
+
+    /** A post-login check needs an observed challenge on the target before the session changed. */
+    static VerificationStatus verifyLogin(LoginSignals signals, boolean sessionChanged,
+            String targetUrl, String finalUrl, boolean protectedTargetObserved) {
+        if (assess(signals).loginRequired()) return VerificationStatus.LOGIN_REQUIRED;
+        String targetHost = hostOf(targetUrl);
+        String finalHost = hostOf(finalUrl);
+        if (!protectedTargetObserved || !sessionChanged
+                || targetHost == null || !targetHost.equals(finalHost)
+                || signals == null || signals.httpStatus() < 200
+                || signals.httpStatus() >= 400) return VerificationStatus.UNVERIFIED;
+        return VerificationStatus.AUTHENTICATED;
     }
 
-    /**
-     * 对登录信号做保守评分。HTTP 401/403 直接判定；普通页面至少需要多个登录特征同时出现，
-     * 避免仅因“修改密码”或正文中的“登录”字样就打断用户。
-     */
+    /** Only transport status and semantic form structure can require authentication. */
     static LoginAssessment assess(LoginSignals signals) {
-        if (signals == null) {
-            return new LoginAssessment(false, 0, "");
-        }
-
-        List<String> reasons = new ArrayList<>();
-        int score = 0;
-        if (signals.httpStatus() == 401 || signals.httpStatus() == 403) {
-            score += 5;
-            reasons.add("HTTP " + signals.httpStatus());
-        }
-        if (looksLikeLoginUrl(signals.url())) {
-            score += 2;
-            reasons.add("登录地址");
-        }
-        if (signals.visiblePasswordField()) {
-            score += 2;
-            reasons.add("密码输入框");
-        }
-        if (signals.visibleIdentityField()) {
-            score += 1;
-            reasons.add("账号输入框");
-        }
-        if (signals.visibleLoginControl()) {
-            score += 1;
-            reasons.add("登录按钮");
-        }
-        if (signals.visibleSignedInControl()) {
-            score -= 3;
-            reasons.add("已登录标识");
-        }
-
-        boolean required = signals.httpStatus() == 401 || signals.httpStatus() == 403 || score >= 3;
-        return new LoginAssessment(required, score, String.join("、", reasons));
-    }
-
-    static boolean looksLikeLoginUrl(String url) {
-        if (url == null || url.isBlank()) return false;
-        try {
-            URI uri = URI.create(url.trim());
-            String candidate = ((uri.getPath() == null ? "" : uri.getPath()) + "?"
-                    + (uri.getQuery() == null ? "" : uri.getQuery())).toLowerCase(Locale.ROOT);
-            return containsPathToken(candidate, "login")
-                    || containsPathToken(candidate, "signin")
-                    || containsPathToken(candidate, "sign-in")
-                    || containsPathToken(candidate, "authorize")
-                    || containsPathToken(candidate, "authorization")
-                    || containsPathToken(candidate, "sso")
-                    || containsPathToken(candidate, "mfa")
-                    || containsPathToken(candidate, "2fa")
-                    || containsPathToken(candidate, "challenge");
-        } catch (IllegalArgumentException ignored) {
-            String lower = url.toLowerCase(Locale.ROOT);
-            return lower.contains("/login") || lower.contains("/signin") || lower.contains("/sign-in");
-        }
-    }
-
-    private static boolean containsPathToken(String value, String token) {
-        return java.util.regex.Pattern.compile(
-                        "(^|[/=?&_.-])" + java.util.regex.Pattern.quote(token)
-                                + "([/?&#_.=-]|$)")
-                .matcher(value)
-                .find();
+        if (signals == null) return new LoginAssessment(false, Set.of());
+        EnumSet<LoginEvidence> evidence = EnumSet.noneOf(LoginEvidence.class);
+        if (signals.httpStatus() == 401) evidence.add(LoginEvidence.HTTP_UNAUTHORIZED);
+        if (signals.httpStatus() == 403) evidence.add(LoginEvidence.HTTP_FORBIDDEN);
+        if (signals.credentialForm()) evidence.add(LoginEvidence.CREDENTIAL_FORM);
+        if (signals.challengeForm()) evidence.add(LoginEvidence.CHALLENGE_FORM);
+        boolean challenge = evidence.contains(LoginEvidence.HTTP_UNAUTHORIZED)
+                || evidence.contains(LoginEvidence.CREDENTIAL_FORM)
+                || evidence.contains(LoginEvidence.CHALLENGE_FORM);
+        return new LoginAssessment(challenge, evidence);
     }
 
     static SiteCredential newSessionSite(String targetUrl, String loginUrl) {
@@ -124,7 +89,7 @@ final class SiteLoginSupport {
     }
 
     /**
-     * 只保留目标站点及其父/子域的 Cookie 和 localStorage。
+     * 只保留目标站点能接收的 Cookie 和完全相同 origin 的 localStorage。
      *
      * <p>{@code BrowserContext.storageState()} 包含 Context 访问过的全部站点。若原样保存到某个
      * 账号配置，恢复该账号时会顺带注入其他网站的身份令牌。这里在持久化边界做最小化裁剪；
@@ -135,10 +100,8 @@ final class SiteLoginSupport {
         if (storageStateJson == null || storageStateJson.isBlank()) {
             return "{\"cookies\":[],\"origins\":[]}";
         }
-        String targetHost = hostOf(targetUrl);
-        if (targetHost == null) {
-            throw new IllegalArgumentException("无法识别要保存会话的站点域名");
-        }
+        URI target = CookieUrlMatcher.requireHttpUrl(targetUrl);
+        String targetHost = target.getHost().toLowerCase(Locale.ROOT);
         try {
             JsonNode root = json.tree(storageStateJson);
             ObjectNode filtered = json.mapper().createObjectNode();
@@ -147,7 +110,8 @@ final class SiteLoginSupport {
             if (sourceCookies.isArray()) {
                 sourceCookies.forEach(cookie -> {
                     String domain = cookie.path("domain").asText("");
-                    if (hostRelated(targetHost, domain)) cookies.add(cookie.deepCopy());
+                    if (CookieUrlMatcher.domainMatches(domain, targetHost))
+                        cookies.add(cookie.deepCopy());
                 });
             }
 
@@ -155,8 +119,8 @@ final class SiteLoginSupport {
             JsonNode sourceOrigins = root.path("origins");
             if (sourceOrigins.isArray()) {
                 sourceOrigins.forEach(origin -> {
-                    String originHost = hostOf(origin.path("origin").asText(""));
-                    if (hostRelated(targetHost, originHost)) origins.add(origin.deepCopy());
+                    if (sameOrigin(target, origin.path("origin").asText("")))
+                        origins.add(origin.deepCopy());
                 });
             }
             return json.encode(filtered);
@@ -165,14 +129,20 @@ final class SiteLoginSupport {
         }
     }
 
-    private static boolean hostRelated(String targetHost, String candidateDomain) {
-        if (targetHost == null || candidateDomain == null || candidateDomain.isBlank()) return false;
-        String candidate = candidateDomain.trim().toLowerCase(Locale.ROOT);
-        while (candidate.startsWith(".")) candidate = candidate.substring(1);
-        String target = targetHost.toLowerCase(Locale.ROOT);
-        return target.equals(candidate)
-                || target.endsWith("." + candidate)
-                || candidate.endsWith("." + target);
+    private static boolean sameOrigin(URI target, String candidate) {
+        try {
+            URI origin = CookieUrlMatcher.requireHttpUrl(candidate);
+            return target.getScheme().equalsIgnoreCase(origin.getScheme())
+                    && target.getHost().equalsIgnoreCase(origin.getHost())
+                    && effectivePort(target) == effectivePort(origin);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    private static int effectivePort(URI value) {
+        return value.getPort() >= 0 ? value.getPort()
+                : "https".equalsIgnoreCase(value.getScheme()) ? 443 : 80;
     }
 
     static String hostOf(String url) {

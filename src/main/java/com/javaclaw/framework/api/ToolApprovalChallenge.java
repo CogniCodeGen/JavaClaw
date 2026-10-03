@@ -12,7 +12,13 @@ public record ToolApprovalChallenge(
         JsonNode arguments,
         String fingerprint,
         String kind,
-        String description) {
+        String description,
+        boolean trustedContextRead) {
+
+    public ToolApprovalChallenge(String tool, JsonNode arguments, String fingerprint,
+            String kind, String description) {
+        this(tool, arguments, fingerprint, kind, description, false);
+    }
 
     public ToolApprovalChallenge {
         tool = requireText(tool, "tool");
@@ -35,45 +41,34 @@ public record ToolApprovalChallenge(
         value.put("fingerprint", fingerprint);
         value.put("kind", kind);
         value.put("description", description);
+        value.put("trustedContextRead", trustedContextRead);
         return value;
     }
 
-    /**
-     * Decodes the canonical event shape and the two shapes emitted by early 3.0 builds.
-     * This keeps already-persisted waiting runs resumable after upgrading.
-     */
+    /** Decodes only the canonical, fully structured waiting-approval event. */
     public static ToolApprovalChallenge fromEventPayload(JsonNode payload) {
         Objects.requireNonNull(payload, "payload");
-        JsonNode candidate = object(payload.path("approval"));
-        if (candidate == null) {
-            JsonNode output = object(payload.path("output"));
-            if (output != null) {
-                candidate = object(output.path("approval"));
-                if (candidate == null && hasChallenge(output)) candidate = output;
-            }
+        JsonNode candidate = payload.path("approval");
+        if (!candidate.isObject()
+                || !nonblankText(candidate.path("tool"))
+                || !candidate.path("arguments").isObject()
+                || !nonblankText(candidate.path("fingerprint"))
+                || !nonblankText(candidate.path("kind"))
+                || !nonblankText(candidate.path("description"))
+                || !candidate.path("trustedContextRead").isBoolean()) {
+            throw new IllegalArgumentException("waiting approval event has no valid approval challenge");
         }
-        if (candidate == null && hasChallenge(payload)) candidate = payload;
-        if (candidate == null) {
-            throw new IllegalArgumentException("waiting approval event has no approval challenge");
-        }
-        String description = candidate.path("description").asText("");
-        if (description.isBlank()) description = payload.path("reason").asText("");
         return new ToolApprovalChallenge(
-                candidate.path("tool").asText(""),
-                candidate.path("arguments"),
-                candidate.path("fingerprint").asText(""),
-                candidate.path("kind").asText("CONFIRM"),
-                description);
+                candidate.path("tool").textValue(),
+                candidate.get("arguments"),
+                candidate.path("fingerprint").textValue(),
+                candidate.path("kind").textValue(),
+                candidate.path("description").textValue(),
+                candidate.path("trustedContextRead").booleanValue());
     }
 
-    private static boolean hasChallenge(JsonNode value) {
-        return value != null && value.isObject()
-                && value.path("tool").isTextual()
-                && value.path("fingerprint").isTextual();
-    }
-
-    private static JsonNode object(JsonNode value) {
-        return value != null && value.isObject() ? value : null;
+    private static boolean nonblankText(JsonNode value) {
+        return value.isTextual() && !value.textValue().isBlank();
     }
 
     private static String requireText(String value, String name) {

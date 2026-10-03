@@ -3,14 +3,26 @@ package com.javaclaw.ui.javafx.settings;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.EmailSettings;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.Encryption;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+
+import java.util.Objects;
 
 /** 邮件设置页的纯 JavaFX 状态，不持有应用服务或持久化对象。 */
 public final class EmailSettingsViewModel {
 
-    private final StringProperty preset = new SimpleStringProperty("自定义");
+    public enum Preset {
+        QQ,
+        NETEASE_163,
+        GMAIL,
+        OUTLOOK,
+        CUSTOM
+    }
+
+    private final ObjectProperty<Preset> preset = new SimpleObjectProperty<>(Preset.CUSTOM);
     private final StringProperty smtpHost = new SimpleStringProperty("");
     private final StringProperty smtpPort = new SimpleStringProperty("");
     private final StringProperty imapHost = new SimpleStringProperty("");
@@ -18,7 +30,8 @@ public final class EmailSettingsViewModel {
     private final StringProperty username = new SimpleStringProperty("");
     private final StringProperty password = new SimpleStringProperty("");
     private final StringProperty fromAddress = new SimpleStringProperty("");
-    private final StringProperty encryption = new SimpleStringProperty("SSL");
+    private final ObjectProperty<Encryption> encryption =
+            new SimpleObjectProperty<>(Encryption.SSL);
     private final StringProperty storageDescription = new SimpleStringProperty("");
     private final StringProperty error = new SimpleStringProperty("");
     private final BooleanProperty busy = new SimpleBooleanProperty(false);
@@ -31,32 +44,31 @@ public final class EmailSettingsViewModel {
         username.set(value.username());
         password.set(value.password());
         fromAddress.set(value.fromAddress());
-        encryption.set(label(value.encryption()));
+        encryption.set(value.encryption());
         preset.set(detectPreset(value.smtpHost()));
         storageDescription.set("配置文件: " + (storage == null ? "" : storage));
         error.set("");
     }
 
-    public void applyPreset(String value) {
-        switch (value == null ? "" : value) {
-            case "QQ 邮箱" -> endpoints("smtp.qq.com", "465", "imap.qq.com", "993", "SSL");
-            case "163 邮箱" -> endpoints("smtp.163.com", "465", "imap.163.com", "993", "SSL");
-            case "Gmail" -> endpoints("smtp.gmail.com", "587", "imap.gmail.com", "993", "STARTTLS");
-            case "Outlook" -> endpoints("smtp.office365.com", "587",
-                    "outlook.office365.com", "993", "STARTTLS");
-            default -> { }
+    public void applyPreset(Preset value) {
+        if (value == null) return;
+        switch (value) {
+            case QQ -> endpoints("smtp.qq.com", "465", "imap.qq.com", "993", Encryption.SSL);
+            case NETEASE_163 -> endpoints("smtp.163.com", "465", "imap.163.com", "993",
+                    Encryption.SSL);
+            case GMAIL -> endpoints("smtp.gmail.com", "587", "imap.gmail.com", "993",
+                    Encryption.STARTTLS);
+            case OUTLOOK -> endpoints("smtp.office365.com", "587",
+                    "outlook.office365.com", "993", Encryption.STARTTLS);
+            case CUSTOM -> { }
         }
     }
 
     public Encryption encryptionValue() {
-        return switch (encryption.get()) {
-            case "STARTTLS" -> Encryption.STARTTLS;
-            case "无" -> Encryption.NONE;
-            default -> Encryption.SSL;
-        };
+        return Objects.requireNonNull(encryption.get(), "encryption");
     }
 
-    public StringProperty presetProperty() { return preset; }
+    public ObjectProperty<Preset> presetProperty() { return preset; }
     public StringProperty smtpHostProperty() { return smtpHost; }
     public StringProperty smtpPortProperty() { return smtpPort; }
     public StringProperty imapHostProperty() { return imapHost; }
@@ -64,14 +76,14 @@ public final class EmailSettingsViewModel {
     public StringProperty usernameProperty() { return username; }
     public StringProperty passwordProperty() { return password; }
     public StringProperty fromAddressProperty() { return fromAddress; }
-    public StringProperty encryptionProperty() { return encryption; }
+    public ObjectProperty<Encryption> encryptionProperty() { return encryption; }
     public StringProperty storageDescriptionProperty() { return storageDescription; }
     public StringProperty errorProperty() { return error; }
     public BooleanProperty busyProperty() { return busy; }
 
     private void endpoints(
             String smtp, String smtpPortValue, String imap, String imapPortValue,
-            String encryptionValue) {
+            Encryption encryptionValue) {
         smtpHost.set(smtp);
         smtpPort.set(smtpPortValue);
         imapHost.set(imap);
@@ -79,19 +91,15 @@ public final class EmailSettingsViewModel {
         encryption.set(encryptionValue);
     }
 
-    private static String detectPreset(String smtp) {
-        if (smtp.contains("qq.com")) return "QQ 邮箱";
-        if (smtp.contains("163.com")) return "163 邮箱";
-        if (smtp.contains("gmail.com")) return "Gmail";
-        if (smtp.contains("office365.com")) return "Outlook";
-        return "自定义";
-    }
-
-    private static String label(Encryption value) {
-        return switch (value) {
-            case SSL -> "SSL";
-            case STARTTLS -> "STARTTLS";
-            case NONE -> "无";
+    private static Preset detectPreset(String smtp) {
+        String host = smtp == null ? "" : smtp.strip().toLowerCase(java.util.Locale.ROOT);
+        if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        return switch (host) {
+            case "smtp.qq.com" -> Preset.QQ;
+            case "smtp.163.com" -> Preset.NETEASE_163;
+            case "smtp.gmail.com" -> Preset.GMAIL;
+            case "smtp.office365.com" -> Preset.OUTLOOK;
+            default -> Preset.CUSTOM;
         };
     }
 }

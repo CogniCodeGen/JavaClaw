@@ -65,6 +65,19 @@ class ServicePluginRunnerTest {
     }
 
     @Test
+    void typedInvocationLogUsesDedicatedFrameIndependentOfMessageText() throws Exception {
+        List<ServicePluginWire.Frame> frames = run("typed-log", new byte[0]);
+
+        List<ServicePluginWire.Frame> logs = frames.stream()
+                .filter(frame -> frame.type() == ServicePluginWire.Type.LOG).toList();
+        assertEquals(1, logs.size());
+        assertEquals("INFERENCE_INVOCATION",
+                logs.getFirst().payload().path("kind").asText());
+        assertEquals("structured invocation",
+                logs.getFirst().payload().path("message").asText());
+    }
+
+    @Test
     void chunksLargeResponsesBelowFrameLimitAndPreservesBytes() throws Exception {
         List<ServicePluginWire.Frame> frames = run("large", new byte[0]);
         List<ServicePluginWire.Frame> responses = frames.stream()

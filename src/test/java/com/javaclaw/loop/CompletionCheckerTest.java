@@ -1,6 +1,9 @@
 package com.javaclaw.loop;
 
 import com.javaclaw.agent.goal.SuccessCriterion;
+import com.javaclaw.framework.api.ModelDecisionV1;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.loop.model.CarryForwardMode;
 import com.javaclaw.loop.model.IterationResult;
 import com.javaclaw.loop.model.LoopReport;
@@ -52,7 +55,7 @@ class CompletionCheckerTest {
 
         // 第 4 轮：声明式等待轮（等外部条件，如 CI）——等的就是外部变化，重测
         IterationResult waiting = IterationResult.ok("等 CI", 0L, 0L, List.of(),
-                new LoopReport(false, "等待", "等 CI 变绿", 60L, "CI 构建中"));
+                new LoopReport("等待", "等 CI 变绿", 60L, "CI 构建中"));
         ctx.record(waiting);
         checker.check(waiting, ctx, true);
         assertEquals(3, runs.get(), "等待轮应重测（外部状态可能已变化）");
@@ -85,9 +88,8 @@ class CompletionCheckerTest {
 
     @Test
     void 世界状态核验在执行体提议完成时失效重测_外部达成的目标可判完() {
-        // 回归缺陷：目标是「等外部进程产出某产物」——执行体无事可做，每轮零工具调用、
-        // 非等待轮、只报 done=true；命令/文件类核验缓存若不认「提议完成」为失效信号，
-        // 首轮缓存的否定结论将永远复用，外部条件达成后 done 仍不可达，循环以 NO_PROGRESS 误终
+        // 外部进程产出产物时，当前子 Run 的 Harness 已验证结果触发最终本地核验；
+        // 不能让旧缓存的否定结论阻止完成。
         AtomicInteger runs = new AtomicInteger(0);
         boolean[] worldReady = {false};
         CommandRunner external = (cmd, dir) -> {
@@ -103,7 +105,8 @@ class CompletionCheckerTest {
 
         // 第 1 轮：提议完成但产物尚未出现——首测不通过
         IterationResult claim1 = IterationResult.ok("产物应该快好了", 0L, 0L, List.of(),
-                new LoopReport(true, "等产物", "", 0L, ""));
+                new LoopReport("等产物", "", 0L, ""), TaskResult.unverified("尚无证据"),
+                ModelDecisionV1.Decision.CLAIM_DONE);
         ctx.record(claim1);
         assertEquals(false, checker.check(claim1, ctx, false).done());
         assertEquals(1, runs.get(), "首轮必测");
@@ -113,7 +116,9 @@ class CompletionCheckerTest {
 
         // 第 2 轮：仍是零行动、非等待轮的 done 提议——终审语义应失效缓存重测并判完成
         IterationResult claim2 = IterationResult.ok("再次确认完成", 0L, 0L, List.of(),
-                new LoopReport(true, "确认完成", "", 0L, ""));
+                new LoopReport("确认完成", "", 0L, ""),
+                new TaskResult(TaskOutcome.VERIFIED_COMPLETE, List.of(), "", List.of("receipt:1")),
+                ModelDecisionV1.Decision.CLAIM_DONE);
         ctx.record(claim2);
         assertEquals(true, checker.check(claim2, ctx, false).done(),
                 "提议完成应触发世界状态重测，外部达成的准则不得被陈旧缓存压住");
@@ -121,9 +126,8 @@ class CompletionCheckerTest {
     }
 
     @Test
-    void 无准则目标_验收员只在执行体提议完成时触发() {
-        // 回归缺陷：`!useJudge || judge.goalMet(...)` 短路失效——执行体自报未完成时也每轮
-        // 跑一次完整验收（结论注定被丢弃），全循环时延与 token 成本翻倍
+    void 无准则目标_仅Harness交付结果可完成_旧验收员不再裁决() {
+        // 无外部准则时，纯回答由 Harness DELIVERED 表示；旧验收员不能凭正文推断完成。
         AtomicInteger judgeCalls = new AtomicInteger(0);
         CompletionJudge counting = new CompletionJudge() {
             @Override
@@ -147,16 +151,18 @@ class CompletionCheckerTest {
 
         // 未提议完成的轮：不得触发验收
         IterationResult notDone = IterationResult.ok("继续打磨", 0L, 0L, List.of(),
-                new LoopReport(false, "打磨中", "还差结尾", 0L, ""));
+                new LoopReport("打磨中", "还差结尾", 0L, ""),
+                TaskResult.unverified("尚未交付"), ModelDecisionV1.Decision.CONTINUE);
         ctx.record(notDone);
         assertEquals(false, checker.check(notDone, ctx, false).done());
         assertEquals(0, judgeCalls.get(), "执行体未提议完成时不应触发验收员（终审语义）");
 
-        // 提议完成的轮：触发终审，验收通过 → 完成
+        // 当前子任务已交付正文：Harness 结果足以完成，不再调用旧验收员
         IterationResult done = IterationResult.ok("完工", 0L, 0L, List.of(),
-                new LoopReport(true, "完工", "", 0L, ""));
+                new LoopReport("完工", "", 0L, ""), TaskResult.delivered(),
+                ModelDecisionV1.Decision.CLAIM_DONE);
         ctx.record(done);
         assertEquals(true, checker.check(done, ctx, false).done());
-        assertEquals(1, judgeCalls.get(), "提议完成才触发验收员");
+        assertEquals(0, judgeCalls.get(), "旧验收员不能再次解释完成状态");
     }
 }

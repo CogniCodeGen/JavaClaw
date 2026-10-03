@@ -101,7 +101,20 @@ public final class VerifyCache {
     /** 场景唯一键（标题 + 谓词，规避同名场景串味）。 */
     public static String key(Scenario s) {
         String pred = s.criterion() == null ? "" : (s.criterion().predicate() == null ? "" : s.criterion().predicate());
-        return s.title() + "|" + pred;
+        String type = s.criterion() == null ? "" : s.criterion().normalizedType();
+        StringBuilder key = new StringBuilder();
+        appendKeyField(key, s.title());
+        appendKeyField(key, s.given());
+        appendKeyField(key, s.when());
+        appendKeyField(key, s.then());
+        appendKeyField(key, type);
+        appendKeyField(key, pred);
+        return key.toString();
+    }
+
+    private static void appendKeyField(StringBuilder key, String value) {
+        String safe = value == null ? "" : value;
+        key.append(safe.length()).append(':').append(safe);
     }
 
     /** 计算当前工作目录源码树指纹（相对路径 + 大小 + mtime 的 SHA-256）。失败返回随机串保证不误命中。 */

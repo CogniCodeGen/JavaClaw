@@ -1,6 +1,9 @@
 package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.DiscoveryRequest;
+import com.javaclaw.application.settings.ModelDiscoveryApplicationService.Usage;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.EmbeddingSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ProbeResult;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult;
@@ -18,6 +21,8 @@ import com.javaclaw.runtime.WorkspaceContext;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 
@@ -42,25 +47,35 @@ public final class EmbeddingSettingsController
     @FXML private TextField baseUrlField;
     @FXML private Node apiKeyField;
     @FXML private SecretFieldController apiKeyFieldController;
-    @FXML private TextField modelNameField;
+    @FXML private ComboBox<String> modelNameField;
+    @FXML private Button modelDiscoveryRefreshButton;
+    @FXML private Label modelDiscoveryStatusLabel;
     @FXML private TextField dimensionsField;
     @FXML private TextField retrieveLimitField;
     @FXML private TextField scoreThresholdField;
 
     private final ModelSettingsApplicationService useCases;
+    private final ModelDiscoveryApplicationService modelDiscovery;
     private final ModelProviderCatalog providers;
     private final InferenceManagementApplicationService inference;
     private final PluginCenterViewFactory plugins;
+    private final ManagedTaskExecutor tasks;
+    private final FxDispatcher fx;
     private final UiAsyncAction<SaveResult> mutation;
     private final UiAsyncAction<ProbeResult> probe;
     private final UiAsyncAction<ViewData> refresh;
     private final UiAsyncAction<ProfileProjection> profileRefresh;
+    private final ModelDiscoveryCredentialScope discoveryCredential =
+            new ModelDiscoveryCredentialScope();
+    private ModelDiscoveryCombo modelChoices;
+    private String selectedProviderId;
     private Consumer<SaveResult> onApplied = ignored -> { };
     private Runnable onRuntimeConfigurationChanged = () -> { };
     private Map<UUID, Integer> managedDimensions = Map.of();
 
     public EmbeddingSettingsController(
             ModelSettingsApplicationService useCases,
+            ModelDiscoveryApplicationService modelDiscovery,
             ModelProviderCatalog providers,
             InferenceManagementApplicationService inference,
             PluginCenterViewFactory plugins,
@@ -68,9 +83,12 @@ public final class EmbeddingSettingsController
             ManagedTaskExecutor tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.modelDiscovery = Objects.requireNonNull(modelDiscovery, "modelDiscovery");
         this.providers = Objects.requireNonNull(providers, "providers");
         this.inference = Objects.requireNonNull(inference, "inference");
         this.plugins = Objects.requireNonNull(plugins, "plugins");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
+        this.fx = Objects.requireNonNull(fx, "fx");
         Objects.requireNonNull(workspace, "workspace");
         mutation = new UiAsyncAction<>(tasks, fx);
         probe = new UiAsyncAction<>(tasks, fx);
@@ -80,6 +98,23 @@ public final class EmbeddingSettingsController
 
     @FXML
     private void initialize() {
+        modelChoices = new ModelDiscoveryCombo(modelNameField, modelDiscoveryRefreshButton,
+                modelDiscoveryStatusLabel, modelDiscovery, this::discoveryRequest, tasks, fx);
+        baseUrlField.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)
+                    && discoveryCredential.requiresNewKey(selectedProviderId, newValue)) {
+                apiKeyFieldController.setText("");
+            }
+            modelChoices.scheduleRefresh();
+        });
+        apiKeyFieldController.textProperty().addListener((ignored, oldValue, newValue) -> {
+            if (!SettingsFieldSupport.isLoading(root)) {
+                ModelDiscoveryCombo.provider(providers, providerCombo.getValue())
+                        .ifPresent(provider -> discoveryCredential.capture(
+                                provider.id(), SettingsFieldSupport.text(baseUrlField)));
+            }
+            modelChoices.scheduleRefresh();
+        });
         providerCombo.getItems().setAll(providers.providers().stream()
                 .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.EMBEDDING))
                 .map(ModelProviderCatalog.Provider::displayName).toList());
@@ -122,7 +157,7 @@ public final class EmbeddingSettingsController
                     .orElse(value.provider()));
             baseUrlField.setText(value.baseUrl());
             apiKeyFieldController.setText(value.apiKey());
-            modelNameField.setText(value.modelName());
+            modelChoices.setText(value.modelName());
             dimensionsField.setText(Integer.toString(value.dimensions()));
             retrieveLimitField.setText(Integer.toString(value.retrieveLimit()));
             scoreThresholdField.setText(Double.toString(value.scoreThreshold()));
@@ -130,6 +165,8 @@ public final class EmbeddingSettingsController
             selectManaged(value.managedProfileId());
             updateProvider(false);
             enableFields(value.enabled());
+            selectedProviderId = selectedProvider().id();
+            discoveryCredential.capture(selectedProviderId, SettingsFieldSupport.text(baseUrlField));
         });
     }
 
@@ -152,8 +189,13 @@ public final class EmbeddingSettingsController
     @FXML
     private void providerChanged() {
         if (SettingsFieldSupport.isLoading(root)) return;
-        updateProvider(true);
+        String providerId = selectedProvider().id();
+        boolean changed = !providerId.equals(selectedProviderId);
+        selectedProviderId = providerId;
+        if (changed) apiKeyFieldController.setText("");
+        updateProvider(changed);
         if (selectedProvider().localManaged()) loadManagedProfiles();
+        else modelChoices.scheduleRefresh();
     }
 
     @FXML private void manageLocalModelsRequested() {
@@ -163,16 +205,20 @@ public final class EmbeddingSettingsController
 
     private void preset(String baseUrl, String model, String dimensions, String prompt) {
         baseUrlField.setText(baseUrl);
-        modelNameField.setText(model);
+        modelChoices.setText(model);
         dimensionsField.setText(dimensions);
         apiKeyFieldController.setPromptText(prompt);
     }
 
     private void enableFields(boolean enabled) {
         for (Node node : List.of(providerCombo, baseUrlField, apiKeyField, modelNameField,
+                modelDiscoveryRefreshButton,
                 managedProfileCombo, dimensionsField, retrieveLimitField, scoreThresholdField)) {
             node.setDisable(!enabled);
         }
+        boolean managed = ModelDiscoveryCombo.provider(providers, providerCombo.getValue())
+                .map(ModelProviderCatalog.Provider::localManaged).orElse(false);
+        modelChoices.setActive(enabled && !managed);
     }
 
     private EmbeddingSettings form() {
@@ -180,8 +226,9 @@ public final class EmbeddingSettingsController
         String managedId = managedProfileCombo.getValue() == null ? ""
                 : managedProfileCombo.getValue().value().toString();
         return new EmbeddingSettings(enabledCheck.isSelected(), provider.id(),
-                SettingsFieldSupport.text(baseUrlField), apiKeyFieldController.text(),
-                SettingsFieldSupport.text(modelNameField),
+                SettingsFieldSupport.text(baseUrlField), discoveryCredential.keyFor(provider.id(),
+                        SettingsFieldSupport.text(baseUrlField), apiKeyFieldController.text()),
+                modelChoices.text(),
                 SettingsFieldSupport.integer(dimensionsField, 1, Integer.MAX_VALUE, "向量维度"),
                 SettingsFieldSupport.integer(retrieveLimitField, 1, Integer.MAX_VALUE, "检索数量"),
                 SettingsFieldSupport.decimal(scoreThresholdField, 0, 1, "分数阈值"), managedId);
@@ -199,6 +246,7 @@ public final class EmbeddingSettingsController
             preset(provider.defaultBaseUrl(), provider.defaultEmbeddingModel(),
                     Integer.toString(provider.defaultEmbeddingDimensions()), provider.displayName() + " API 密钥");
         }
+        modelChoices.setActive(enabledCheck.isSelected() && !managed);
     }
 
     private void loadManagedProfiles() {
@@ -225,8 +273,18 @@ public final class EmbeddingSettingsController
     }
 
     private ModelProviderCatalog.Provider selectedProvider() {
-        return providers.find(providerCombo.getValue()).orElseThrow(
+        return ModelDiscoveryCombo.provider(providers, providerCombo.getValue()).orElseThrow(
                 () -> new IllegalArgumentException("请选择嵌入模型提供商"));
+    }
+
+    private DiscoveryRequest discoveryRequest() {
+        return ModelDiscoveryCombo.provider(providers, providerCombo.getValue())
+                .map(provider -> new DiscoveryRequest(provider.id(),
+                        SettingsFieldSupport.text(baseUrlField), discoveryCredential.keyFor(
+                                provider.id(), SettingsFieldSupport.text(baseUrlField),
+                                apiKeyFieldController.text()),
+                        Usage.EMBEDDING))
+                .orElse(null);
     }
 
     private void selectManaged(String id) {
@@ -243,6 +301,7 @@ public final class EmbeddingSettingsController
     void deactivate() {
         refresh.cancel();
         profileRefresh.cancel();
+        modelChoices.cancel();
     }
 
     @Override
@@ -253,6 +312,7 @@ public final class EmbeddingSettingsController
         probe.close();
         refresh.close();
         profileRefresh.close();
+        modelChoices.close();
     }
 
     private record ViewData(EmbeddingSettings settings, ProfileProjection profiles) { }

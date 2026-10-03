@@ -47,11 +47,12 @@ public final class ThreadMemoryProjectionAdapter implements ThreadProjectionList
         String originTurn = request.attributes().containsKey("memory.originTurnId")
                 ? request.attributes().get("memory.originTurnId").asText() : event.turnId().value();
         // Historical copied turns retain their original evidence identities and are not new habit evidence.
-        boolean habits = event.type().equals("turn/completed") && event.scope().sessionId().equals(originThread)
+        var status = com.javaclaw.memory.MemoryTurnStatus.fromEventType(event.type());
+        boolean habits = status == com.javaclaw.memory.MemoryTurnStatus.COMPLETED
+                && event.scope().sessionId().equals(originThread)
                 && java.util.Set.of("chat", "plan").contains(request.source().kind());
-        if (habits) memory.rememberExplicitPreference(MemoryGraphScope.thread(event.scope()), event.turnId().value(), userInput);
-        String status = event.type().substring("turn/".length());
-        if (!status.equals("completed")) reply = "[本轮状态：" + status + "，输出未经确认] " + reply;
+        if (status != com.javaclaw.memory.MemoryTurnStatus.COMPLETED)
+            reply = "[本轮状态：" + status.storageValue() + "，输出未经确认] " + reply;
         memory.rememberTerminal(MemoryGraphScope.thread(event.scope()), event.turnId().runId(),
                 event.turnId().value(), event.sequence(), userInput, reply, trace, habits,
                 originThread, originTurn, status);

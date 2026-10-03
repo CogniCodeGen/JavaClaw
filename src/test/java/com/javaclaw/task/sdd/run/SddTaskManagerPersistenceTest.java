@@ -36,7 +36,8 @@ class SddTaskManagerPersistenceTest {
                 "system", 0, null, "now");
         String slug = SpecPaths.makeSlug(task.id, task.title);
 
-        SpecStore store = new SpecStore(workDir.toString(), database.jdbc(), workspaceId);
+        SpecStore store = new SpecStore(workDir.toString(), database.jdbc(), workspaceId,
+                database.json().mapper());
         store.writeProposal(slug, task.title, new Proposal("why", "what", ""));
         VerifyCache cache = VerifyCache.load(
                 workDir.toString(), slug, database.jdbc(), database.json(), workspaceId);
@@ -44,7 +45,7 @@ class SddTaskManagerPersistenceTest {
         cache.recordPass("scenario", "passed");
         cache.save();
 
-        assertEquals(1, countRows(database.access(), "sdd_spec_docs", workspaceId, workDir, slug));
+        assertEquals(2, countRows(database.access(), "sdd_spec_docs", workspaceId, workDir, slug));
         assertEquals(1, countRows(database.access(), "sdd_verify_cache", workspaceId, workDir, slug));
 
         new SddTaskStore(workspaceId, database.jdbc(), database.transactions(), database.json())

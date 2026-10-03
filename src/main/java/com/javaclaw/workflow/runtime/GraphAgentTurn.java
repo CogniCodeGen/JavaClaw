@@ -38,7 +38,10 @@ final class GraphAgentTurn {
                 .input(InputBlock.text(run.state().get("input").asText("")))
                 .permissionCeiling(PermissionSet.UNRESTRICTED)
                 .idempotencyKey("graph:" + run.id())
-                .attributes(Map.of("framework.managedTaskId", json.textNode(run.id())))
+                .attributes(Map.of(
+                        "framework.managedTaskId", json.textNode(run.id()),
+                        "framework.taskContract", new com.fasterxml.jackson.databind.ObjectMapper()
+                                .valueToTree(WorkflowTaskContracts.from(run, agents))))
                 .build();
         ManagedTurn turn = agents.beginTurn(request);
         try {
@@ -107,4 +110,5 @@ final class GraphAgentTurn {
         turn.emit(error == null ? "core.step.completed" : "core.step.failed", payload);
         activeStep = null;
     }
+
 }

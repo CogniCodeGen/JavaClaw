@@ -4,6 +4,7 @@ import com.javaclaw.application.inference.InferenceCatalogPort;
 import com.javaclaw.application.inference.InferenceManagementApplicationService;
 import com.javaclaw.application.inference.InferenceRuntimePort;
 import com.javaclaw.application.inference.InferenceSystemProfilePort;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.inference.api.InferenceModelProfile;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +18,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InferenceModelPresentationTest {
+
+    @Test
+    void logFiltersUseStableKindsWhileLabelsRemainDisplayOnly() {
+        List<ServicePluginLogEntry> logs = List.of(
+                new ServicePluginLogEntry(ServicePluginLogEntry.Kind.RUNTIME,
+                        "runtime ready [INFERENCE_CALL] quoted text"),
+                new ServicePluginLogEntry(ServicePluginLogEntry.Kind.INFERENCE_INVOCATION,
+                        "[INFERENCE_CALL] request accepted"));
+        assertEquals("runtime ready [INFERENCE_CALL] quoted text\n[INFERENCE_CALL] request accepted",
+                InferenceModelPresentation.filterLogs(logs, InferenceModelPresentation.LogFilter.ALL));
+        assertEquals("[INFERENCE_CALL] request accepted",
+                InferenceModelPresentation.filterLogs(logs,
+                        InferenceModelPresentation.LogFilter.INVOCATION));
+        assertEquals("runtime ready [INFERENCE_CALL] quoted text",
+                InferenceModelPresentation.filterLogs(logs,
+                InferenceModelPresentation.LogFilter.RUNTIME));
+    }
 
     @Test
     void capacityDistinguishesAvailableMemoryFromTheNativeModelBudget() {

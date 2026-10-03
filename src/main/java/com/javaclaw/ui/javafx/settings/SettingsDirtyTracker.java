@@ -18,6 +18,7 @@ import java.util.Objects;
 
 /** 可释放的设置表单变更观察器。 */
 final class SettingsDirtyTracker implements AutoCloseable {
+    static final String DIRTY_SILENT = "jc-dirty-silent";
 
     private final List<Runnable> removers = new ArrayList<>();
 
@@ -35,7 +36,11 @@ final class SettingsDirtyTracker implements AutoCloseable {
             case ToggleButton control when control.getStyleClass().contains("seg-btn") ->
                     listen(control.selectedProperty(), root, changed);
             case ToggleSwitch control -> listen(control.selectedProperty(), root, changed);
-            case ComboBox<?> control -> listen(control.valueProperty(), root, changed);
+            case ComboBox<?> control -> {
+                listen(control.valueProperty(), root, control, changed);
+                if (control.isEditable())
+                    listen(control.getEditor().textProperty(), root, control, changed);
+            }
             case ScrollPane scrollPane -> visit(scrollPane.getContent(), root, changed);
             case Parent parent -> parent.getChildrenUnmodifiable()
                     .forEach(child -> visit(child, root, changed));
@@ -44,8 +49,15 @@ final class SettingsDirtyTracker implements AutoCloseable {
     }
 
     private <T> void listen(ObservableValue<T> property, Node root, Runnable changed) {
+        listen(property, root, null, changed);
+    }
+
+    private <T> void listen(ObservableValue<T> property, Node root, Node source,
+                            Runnable changed) {
         ChangeListener<T> listener = (ignored, previous, value) -> {
-            if (!SettingsFieldSupport.isLoading(root)) changed.run();
+            if (!SettingsFieldSupport.isLoading(root)
+                    && (source == null || !Boolean.TRUE.equals(source.getProperties().get(DIRTY_SILENT))))
+                changed.run();
         };
         property.addListener(listener);
         removers.add(() -> property.removeListener(listener));

@@ -3,6 +3,7 @@ package com.javaclaw.fixture;
 import com.javaclaw.service.api.ServiceDescriptor;
 import com.javaclaw.service.api.ServicePlugin;
 import com.javaclaw.service.api.ServicePluginContext;
+import com.javaclaw.service.api.PluginLogger;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -19,7 +20,7 @@ public final class FixtureServicePlugin implements ServicePlugin {
         startCanLoadPlugin = contextLoaderCanLoadPlugin();
         context.internalServices().register(new ServiceDescriptor(
                 "fixture", Set.of("echo", "large", "stream", "loader", "context-loader",
-                        "host", "failure"), true), invocation -> {
+                        "host", "failure", "typed-log"), true), invocation -> {
             switch (invocation.operation()) {
                 case "echo" -> invocation.responses().complete(
                         invocation.contentType(), invocation.payload());
@@ -54,6 +55,12 @@ public final class FixtureServicePlugin implements ServicePlugin {
                 }
                 case "failure" -> throw new IllegalStateException("wrapper",
                         new IllegalArgumentException("specific model failure"));
+                case "typed-log" -> {
+                    context.logger().info("[INFERENCE_CALL] ordinary runtime text");
+                    context.logger().info(PluginLogger.Kind.INFERENCE_INVOCATION,
+                            "structured invocation");
+                    invocation.responses().complete("text/plain", new byte[0]);
+                }
                 default -> invocation.responses().fail(
                         "unknown", "unknown operation", "application/json", new byte[0]);
             }

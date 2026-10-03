@@ -58,6 +58,7 @@ components:
             - SERVICE_CATALOG
             - REQUEST
             - EVENT
+            - LOG
             - RESPONSE
             - ERROR
             - CANCEL

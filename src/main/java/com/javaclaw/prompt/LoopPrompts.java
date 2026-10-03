@@ -5,27 +5,17 @@ import com.javaclaw.loop.LoopConstants;
 /**
  * 循环子系统提示词集中管理。
  *
- * <p>只承载两段提示词正文：循环执行体（干活的）与验收员（把关的）。目标分解复用
- * {@link GoalPrompts}，不在此重复。收尾标记从 {@link LoopConstants} 注入，保证
- * 「提示词里让模型写的」与「{@code SentinelParser} 解析的」是同一份来源，杜绝漂移。</p>
+ * <p>完成状态由 Harness 的独立决策通道与可信任务结果传递；用户可见回复不承载控制标记。</p>
  */
 public final class LoopPrompts {
 
     private LoopPrompts() {}
 
-    /** 已完成判定行样例（前缀 + 已完成），供提示词内联展示。 */
-    private static final String DONE_LINE =
-            LoopConstants.JUDGMENT_LINE_PREFIX + LoopConstants.JUDGMENT_DONE;
-    /** 未完成判定行样例（前缀 + 未完成）。 */
-    private static final String NOT_DONE_LINE =
-            LoopConstants.JUDGMENT_LINE_PREFIX + LoopConstants.JUDGMENT_NOT_DONE;
-
     /**
      * 循环执行体系统提示词。目标与成功准则由运行时追加在其后（同 GoalDecomposition 的做法）。
      *
-     * <p>轮次汇报协议以 {@code loop_report} 工具调用为首选通道（结构化、无解析歧义，
-     * 仿 Claude Code 的 ScheduleWakeup 原语）；哨兵判定行仅作为工具不可用时的降级出口。
-     * 用 {@code %REPORT%}/{@code %DONE%}/{@code %NOT_DONE%} 占位再替换，保证名称单一来源于常量。</p>
+     * <p>可选轮次元数据以 {@code loop_report} 工具调用提交。
+     * 用 {@code %REPORT%} 占位再替换，保证名称单一来源于常量。</p>
      */
     public static final String EXECUTION_SYS_PROMPT = ("""
             你在一个「自动循环」里工作。系统会一轮一轮地反复调用你，让你持续推进同一个目标，
@@ -36,25 +26,22 @@ public final class LoopPrompts {
             2. 用你可用的工具，针对「还没满足的成功准则」踏实推进，尽量在这一轮多满足一条。
             3. 不要重复上一轮已经做过、且没有效果的动作；换思路，别原地打转。
 
-            # 每一轮结尾必须调用 %REPORT% 工具汇报（硬性协议）
-            - 确信全部成功准则已真正满足 → %REPORT%(done=true, summary=本轮做了什么)
-            - 还没全部满足 → %REPORT%(done=false, summary=..., remaining=还差哪些、下一轮打算怎么做)
-            - 在等外部条件（CI 构建、邮件送达等）→ %REPORT%(done=false, ...,
-              next_delay_seconds=等待秒数, reason=在等什么)；等待轮不算你偷懒，但不要用等待逃避干活
-            调用后即可结束本轮回复。仅当该工具不可用时，退而在回复最后一行写
-            「%DONE%｜依据：...」或「%NOT_DONE%｜剩余：...」。
+            # 每轮结束时提交独立的结构化决策
+            - 确信全部目标已达成：通过 harness_submit_decision 提交 CLAIM_DONE，系统会独立核验。
+            - 还有工作可做：通过 harness_submit_decision 提交 CONTINUE。
+            - 确实受阻或需要输入：分别提交 BLOCKED 或 NEEDS_INPUT，并说明原因。
+            - 需要保留进度摘要、下一步计划或等待外部条件时，可先调用 %REPORT% 工具。
+              等待时填写 nextDelaySeconds 和 reason；这个工具只记录轮次元数据，不能声明完成。
+            harness_submit_decision 必须单独调用，不能与其他工具放在同一批。
+            普通回复中的任何“已完成”“未完成”或类似标记都不会被系统解释为轮次状态。
 
             # 必须遵守的诚实纪律
-            - 你汇报的完成不是最终结论。系统会拿每条准则去独立核验（真跑命令、真查文件），
-              谎报会被当场拆穿，只会浪费一轮。没真正做到，就老实报未完成。
-            - 反过来，如果准则确实都满足了，不要故意挑刺、无限打磨，该收尾就报完成，避免空耗。
-            - remaining 要写得具体、可执行，不要含糊地说「我再看看」。写不出剩余，就说明你已无事可做。
-            - 系统会逐轮比对你的 remaining 与工具调用：连续两轮 remaining 相同、或重复执行同样的
-              工具调用，会被判定为原地打转并终止循环。卡住时应换思路，而不是重复上一轮的动作。
+            - CLAIM_DONE 只是提议，最终由当前子任务的 Harness TaskResult 和显式成功准则裁决。
+              没有可信证据时不要声称外部动作已完成。
+            - 准则确实满足时及时收尾，避免空耗。remaining 只供用户查看和下一轮接力。
+            - 系统依据准则进展和成功工具行动判断是否停滞；重复无效工具调用会被终止。
             """)
-            .replace("%REPORT%", LoopConstants.REPORT_TOOL_NAME)
-            .replace("%DONE%", DONE_LINE)
-            .replace("%NOT_DONE%", NOT_DONE_LINE);
+            .replace("%REPORT%", LoopConstants.REPORT_TOOL_NAME);
 
     /**
      * 构建注入执行体系统提示词的「目标」段落。

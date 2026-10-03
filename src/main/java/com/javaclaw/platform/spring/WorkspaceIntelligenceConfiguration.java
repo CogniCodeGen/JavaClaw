@@ -82,8 +82,14 @@ class WorkspaceIntelligenceConfiguration {
     SkillManager skillManager(
             WorkspaceContext workspace,
             ObjectMapper json,
-            com.javaclaw.config.AgentConfig settings) {
-        return new SkillManager(workspace.globalDataRoot().resolve("skills"), json, settings);
+            com.javaclaw.config.AgentConfig settings,
+            com.javaclaw.platform.data.DataRoot dataRoot) {
+        try {
+            return new SkillManager(dataRoot.requireDirectory(
+                    workspace.globalDataRoot().resolve("skills")), json, settings);
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("创建应用内技能目录失败", failure);
+        }
     }
 
     @Bean(destroyMethod = "close")
@@ -123,12 +129,14 @@ class WorkspaceIntelligenceConfiguration {
     @Bean
     SkillCurator skillCurator(
             com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTasks,
+            com.fasterxml.jackson.databind.ObjectMapper json,
             WorkspaceContext workspace,
             SkillRuntimeServices skills,
             com.javaclaw.config.AgentConfig settings,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             UserInteractionPort interaction) {
-        return new SkillCurator(agents, workspace, skills.manager(), skills.usage(),
+        return new SkillCurator(agents, modelTasks, json, workspace, skills.manager(), skills.usage(),
                 skills.proposals(), settings, tasks,
                 () -> interaction);
     }

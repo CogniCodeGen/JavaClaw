@@ -5,18 +5,31 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.api.BudgetExceededException;
+import com.javaclaw.framework.api.AgentStep;
+import com.javaclaw.framework.api.ModelDecisionV1;
 import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.api.StepId;
+import com.javaclaw.framework.api.TaskContractV3;
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
+import com.javaclaw.framework.api.TaskStopReason;
+import com.javaclaw.framework.api.TurnPausedException;
 import com.javaclaw.framework.core.CancellableTaskStages;
 import com.javaclaw.framework.core.ReasoningGateway;
 import com.javaclaw.framework.core.ReasoningRequest;
 import com.javaclaw.framework.core.ReasoningResult;
+import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.RunUsageLedger;
+import com.javaclaw.framework.core.TaskEvidenceCollector;
+import com.javaclaw.framework.core.TaskResultEvaluator;
+import com.javaclaw.framework.core.TrustedCapabilityRegistry;
 import com.javaclaw.framework.core.ToolApprovalRequiredException;
 import com.javaclaw.framework.core.ToolGroupAccess;
 import com.javaclaw.framework.core.ToolInputRequiredException;
 import com.javaclaw.framework.core.ToolInvocationGateway;
 import com.javaclaw.framework.core.ToolRecoveryRequiredException;
+import com.javaclaw.framework.core.PendingEffectObservationRequiredException;
 import com.javaclaw.framework.spi.AdvisorRuntimeContext;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
 import com.javaclaw.framework.spi.ExtensionStateStore;
@@ -42,12 +55,22 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import reactor.core.publisher.Flux;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.addProjectionStatistics;
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.closeTools;
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.providerMessages;
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.token;
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.unwrap;
+import static com.javaclaw.framework.springai.ReasoningGatewaySupport.withoutSystemMessages;
 
 /** Spring AI 2.0 implementation of the one ReAct reasoning loop. */
 public final class SpringAiReasoningGateway implements ReasoningGateway {
@@ -63,6 +86,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     private final CancellableTaskExecutor executor;
     private final ObservationRegistry observations;
     private final SpringAiPromptFactory prompts;
+    private final TrustedCapabilityRegistry capabilities = TrustedCapabilityRegistry.builtins();
 
     public SpringAiReasoningGateway(
             SpringAiModelRegistry models,
@@ -105,8 +129,9 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             AtomicInteger currentAttempt = new AtomicInteger(1);
             AtomicInteger responseIndex = new AtomicInteger();
             ModelStepJournal journal = new ModelStepJournal(request, runStore, json);
+            HarnessDecisionToolCallback decisionCallback = journal.decisionCallback();
             StepContextProjector projector = new StepContextProjector(
-                    request.plan().descriptor().stepContextPolicy());
+                    request.plan().descriptor().stepContextPolicy(), json);
             ProviderContextBoundary boundary = new ProviderContextBoundary();
             List<FrameworkTool> runTools = new ArrayList<>(createTools(request));
             ChatResponse response = null;
@@ -118,8 +143,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                             request.plan().descriptor().stepContextPolicy(), runTools);
                     runTools.add(catalog);
                 }
-                List<ToolCallback> callbacks = SpringAiToolCatalog.createCallbacks(
-                        request, runTools, tools, json, journal);
+                List<ToolCallback> callbacks = new ArrayList<>(SpringAiToolCatalog.createCallbacks(
+                        request, runTools, tools, json, journal));
+                callbacks.add(decisionCallback);
+                SpringAiToolCatalog.ensureUniqueNames(callbacks);
                 if (catalog != null) catalog.bindCallbacks(callbacks);
                 ModelStepJournal.Recovery recovered = journal.recover(runTools, tools, catalog, true);
                 String systemPrompt;
@@ -137,24 +164,27 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                             providerMessages(systemPrompt, messages));
                     messages = withoutSystemMessages(activeProjection.messages());
                 } else {
-                    systemPrompt = recovered.systemPrompt();
-                    messages = new ArrayList<>(recovered.messages());
+                    systemPrompt = "";
+                    messages = new ArrayList<>(recovered.providerMessages());
                     activeProjection = new StepContextProjector.Projection(
-                            recovered.messages(), recovered.statistics());
+                            recovered.providerMessages(), recovered.statistics());
                     response = recovered.finalResponse();
                 }
                 OnDemandContextSession onDemand = null;
                 if (onDemandEnabled && response == null) {
+                    String stablePrompt = systemPrompt;
                     if (recovered != null) {
-                        TurnPreparationJournal.prepare(request, runStore, extensionState);
+                        String prepared = TurnPreparationJournal.prepare(request, runStore, extensionState);
+                        stablePrompt = prompts.systemPrompt(request)
+                                + (prepared.isBlank() ? "" : "\n\n" + prepared);
                     }
                     onDemand = new OnDemandContextSession(request, catalog, modelTasks,
-                            tools, runStore, json, originalHistory);
+                            tools, runStore, json, originalHistory, decisionCallback,
+                            List.of(new SystemMessage(stablePrompt)));
                     if (recovered != null) onDemand.replayOnce(recovered);
                 }
                 if (recovered == null && request.approvedToolInvocation() != null
-                        && !request.approvedToolInvocation().challenge().tool()
-                                .startsWith("framework_context_")) {
+                        && !request.approvedToolInvocation().challenge().trustedContextRead()) {
                     throw new ToolRecoveryRequiredException(request.runId().value(),
                             "approved business tool has no durable model Step; restart the Run");
                 }
@@ -218,9 +248,23 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 throw new IllegalStateException("Spring AI returned no chat result");
             }
 
-            String text = response.getResult().getOutput().getText();
+            List<RunEventEnvelope> runEvents = runStore.eventsAfter(request.runId(), 0);
+            SubmittedDecision submitted = latestSubmittedDecision(request, runEvents).orElse(null);
+            if (submitted == null) {
+                return repairProtocolOrPause(request, runEvents, "MODEL_DECISION_MISSING",
+                        "The model did not submit a valid harness decision");
+            }
+            ModelDecisionV1 decision = submitted.value();
+            if (decision.decision() == ModelDecisionV1.Decision.NEEDS_INPUT) {
+                return ReasoningResult.waitingForInput(
+                        JsonNodeFactory.instance.objectNode()
+                                .put("kind", "harness.needs_input")
+                                .put("text", decision.userMessage()),
+                        "MODEL_NEEDS_INPUT");
+            }
             ObjectNode output = JsonNodeFactory.instance.objectNode();
-            output.put("text", text == null ? "" : text);
+            output.put("text", decision.userMessage());
+            output.put("modelDecision", decision.decision().name());
             String modelName = response.getMetadata() == null
                     ? request.plan().descriptor().modelPolicyRef()
                     : response.getMetadata().getModel();
@@ -248,8 +292,6 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     resultObject.set("value", guarded);
                 }
                 ObjectNode assessments = resultObject.putObject("assessments");
-                List<RunEventEnvelope> runEvents =
-                        runStore.eventsAfter(request.runId(), 0);
                 for (var policy : request.plan().evaluationPolicies()) {
                     JsonNode assessment = policy.evaluate(runEvents, resultObject, modelTasks);
                     assessments.set(policy.id(), assessment);
@@ -260,27 +302,81 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 guarded = resultObject;
             }
             guarded = request.plan().validateOutput(guarded);
+            if (decision.decision() == ModelDecisionV1.Decision.BLOCKED) {
+                request.events().emit("core.task.stop", 3, "framework.springai",
+                        JsonNodeFactory.instance.objectNode().put("reasonCode",
+                                TaskStopReason.MODEL_BLOCKED.name()));
+            }
+            TaskCompletionDecision taskDecision = decision.decision()
+                    == ModelDecisionV1.Decision.CLAIM_DONE
+                    ? reviewTaskCompletion(request, guarded, runEvents)
+                    : new TaskCompletionDecision(false, false, guarded);
+            if (taskDecision.repair()) {
+                request.control().enterTaskRepair();
+                return reason(request);
+            }
+            guarded = taskDecision.output();
             ObjectNode completed = JsonNodeFactory.instance.objectNode();
             completed.put("model", modelName == null ? "" : modelName);
             completed.put("inputTokens", inputTokens);
             completed.put("outputTokens", outputTokens);
             completed.put("estimatedCostCny", primaryUsage.estimatedCostCny());
             request.events().emit("core.model.completed", 1, "framework.springai", completed);
+            if (taskDecision.pause()) {
+                return new ReasoningResult(RunState.PAUSED, guarded, "TASK_UNVERIFIED");
+            }
             return ReasoningResult.completed(guarded);
         } catch (Throwable failure) {
             Throwable cause = unwrap(failure);
+            if (cause instanceof GuardedToolCallingManager.ProtocolBatchException batch) {
+                if (!batch.recoverable()) {
+                    return protocolPause(request, "MODEL_DECISION_MULTIPLE_GENERATIONS",
+                            "A control call appeared in a response with multiple generations");
+                }
+                return repairProtocolOrPause(request,
+                        runStore.eventsAfter(request.runId(), 0),
+                        "MODEL_DECISION_MIXED_BATCH",
+                        "The harness decision was not the only call in its provider result");
+            }
             if (cause instanceof ToolApprovalRequiredException approval) {
+                ObjectNode waiting = JsonNodeFactory.instance.objectNode();
+                waiting.set("approval", approval.challenge().toJson());
                 return ReasoningResult.waitingForApproval(
-                        approval.challenge().toJson(), approval.getMessage());
+                        waiting, approval.getMessage());
             }
             if (cause instanceof ToolInputRequiredException input) {
                 return ReasoningResult.waitingForInput(input.context(), input.getMessage());
             }
+            if (cause instanceof PendingEffectObservationRequiredException pending) {
+                ObjectNode paused = JsonNodeFactory.instance.objectNode()
+                        .put("kind", "tool.effect_observation_required")
+                        .put("reasonCode", "EFFECT_OBSERVATION_REQUIRED")
+                        .put("effectReason", pending.reason().name())
+                        .put("text", pending.diagnostic())
+                        .put("sourceRunId", pending.sourceRunId().isBlank()
+                                ? request.runId().value() : pending.sourceRunId())
+                        .put("invocationId", pending.invocationId())
+                        .put("resourceKey", pending.resourceKey())
+                        .put("status", pending.status() == null ? "PENDING" : pending.status().name())
+                        .put("delivery", pending.delivery())
+                        .put("dispatchAttempted", false);
+                request.events().emit("core.effect.observation_required", 1, "framework.core", paused);
+                return new ReasoningResult(RunState.PAUSED, paused, "EFFECT_OBSERVATION_REQUIRED");
+            }
             if (cause instanceof ToolRecoveryRequiredException recovery) {
+                ObjectNode paused = JsonNodeFactory.instance.objectNode()
+                        .put("kind", "tool.recovery_required")
+                        .put("stepId", recovery.stepId())
+                        .put("reason", recovery.getMessage());
+                if (!recovery.requestedTools().isEmpty()) {
+                    var requested = paused.putArray("requestedTools");
+                    recovery.requestedTools().forEach(requested::add);
+                    var offered = paused.putArray("offeredTools");
+                    recovery.offeredTools().forEach(offered::add);
+                    paused.put("unfinishedAction", "The requested tool batch was not executed");
+                }
                 return new ReasoningResult(RunState.PAUSED,
-                        JsonNodeFactory.instance.objectNode().put("kind", "tool.recovery_required")
-                                .put("stepId", recovery.stepId())
-                                .put("reason", recovery.getMessage()),
+                        paused,
                         recovery.getMessage());
             }
             if (cause instanceof ContextPlanningRequiredException planning) {
@@ -289,16 +385,237 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                                 .put("reason", planning.getMessage()),
                         planning.getMessage());
             }
-            if (cause instanceof BudgetExceededException budget
-                    && request.plan().descriptor().onDemandContextPolicy() != null) {
-                return new ReasoningResult(RunState.PAUSED,
-                        JsonNodeFactory.instance.objectNode().put("kind", "context.budget_exhausted")
-                                .put("reason", budget.getMessage()), budget.getMessage());
+            if (cause instanceof TurnPausedException paused) {
+                ObjectNode context = JsonNodeFactory.instance.objectNode()
+                        .put("kind", "context.planning_required")
+                        .put("reasonCode", paused.reason().name());
+                if (!paused.contextSourceId().isBlank()) {
+                    context.put("contextSourceId", paused.contextSourceId());
+                }
+                return new ReasoningResult(RunState.PAUSED, context, paused.getMessage());
+            }
+            if (cause instanceof BudgetExceededException budget) {
+                var events = runStore.eventsAfter(request.runId(), 0);
+                var contractV3 = TaskResultEvaluator.latestContractV3(events, json);
+                request.events().emit("core.task.stop", 3,
+                        "framework.springai",
+                        JsonNodeFactory.instance.objectNode().put("reasonCode",
+                                TaskStopReason.BUDGET_EXHAUSTED.name())
+                                .put("budgetKind", budget.kind().name())
+                                .put("budgetActual", budget.actual())
+                                .put("budgetLimit", budget.limit()));
+                ObjectNode summary = JsonNodeFactory.instance.objectNode();
+                summary.put("kind", "harness.budget_exhausted");
+                summary.put("budgetKind", budget.kind().name());
+                summary.put("budgetActual", budget.actual());
+                summary.put("budgetLimit", budget.limit());
+                summary.put("text", "运行预算耗尽，尚未收到独立的任务完成决策，无法确认完成。");
+                if (contractV3.map(TaskContractV3::applicable).orElse(false)) {
+                    List<RunEventEnvelope> evidence = TaskEvidenceCollector.collect(runStore, request.runId());
+                    TaskResult partial = TaskResultEvaluator.evaluateV3(contractV3.get(), evidence,
+                            TaskStopReason.BUDGET_EXHAUSTED.name(), capabilities);
+                    if (!partial.unmetCriteria().isEmpty()) {
+                        summary.put("unmetCriteria", bounded(
+                                String.join("；", partial.unmetCriteria()), 800));
+                    }
+                }
+                return new ReasoningResult(RunState.PAUSED, summary,
+                        TaskStopReason.BUDGET_EXHAUSTED.name());
             }
             if (cause instanceof RuntimeException runtime) throw runtime;
             throw new IllegalStateException(cause);
         }
     }
+
+    private TaskCompletionDecision reviewTaskCompletion(
+            ReasoningRequest request, JsonNode output, List<RunEventEnvelope> events) {
+        var contractV3 = TaskResultEvaluator.latestContractV3(events, json);
+        if (contractV3.isEmpty()) return new TaskCompletionDecision(false, false, output);
+        int taskSchemaVersion = 3;
+        boolean applicable = contractV3.get().applicable();
+        if (!applicable) return new TaskCompletionDecision(false, false, output);
+
+        String modelStepId = new RunStepQuery(runStore).steps(request.runId()).stream()
+                .filter(step -> step.kind() == AgentStep.Kind.MODEL
+                        && step.state() == AgentStep.State.COMPLETED)
+                .max(Comparator.comparingLong(AgentStep::lastSequence))
+                .map(step -> step.id().value()).orElse("");
+        List<RunEventEnvelope> evidence = TaskEvidenceCollector.collect(runStore, request.runId());
+        TaskResult result = TaskResultEvaluator.evaluateV3(contractV3.get(), evidence, "", capabilities);
+        ObjectNode review = (ObjectNode) json.valueToTree(result);
+        review.put("modelStepId", modelStepId);
+        request.events().emit("core.task.review", taskSchemaVersion, "framework.springai", review);
+        if (result.outcome() == TaskOutcome.VERIFIED_COMPLETE) {
+            return new TaskCompletionDecision(false, false, output);
+        }
+
+        List<RunEventEnvelope> repairs = events.stream()
+                .filter(event -> event.type().equals("core.task.repair_requested"))
+                .toList();
+        RunEventEnvelope latestRepair = repairs.isEmpty() ? null : repairs.getLast();
+        boolean progressed = latestRepair == null
+                || meaningfulRepairProgress(events, evidence, latestRepair, result);
+        boolean budgetAvailable = request.control().remainingToolCalls() > 0
+                && request.control().remaining().compareTo(Duration.ofSeconds(3)) > 0
+                && hasInputHeadroomForRepair(request, events);
+        boolean reliable = contractV3.get().reliable();
+        if (reliable && repairs.size() < 2 && progressed && budgetAvailable
+                && !modelStepId.isBlank()) {
+            String feedback = "任务验收尚未通过。仅在现有权限和剩余预算内继续完成缺少的步骤；"
+                    + "优先只读核验已尝试的操作，不要重复可能产生副作用的操作，也不要声称未经观察的结果。"
+                    + "缺少证据的条件：" + bounded(String.join("；", result.unmetCriteria()), 1200);
+            ObjectNode repair = JsonNodeFactory.instance.objectNode();
+            repair.put("modelStepId", modelStepId);
+            repair.put("feedback", feedback);
+            repair.put("attempt", repairs.size() + 1);
+            request.events().emit("core.task.repair_requested", taskSchemaVersion,
+                    "framework.springai", repair);
+            return new TaskCompletionDecision(true, false, output);
+        }
+
+        TaskStopReason reason = !reliable ? TaskStopReason.UNRELIABLE_CONTRACT
+                : !progressed ? TaskStopReason.NO_PROGRESS
+                : !budgetAvailable ? TaskStopReason.BUDGET_EXHAUSTED
+                : TaskStopReason.REPAIR_LIMIT;
+        request.events().emit("core.task.stop", taskSchemaVersion, "framework.springai",
+                JsonNodeFactory.instance.objectNode().put("reasonCode", reason.name()));
+        TaskResult finalResult = TaskResultEvaluator.evaluateV3(
+                contractV3.get(), evidence, reason.name(), capabilities);
+        ObjectNode safe = output instanceof ObjectNode object
+                ? object.deepCopy() : JsonNodeFactory.instance.objectNode();
+        String unmet = bounded(String.join("；", finalResult.unmetCriteria()), 800);
+        if (!reliable) {
+            safe.setAll(com.javaclaw.framework.core.TaskContractDiagnostics.pausedOutput(
+                    json, contractV3.get(), false));
+        } else {
+            safe.put("text", "任务尚未验证完成。" + (unmet.isBlank() ? "缺少可靠的完成证据。"
+                    : "未满足的条件：" + unmet + "。")
+                    + " 已执行部分可在本轮工具记录中查看。");
+        }
+        return new TaskCompletionDecision(false, true, safe);
+    }
+
+    static boolean meaningfulRepairProgress(List<RunEventEnvelope> events,
+            List<RunEventEnvelope> evidence, RunEventEnvelope repair, TaskResult current) {
+        return TaskRepairProgress.meaningfulRepairProgress(events, evidence, repair, current);
+    }
+
+    private boolean hasInputHeadroomForRepair(ReasoningRequest request,
+            List<RunEventEnvelope> events) {
+        long remaining = usageLedger.remainingBudget(request.runId()).maxInputTokens();
+        long latestCall = events.stream().filter(event -> event.type().equals("core.model.usage")
+                && event.producer().equals("framework.springai"))
+                .max(Comparator.comparingLong(RunEventEnvelope::sequence))
+                .map(event -> Math.max(0L, event.payload().path("inputTokens").asLong()))
+                .orElse(0L);
+        long reserve = Math.max(512L, latestCall + Math.max(256L, latestCall / 10));
+        return remaining >= reserve;
+    }
+
+    private static String bounded(String value, int maxCharacters) {
+        String safe = com.javaclaw.util.SensitiveDataRedactor.redactText(value == null ? "" : value);
+        return safe.length() <= maxCharacters ? safe : safe.substring(0, maxCharacters) + "…";
+    }
+
+    private record TaskCompletionDecision(boolean repair, boolean pause, JsonNode output) { }
+
+    private Optional<SubmittedDecision> latestSubmittedDecision(
+            ReasoningRequest request, List<RunEventEnvelope> events) {
+        long lastRepair = TaskResultEvaluator.modelDecisionBoundary(events);
+        RunEventEnvelope submitted = events.stream()
+                .filter(event -> event.sequence() > lastRepair
+                        && event.type().equals("core.harness.decision_submitted")
+                        && event.schemaVersion() == 1
+                        && event.producer().equals("framework.springai"))
+                .max(Comparator.comparingLong(RunEventEnvelope::sequence)).orElse(null);
+        if (submitted == null) return Optional.empty();
+        String modelStepId = submitted.payload().path("modelStepId").asText("");
+        String invocationId = submitted.payload().path("invocationId").asText("");
+        if (modelStepId.isBlank() || invocationId.isBlank()
+                || events.stream().anyMatch(event -> event.sequence() > submitted.sequence()
+                        && event.type().equals("core.step.started")
+                        && event.producer().equals("framework.core")
+                        && event.payload().path("kind").asText("").equals("MODEL"))
+                || events.stream().anyMatch(event -> event.sequence() > submitted.sequence()
+                        && event.type().equals("core.tool.started")
+                        && event.producer().equals("framework.core"))) return Optional.empty();
+        var steps = new RunStepQuery(runStore);
+        var model = steps.step(request.runId(), new StepId(modelStepId)).orElse(null);
+        var control = steps.step(request.runId(), StepId.tool(request.runId(), invocationId))
+                .orElse(null);
+        if (model == null || model.kind() != AgentStep.Kind.MODEL
+                || model.state() != AgentStep.State.COMPLETED
+                || model.startSequence() <= lastRepair
+                || control == null || control.kind() != AgentStep.Kind.ORCHESTRATION
+                || control.state() != AgentStep.State.COMPLETED
+                || control.startSequence() <= lastRepair
+                || !modelStepId.equals(control.input().path("modelStepId").asText(""))
+                || !"harness.decision".equals(control.input().path("phase").asText(""))) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(new SubmittedDecision(
+                    ModelDecisionV1.fromJson(submitted.payload().path("value")), submitted));
+        } catch (RuntimeException invalid) {
+            return Optional.empty();
+        }
+    }
+
+    private ReasoningResult protocolPause(ReasoningRequest request, String code, String detail) {
+        ObjectNode payload = JsonNodeFactory.instance.objectNode()
+                .put("code", "PROTOCOL_ERROR").put("violationCode", code)
+                .put("detail", detail);
+        JsonNode rejection = "MODEL_DECISION_MISSING".equals(code)
+                ? latestDecisionRejection(request) : null;
+        addDecisionRejection(payload, rejection);
+        request.events().emit("core.harness.protocol_violation", 1,
+                "framework.springai", payload);
+        ObjectNode output = JsonNodeFactory.instance.objectNode()
+                .put("kind", "harness.protocol_violation").put("code", "PROTOCOL_ERROR")
+                .put("violationCode", code).put("reason", detail);
+        addDecisionRejection(output, rejection);
+        return new ReasoningResult(RunState.PAUSED, output, "PROTOCOL_ERROR");
+    }
+
+    private JsonNode latestDecisionRejection(ReasoningRequest request) {
+        return HarnessProtocolFeedback.latestDecisionRejection(request, runStore);
+    }
+
+    private static void addDecisionRejection(ObjectNode target, JsonNode rejection) {
+        HarnessProtocolFeedback.addDecisionRejection(target, rejection);
+    }
+
+    private ReasoningResult repairProtocolOrPause(ReasoningRequest request,
+            List<RunEventEnvelope> events, String code, String detail) {
+        long attempts = events.stream().filter(event ->
+                event.type().equals("core.harness.protocol_repair_requested")
+                        && event.producer().equals("framework.springai")).count();
+        String modelStepId = new RunStepQuery(runStore).steps(request.runId()).stream()
+                .filter(step -> step.kind() == AgentStep.Kind.MODEL
+                        && step.state() == AgentStep.State.COMPLETED)
+                .max(Comparator.comparingLong(AgentStep::lastSequence))
+                .map(step -> step.id().value()).orElse("");
+        if (attempts >= 1 || modelStepId.isBlank()
+                || request.control().remaining().compareTo(Duration.ofSeconds(3)) <= 0) {
+            return protocolPause(request, code, detail);
+        }
+        JsonNode rejection = "MODEL_DECISION_MISSING".equals(code)
+                ? latestDecisionRejection(request) : null;
+        ObjectNode repair = JsonNodeFactory.instance.objectNode()
+                .put("modelStepId", modelStepId).put("code", code)
+                .put("attempt", attempts + 1)
+                .put("feedback", protocolRepairFeedback(rejection));
+        addDecisionRejection(repair, rejection);
+        request.events().emit("core.harness.protocol_repair_requested", 1,
+                "framework.springai", repair);
+        return reason(request);
+    }
+
+    static String protocolRepairFeedback(JsonNode rejection) {
+        return HarnessProtocolFeedback.protocolRepairFeedback(rejection);
+    }
+
+    private record SubmittedDecision(ModelDecisionV1 value, RunEventEnvelope event) { }
 
     private ChatResponse callWithRetry(
             ChatClient client,
@@ -317,8 +634,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             currentAttempt.set(attempt);
             try {
                 ChatResponse response = client.prompt()
-                        .system(systemPrompt)
-                        .messages(messages)
+                        .messages(providerMessages(systemPrompt, messages))
                         .tools(callbacks)
                         .call()
                         .chatResponse();
@@ -328,7 +644,9 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 if (cause instanceof ToolApprovalRequiredException
                         || cause instanceof ToolInputRequiredException
                         || cause instanceof ToolRecoveryRequiredException
+                        || cause instanceof PendingEffectObservationRequiredException
                         || cause instanceof ContextPlanningRequiredException
+                        || cause instanceof TurnPausedException
                         || cause instanceof BudgetExceededException
                         || cause instanceof RunCancelledException
                         || attempt >= 8) throw failure;
@@ -361,10 +679,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 ModelStepJournal.Recovery recovered = journal.recover(
                         runTools, tools, catalog, false);
                 if (recovered != null) {
-                    if (request.plan().descriptor().onDemandContextPolicy() == null) {
-                        systemPrompt = recovered.systemPrompt();
-                    }
-                    messages = recovered.messages();
+                    systemPrompt = "";
+                    messages = recovered.providerMessages();
                     if (onDemand != null) onDemand.replayOnce(recovered);
                     if (recovered.finalResponse() != null) return recovered.finalResponse();
                 }
@@ -498,6 +814,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     throw new IllegalStateException("cannot close filtered tool", failure);
                 }
             }
+            bindTrustedCapabilities(runTools, capabilities);
         } catch (RuntimeException failure) {
             try {
                 closeTools(runTools);
@@ -509,54 +826,22 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         return runTools;
     }
 
-    private static List<Message> providerMessages(
-            String systemPrompt, List<Message> messages) {
-        List<Message> combined = new ArrayList<>();
-        if (!systemPrompt.isBlank()) combined.add(new SystemMessage(systemPrompt));
-        combined.addAll(messages);
-        return combined;
-    }
-
-    private static List<Message> withoutSystemMessages(List<Message> messages) {
-        return messages.stream().filter(message -> !(message instanceof SystemMessage)).toList();
-    }
-
-    private static void addProjectionStatistics(
-            ObjectNode target, StepContextProjector.Statistics statistics) {
-        target.put("contextProjectionVersion", 1);
-        target.put("messagesBefore", statistics.messagesBefore());
-        target.put("messagesAfter", statistics.messagesAfter());
-        target.put("messageCharactersBefore", statistics.charactersBefore());
-        target.put("messageCharactersAfter", statistics.charactersAfter());
-        target.put("evictedToolExchanges", statistics.evictedToolExchanges());
-        target.put("contextCompacted", statistics.compacted());
-    }
-
-    private static void closeTools(List<FrameworkTool> runTools) {
-        RuntimeException first = null;
-        for (int index = runTools.size() - 1; index >= 0; index--) {
-            try {
-                runTools.get(index).close();
-            } catch (Exception failure) {
-                if (first == null) first = new IllegalStateException("cannot close run tool", failure);
-                else first.addSuppressed(failure);
+    /** A descriptor alone is untrusted: an extension can copy every declared field. */
+    static void bindTrustedCapabilities(
+            List<FrameworkTool> runTools, TrustedCapabilityRegistry capabilities) {
+        for (FrameworkTool tool : runTools) {
+            String name = tool.descriptor().name();
+            if (com.javaclaw.agent.ToolRiskRegistry.isKnownHostTool(name)
+                    && !SpringAiAnnotatedToolRegistry.isExactHostTool(tool)) {
+                throw new IllegalStateException("untrusted tool impersonates host tool: "
+                        + name);
             }
+            if (!capabilities.hasTrustedTool(name)) continue;
+            if (!SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)) {
+                throw new IllegalStateException("tool has no trusted receipt adapter: " + name);
+            }
+            capabilities.bindHostTool(tool.descriptor());
         }
-        if (first != null) throw first;
-    }
-
-    private static long token(Integer value) {
-        return value == null ? 0L : Math.max(0, value.longValue());
-    }
-
-    private static Throwable unwrap(Throwable failure) {
-        Throwable current = failure;
-        while (current.getCause() != null && (current instanceof java.util.concurrent.CompletionException
-                || current instanceof java.util.concurrent.ExecutionException
-                || current.getClass().getName().contains("ToolExecution"))) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     private record PrimaryUsage(

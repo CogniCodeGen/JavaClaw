@@ -1,8 +1,12 @@
 package com.javaclaw.notification;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.CredentialUsage;
 import com.javaclaw.config.NotificationConfig;
@@ -10,6 +14,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +43,42 @@ import java.util.Properties;
 public class NotificationTools {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationTools.class);
+    private static final JsonFactory WEBHOOK_JSON = new JsonFactory();
+
+    private static final class DeliveryUncertainException extends Exception {
+        DeliveryUncertainException(String message, Throwable cause) { super(message, cause); }
+        DeliveryUncertainException(String message) { super(message); }
+    }
+
+    public enum DeliveryStatus { ACCEPTED, PARTIAL, UNCERTAIN, FAILED, SKIPPED }
+
+    /** Transport acceptance is distinct from proof of recipient delivery. */
+    public record DeliveryResult(DeliveryStatus status, String message,
+            java.util.Map<String, DeliveryStatus> channels) {
+        public DeliveryResult {
+            status = java.util.Objects.requireNonNull(status, "status");
+            message = java.util.Objects.requireNonNullElse(message, "");
+            channels = java.util.Map.copyOf(java.util.Objects.requireNonNullElse(channels,
+                    java.util.Map.of()));
+        }
+        public DeliveryResult(DeliveryStatus status, String message) {
+            this(status, message, java.util.Map.of());
+        }
+        boolean success() { return status == DeliveryStatus.ACCEPTED; }
+        static DeliveryResult sent() {
+            return new DeliveryResult(DeliveryStatus.ACCEPTED, "传输端已接受，实际送达未验证");
+        }
+        static DeliveryResult failed(String message) {
+            return new DeliveryResult(DeliveryStatus.FAILED, "发送失败: " + message);
+        }
+        static DeliveryResult uncertain(String message) {
+            return new DeliveryResult(DeliveryStatus.UNCERTAIN,
+                    "发送结果不确定，请先核对接收端，避免重复发送: " + message);
+        }
+        static DeliveryResult skipped(String message) {
+            return new DeliveryResult(DeliveryStatus.SKIPPED, message);
+        }
+    }
 
     /**
      * 全局共享 HttpClient：自带连接池/selector 线程，无 close 只能靠 GC 回收——本工具随
@@ -82,49 +123,80 @@ public class NotificationTools {
             return ToolResponse.error("notify_send", "没有已启用的通知渠道，请先在设置中配置并启用至少一个通知渠道。");
         }
 
+        DeliveryResult result = broadcast(title, message, config);
+        var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                .put("schemaVersion", 1).put("kind", "notification.delivery")
+                .put("status", result.status().name());
+        var channels = payload.putObject("channels");
+        result.channels().forEach((name, status) -> channels.put(name, status.name()));
+        ToolEffectCapture.noteData("notify_send", payload);
+        return switch (result.status()) {
+            case ACCEPTED -> ToolResponse.success("notify_send", result.message());
+            case PARTIAL, UNCERTAIN -> ToolResponse.uncertain("notify_send", result.message());
+            case FAILED, SKIPPED -> ToolResponse.error("notify_send", result.message());
+        };
+    }
+
+    private DeliveryResult broadcast(String title, String message, NotificationConfig config) {
         StringBuilder results = new StringBuilder();
         int successCount = 0;
         int failCount = 0;
+        int uncertainCount = 0;
+        java.util.Map<String, DeliveryStatus> channels = new java.util.LinkedHashMap<>();
 
         if (config.isDingtalkEnabled()) {
-            String result = sendDingtalkInternal(title, message);
-            results.append("钉钉: ").append(result).append("\n");
-            if (result.contains("成功")) successCount++;
+            DeliveryResult result = sendDingtalkInternal(title, message);
+            channels.put("dingtalk", result.status());
+            results.append("钉钉: ").append(result.message()).append("\n");
+            if (result.success()) successCount++;
+            else if (result.status() == DeliveryStatus.UNCERTAIN) uncertainCount++;
             else failCount++;
         }
 
         if (config.isWechatEnabled()) {
-            String result = sendWechatInternal(title, message);
-            results.append("企业微信: ").append(result).append("\n");
-            if (result.contains("成功")) successCount++;
+            DeliveryResult result = sendWechatInternal(title, message);
+            channels.put("wechat", result.status());
+            results.append("企业微信: ").append(result.message()).append("\n");
+            if (result.success()) successCount++;
+            else if (result.status() == DeliveryStatus.UNCERTAIN) uncertainCount++;
             else failCount++;
         }
 
         if (config.isFeishuEnabled()) {
-            String result = sendFeishuInternal(title, message);
-            results.append("飞书: ").append(result).append("\n");
-            if (result.contains("成功")) successCount++;
+            DeliveryResult result = sendFeishuInternal(title, message);
+            channels.put("feishu", result.status());
+            results.append("飞书: ").append(result.message()).append("\n");
+            if (result.success()) successCount++;
+            else if (result.status() == DeliveryStatus.UNCERTAIN) uncertainCount++;
             else failCount++;
         }
 
         if (config.isEmailNotifyEnabled()) {
-            String result = sendEmailNotifyInternal(title, message);
-            results.append("邮件: ").append(result).append("\n");
-            if (result.contains("成功")) successCount++;
+            DeliveryResult result = sendEmailNotifyInternal(title, message);
+            channels.put("email", result.status());
+            results.append("邮件: ").append(result.message()).append("\n");
+            if (result.success()) successCount++;
+            else if (result.status() == DeliveryStatus.UNCERTAIN) uncertainCount++;
             else failCount++;
         }
 
         if (config.isCustomEnabled()) {
-            String result = sendCustomWebhookInternal(title, message);
-            results.append("自定义Webhook: ").append(result).append("\n");
-            if (result.contains("成功")) successCount++;
+            DeliveryResult result = sendCustomWebhookInternal(title, message);
+            channels.put("custom", result.status());
+            results.append("自定义Webhook: ").append(result.message()).append("\n");
+            if (result.success()) successCount++;
+            else if (result.status() == DeliveryStatus.UNCERTAIN) uncertainCount++;
             else failCount++;
         }
 
-        String summary = String.format("发送完成 — 成功: %d, 失败: %d\n\n%s", successCount, failCount, results);
-        return failCount == 0
-                ? ToolResponse.success("notify_send", summary)
-                : ToolResponse.error("notify_send", summary);
+        String summary = String.format("发送请求处理完成 — 已接受: %d, 失败: %d, 结果不确定: %d\n\n%s",
+                successCount, failCount, uncertainCount, results);
+        DeliveryStatus status = uncertainCount > 0
+                ? successCount == 0 && failCount == 0 ? DeliveryStatus.UNCERTAIN
+                        : DeliveryStatus.PARTIAL
+                : failCount == 0 ? DeliveryStatus.ACCEPTED
+                        : successCount == 0 ? DeliveryStatus.FAILED : DeliveryStatus.PARTIAL;
+        return new DeliveryResult(status, summary, channels);
     }
 
     @Tool(name = "notify_dingtalk", description = "通过钉钉机器人发送消息通知。" +
@@ -158,10 +230,13 @@ public class NotificationTools {
             }
 
             String response = sendHttpPost(webhookUrl, body, "application/json");
-            if (response.contains("\"errcode\":0") || response.contains("\"errmsg\":\"ok\"")) {
-                return ToolResponse.success("notify_dingtalk", "钉钉消息发送成功");
+            if (webhookAccepted("dingtalk", response)) {
+                return ToolResponse.success("notify_dingtalk", "钉钉传输端已接受，实际送达未验证");
             }
             return ToolResponse.error("notify_dingtalk", "钉钉返回错误: " + response);
+        } catch (DeliveryUncertainException e) {
+            log.warn("钉钉消息发送结果不确定", e);
+            return ToolResponse.uncertain("notify_dingtalk", e.getMessage());
         } catch (Exception e) {
             log.error("钉钉消息发送失败", e);
             return ToolResponse.fromException("notify_dingtalk", e);
@@ -197,10 +272,13 @@ public class NotificationTools {
             }
 
             String response = sendHttpPost(config.getWechatWebhook(), body, "application/json");
-            if (response.contains("\"errcode\":0") || response.contains("\"errmsg\":\"ok\"")) {
-                return ToolResponse.success("notify_wechat", "企业微信消息发送成功");
+            if (webhookAccepted("wechat", response)) {
+                return ToolResponse.success("notify_wechat", "企业微信传输端已接受，实际送达未验证");
             }
             return ToolResponse.error("notify_wechat", "企业微信返回错误: " + response);
+        } catch (DeliveryUncertainException e) {
+            log.warn("企业微信消息发送结果不确定", e);
+            return ToolResponse.uncertain("notify_wechat", e.getMessage());
         } catch (Exception e) {
             log.error("企业微信消息发送失败", e);
             return ToolResponse.fromException("notify_wechat", e);
@@ -243,10 +321,13 @@ public class NotificationTools {
             }
 
             String response = sendHttpPost(webhookUrl, body, "application/json");
-            if (response.contains("\"StatusCode\":0") || response.contains("\"code\":0") || response.contains("\"StatusMessage\":\"success\"")) {
-                return ToolResponse.success("notify_feishu", "飞书消息发送成功");
+            if (webhookAccepted("feishu", response)) {
+                return ToolResponse.success("notify_feishu", "飞书传输端已接受，实际送达未验证");
             }
             return ToolResponse.error("notify_feishu", "飞书返回错误: " + response);
+        } catch (DeliveryUncertainException e) {
+            log.warn("飞书消息发送结果不确定", e);
+            return ToolResponse.uncertain("notify_feishu", e.getMessage());
         } catch (Exception e) {
             log.error("飞书消息发送失败", e);
             return ToolResponse.fromException("notify_feishu", e);
@@ -297,18 +378,20 @@ public class NotificationTools {
             });
 
             MimeMessage message = new MimeMessage(session);
-            String fromAddr = emailConfig.getFromAddress();
-            if (fromAddr == null || fromAddr.isBlank() || !fromAddr.contains("@")) {
-                fromAddr = emailConfig.getUsername();
-            }
-            message.setFrom(new InternetAddress(fromAddr));
+            message.setFrom(senderAddress());
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
             message.setSubject(subject, "UTF-8");
             message.setText(body, "UTF-8");
 
-            Transport.send(message);
-            log.info("通知邮件发送成功: to={}", recipient);
-            return ToolResponse.success("notify_email", "通知邮件发送成功，收件人: " + recipient);
+            try {
+                Transport.send(message);
+            } catch (MessagingException uncertain) {
+                return ToolResponse.uncertain("notify_email",
+                        "SMTP 发送结果不确定，请先检查收件端再重试: " + uncertain.getMessage());
+            }
+            log.info("通知邮件已被 SMTP 传输端接受: to={}", recipient);
+            return ToolResponse.success("notify_email",
+                    "通知邮件已被 SMTP 传输端接受，实际送达未验证，收件人: " + recipient);
         } catch (Exception e) {
             log.error("通知邮件发送失败", e);
             return ToolResponse.fromException("notify_email", e);
@@ -335,7 +418,11 @@ public class NotificationTools {
             String body = bodyTemplate.replace("${message}", escapeJson(message));
 
             String response = sendHttpPost(config.getCustomWebhook(), body, config.getCustomContentType());
-            return ToolResponse.success("notify_custom_webhook", "自定义 Webhook 发送成功，响应: " + truncate(response, 200));
+            return ToolResponse.success("notify_custom_webhook",
+                    "自定义 Webhook 已接受请求，实际送达未验证，响应: " + truncate(response, 200));
+        } catch (DeliveryUncertainException e) {
+            log.warn("自定义 Webhook 发送结果不确定", e);
+            return ToolResponse.uncertain("notify_custom_webhook", e.getMessage());
         } catch (Exception e) {
             log.error("自定义 Webhook 发送失败", e);
             return ToolResponse.fromException("notify_custom_webhook", e);
@@ -379,38 +466,43 @@ public class NotificationTools {
      * @param channel 渠道 key，取值参见 {@link com.javaclaw.task.TaskNotificationChannel}
      * @param title   通知标题
      * @param message 通知正文
-     * @return 简短的中文状态描述（"发送成功"/"发送失败: ..." 等）
+     * @return 展示文案；状态消费方应调用 {@link #sendByChannelResult(String, String, String)}
      */
     public String sendByChannel(String channel, String title, String message) {
+        return sendByChannelResult(channel, title, message).message();
+    }
+
+    /** Returns typed transport acceptance for schedulers and other programmatic callers. */
+    public DeliveryResult sendByChannelResult(String channel, String title, String message) {
         if (channel == null || channel.isBlank() || "none".equalsIgnoreCase(channel)) {
-            return "未选择通知渠道";
+            return DeliveryResult.skipped("未选择通知渠道");
         }
         NotificationConfig config = notificationConfig;
-        String key = channel.toLowerCase();
+        String key = channel.toLowerCase(java.util.Locale.ROOT);
         return switch (key) {
             case "all" -> {
                 if (!config.hasEnabledChannel()) {
-                    yield "未启用任何通知渠道";
+                    yield DeliveryResult.skipped("未启用任何通知渠道");
                 }
-                yield sendNotification(message, title);
+                yield broadcast(title, message, config);
             }
             case "dingtalk" -> config.isDingtalkEnabled()
-                    ? sendDingtalkInternal(title, message) : "钉钉通知未启用";
+                    ? sendDingtalkInternal(title, message) : DeliveryResult.skipped("钉钉通知未启用");
             case "wechat" -> config.isWechatEnabled()
-                    ? sendWechatInternal(title, message) : "企业微信通知未启用";
+                    ? sendWechatInternal(title, message) : DeliveryResult.skipped("企业微信通知未启用");
             case "feishu" -> config.isFeishuEnabled()
-                    ? sendFeishuInternal(title, message) : "飞书通知未启用";
+                    ? sendFeishuInternal(title, message) : DeliveryResult.skipped("飞书通知未启用");
             case "email" -> config.isEmailNotifyEnabled()
-                    ? sendEmailNotifyInternal(title, message) : "邮件通知未启用";
+                    ? sendEmailNotifyInternal(title, message) : DeliveryResult.skipped("邮件通知未启用");
             case "custom" -> config.isCustomEnabled()
-                    ? sendCustomWebhookInternal(title, message) : "自定义 Webhook 未启用";
-            default -> "未知通知渠道: " + channel;
+                    ? sendCustomWebhookInternal(title, message) : DeliveryResult.skipped("自定义 Webhook 未启用");
+            default -> DeliveryResult.failed("未知通知渠道: " + channel);
         };
     }
 
     // ==================== 内部发送方法（供 notify_send 调用） ====================
 
-    private String sendDingtalkInternal(String title, String message) {
+    private DeliveryResult sendDingtalkInternal(String title, String message) {
         try {
             NotificationConfig config = notificationConfig;
             String webhookUrl = buildDingtalkUrl(config);
@@ -418,55 +510,71 @@ public class NotificationTools {
                     "{\"msgtype\":\"text\",\"text\":{\"content\":\"%s\"}}",
                     escapeJson(title + "\n" + message));
             String response = sendHttpPost(webhookUrl, body, "application/json");
-            if (response.contains("\"errcode\":0") || response.contains("\"errmsg\":\"ok\"")) {
-                return "发送成功";
+            if (webhookAccepted("dingtalk", response)) {
+                return DeliveryResult.sent();
             }
-            return "发送失败: " + truncate(response, 100);
+            return DeliveryResult.failed(truncate(response, 100));
+        } catch (DeliveryUncertainException e) {
+            return DeliveryResult.uncertain(e.getMessage());
         } catch (Exception e) {
-            return "发送失败: " + e.getMessage();
+            return DeliveryResult.failed(e.getMessage());
         }
     }
 
-    private String sendWechatInternal(String title, String message) {
+    private DeliveryResult sendWechatInternal(String title, String message) {
         try {
             NotificationConfig config = notificationConfig;
             String body = String.format(
                     "{\"msgtype\":\"text\",\"text\":{\"content\":\"%s\"}}",
                     escapeJson(title + "\n" + message));
             String response = sendHttpPost(config.getWechatWebhook(), body, "application/json");
-            if (response.contains("\"errcode\":0") || response.contains("\"errmsg\":\"ok\"")) {
-                return "发送成功";
+            if (webhookAccepted("wechat", response)) {
+                return DeliveryResult.sent();
             }
-            return "发送失败: " + truncate(response, 100);
+            return DeliveryResult.failed(truncate(response, 100));
+        } catch (DeliveryUncertainException e) {
+            return DeliveryResult.uncertain(e.getMessage());
         } catch (Exception e) {
-            return "发送失败: " + e.getMessage();
+            return DeliveryResult.failed(e.getMessage());
         }
     }
 
-    private String sendFeishuInternal(String title, String message) {
+    private DeliveryResult sendFeishuInternal(String title, String message) {
         try {
             NotificationConfig config = notificationConfig;
-            CredentialUsage.requirePlaintext(config.getFeishuSecret(), "飞书签名密钥");
-            String body = String.format(
-                    "{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}",
-                    escapeJson(title + "\n" + message));
-            String response = sendHttpPost(config.getFeishuWebhook(), body, "application/json");
-            if (response.contains("\"StatusCode\":0") || response.contains("\"code\":0") || response.contains("\"StatusMessage\":\"success\"")) {
-                return "发送成功";
+            String secret = CredentialUsage.requirePlaintext(
+                    config.getFeishuSecret(), "飞书签名密钥");
+            String content = escapeJson(title + "\n" + message);
+            String body;
+            if (secret != null && !secret.isBlank()) {
+                long timestamp = System.currentTimeMillis() / 1000;
+                body = String.format(
+                        "{\"timestamp\":\"%d\",\"sign\":\"%s\",\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}",
+                        timestamp, escapeJson(generateFeishuSign(timestamp, secret)), content);
+            } else {
+                body = String.format(
+                        "{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}",
+                        content);
             }
-            return "发送失败: " + truncate(response, 100);
+            String response = sendHttpPost(config.getFeishuWebhook(), body, "application/json");
+            if (webhookAccepted("feishu", response)) {
+                return DeliveryResult.sent();
+            }
+            return DeliveryResult.failed(truncate(response, 100));
+        } catch (DeliveryUncertainException e) {
+            return DeliveryResult.uncertain(e.getMessage());
         } catch (Exception e) {
-            return "发送失败: " + e.getMessage();
+            return DeliveryResult.failed(e.getMessage());
         }
     }
 
-    private String sendEmailNotifyInternal(String title, String message) {
+    private DeliveryResult sendEmailNotifyInternal(String title, String message) {
         try {
             String password = CredentialUsage.requirePlaintext(emailConfig.getPassword(), "邮件密码");
             NotificationConfig notifyConfig = notificationConfig;
 
             if (!emailConfig.isConfigured() || notifyConfig.getEmailNotifyTo().isBlank()) {
-                return "发送失败: 邮件未配置";
+                return DeliveryResult.failed("邮件未配置");
             }
 
             Properties props = new Properties();
@@ -486,34 +594,90 @@ public class NotificationTools {
             });
 
             MimeMessage msg = new MimeMessage(session);
-            String fromAddr = emailConfig.getFromAddress();
-            if (fromAddr == null || fromAddr.isBlank() || !fromAddr.contains("@")) {
-                fromAddr = emailConfig.getUsername();
-            }
-            msg.setFrom(new InternetAddress(fromAddr));
+            msg.setFrom(senderAddress());
             msg.setRecipients(Message.RecipientType.TO, InternetAddress.parse(notifyConfig.getEmailNotifyTo()));
             msg.setSubject(title, "UTF-8");
             msg.setText(message, "UTF-8");
-            Transport.send(msg);
-            return "发送成功";
+            try {
+                Transport.send(msg);
+            } catch (MessagingException uncertain) {
+                return DeliveryResult.uncertain(uncertain.getMessage());
+            }
+            return DeliveryResult.sent();
         } catch (Exception e) {
-            return "发送失败: " + e.getMessage();
+            return DeliveryResult.failed(e.getMessage());
         }
     }
 
-    private String sendCustomWebhookInternal(String title, String message) {
+    private DeliveryResult sendCustomWebhookInternal(String title, String message) {
         try {
             NotificationConfig config = notificationConfig;
             String bodyTemplate = config.getCustomBodyTemplate();
             String body = bodyTemplate.replace("${message}", escapeJson(title + "\n" + message));
             sendHttpPost(config.getCustomWebhook(), body, config.getCustomContentType());
-            return "发送成功";
+            return DeliveryResult.sent();
+        } catch (DeliveryUncertainException e) {
+            return DeliveryResult.uncertain(e.getMessage());
         } catch (Exception e) {
-            return "发送失败: " + e.getMessage();
+            return DeliveryResult.failed(e.getMessage());
         }
     }
 
     // ==================== HTTP 和签名工具方法 ====================
+
+    private InternetAddress senderAddress() throws AddressException {
+        String configured = emailConfig.getFromAddress();
+        if (configured != null && !configured.isBlank()) {
+            try {
+                InternetAddress address = new InternetAddress(configured, true);
+                address.validate();
+                return address;
+            } catch (AddressException invalidConfiguredAddress) {
+                log.warn("通知发件地址无效，改用已配置邮箱账号");
+            }
+        }
+        InternetAddress account = new InternetAddress(emailConfig.getUsername(), true);
+        account.validate();
+        return account;
+    }
+
+    /** Provider acknowledgements are protocol fields, never words in a response body. */
+    static boolean webhookAccepted(String provider, String response) {
+        if (response == null || response.isBlank()) return false;
+        try (JsonParser parser = WEBHOOK_JSON.createParser(response)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) return false;
+            Long errorCode = null;
+            Long providerCode = null;
+            Long statusCode = null;
+            boolean providerCodePresent = false;
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                if (parser.currentToken() != JsonToken.FIELD_NAME) return false;
+                String field = parser.currentName();
+                JsonToken value = parser.nextToken();
+                if (value == null) return false;
+                if ("errcode".equals(field) || "code".equals(field)
+                        || "StatusCode".equals(field)) {
+                    Long numeric = value == JsonToken.VALUE_NUMBER_INT
+                            ? parser.getLongValue() : null;
+                    if ("errcode".equals(field)) errorCode = numeric;
+                    else if ("code".equals(field)) {
+                        providerCode = numeric;
+                        providerCodePresent = true;
+                    } else statusCode = numeric;
+                }
+                parser.skipChildren();
+            }
+            if (parser.nextToken() != null) return false;
+            return switch (provider) {
+                case "dingtalk", "wechat" -> Long.valueOf(0).equals(errorCode);
+                case "feishu" -> Long.valueOf(0).equals(
+                        providerCodePresent ? providerCode : statusCode);
+                default -> false;
+            };
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     /**
      * 构建钉钉 Webhook URL（含签名）
@@ -556,10 +720,22 @@ public class NotificationTools {
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new DeliveryUncertainException("HTTP 请求中断", interrupted);
+        } catch (java.io.IOException uncertain) {
+            throw new DeliveryUncertainException("HTTP 请求未取得确定响应", uncertain);
+        }
         log.debug("Webhook 响应: status={}, body={}", response.statusCode(), truncate(response.body(), 200));
 
-        if (response.statusCode() >= 400) {
+        if (response.statusCode() >= 500) {
+            throw new DeliveryUncertainException("HTTP " + response.statusCode()
+                    + "，服务端可能已接收请求");
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new RuntimeException("HTTP " + response.statusCode() + ": " + truncate(response.body(), 200));
         }
         return response.body();

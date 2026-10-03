@@ -6,6 +6,9 @@ import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
 import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
 import com.javaclaw.application.chat.ChatHistoryApplicationService.SessionSnapshot;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ThreadClient;
+import com.javaclaw.framework.api.ThreadStartRequest;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterEach;
@@ -30,6 +33,23 @@ class ChatHistoryWorkspaceIsolationTest {
     Path tempDirectory;
 
     private AnnotationConfigApplicationContext context;
+
+    @Test
+    void untitledStateRoundTripsIndependentlyOfLocalizedTitle() {
+        context = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("titles")));
+        ChatHistoryApplicationService history = context.getBean(ChatHistoryApplicationService.class);
+        String workspace = context.getBean(WorkspaceManager.class).getCurrentWorkspaceId();
+        SessionSnapshot pending = new SessionSnapshot("pending", "新的对话", LocalDateTime.now(), true);
+        SessionSnapshot explicit = new SessionSnapshot("explicit", "新的对话", LocalDateTime.now(), false);
+
+        history.saveSessions(workspace, List.of(pending, explicit));
+
+        var loaded = history.sessions(workspace);
+        assertTrue(loaded.stream().anyMatch(value -> value.id().equals("pending")
+                && value.autoTitlePending()));
+        assertTrue(loaded.stream().anyMatch(value -> value.id().equals("explicit")
+                && !value.autoTitlePending()));
+    }
 
     @AfterEach
     void closeContext() {
@@ -75,6 +95,38 @@ class ChatHistoryWorkspaceIsolationTest {
                 .getFirst().content());
         assertEquals("target", history.messages(targetWorkspace, target.id())
                 .getFirst().content());
+    }
+
+    @Test
+    void legacyChatRowsSurviveIdempotentThreadRegistration() {
+        context = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("legacy")));
+        ChatHistoryApplicationService history = context.getBean(ChatHistoryApplicationService.class);
+        ThreadClient threads = context.getBean(ThreadClient.class);
+        var jdbc = context.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        String workspace = context.getBean(WorkspaceManager.class).getCurrentWorkspaceId();
+        String legacyId = "legacy-session";
+        String title = "旧会话标题";
+        SessionSnapshot legacy = new SessionSnapshot(legacyId, title, LocalDateTime.now());
+        history.saveMessages(workspace, legacyId, List.of(message("旧消息")));
+        history.saveSessions(workspace, List.of(legacy));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_threads WHERE workspace_id=? AND thread_id=?",
+                Integer.class, workspace, legacyId));
+
+        RunScope scope = new RunScope(workspace, "local-user", legacyId);
+        threads.start(ThreadStartRequest.root(scope, title));
+        threads.start(ThreadStartRequest.root(scope, title));
+
+        assertEquals(title, threads.get(scope).title());
+        assertEquals(List.of("旧消息"), history.messages(workspace, legacyId).stream()
+                .map(MessageSnapshot::content).toList());
+        assertEquals(List.of(legacyId), history.sessions(workspace).stream()
+                .map(SessionSnapshot::id).toList());
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_threads WHERE workspace_id=? AND thread_id=?",
+                Integer.class, workspace, legacyId));
+        assertEquals(1, threads.events(scope, 0).stream()
+                .filter(event -> event.type().equals("thread/started")).count());
     }
 
     @Test

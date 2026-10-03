@@ -46,7 +46,7 @@ public final class SddTaskCell extends ListCell<Task> {
             setGraphic(null);
             return;
         }
-        stateBadge.setText(SddTaskFormat.badgeLabel(task.state()));
+        stateBadge.setText(SddTaskFormat.badgeLabel(task.state(), task.taskResult()));
         stateBadge.getStyleClass().setAll(
                 "jc-badge", "sdd-card-badge", SddTaskFormat.badgeStyle(task.state()));
         progressLabel.setText(task.progress() + "%");
@@ -58,7 +58,7 @@ public final class SddTaskCell extends ListCell<Task> {
         }
         root.getStyleClass().remove("sdd-task-card-terminal");
         if (task.state().isTerminal()) root.getStyleClass().add("sdd-task-card-terminal");
-        setAccessibleText(task.title() + "，" + task.state().label()
+        setAccessibleText(task.title() + "，" + SddTaskFormat.badgeLabel(task.state(), task.taskResult())
                 + "，进度 " + task.progress() + "%");
         selectedStyle(isSelected());
         setGraphic(root);

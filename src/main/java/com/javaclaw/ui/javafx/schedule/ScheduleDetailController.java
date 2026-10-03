@@ -3,6 +3,7 @@ package com.javaclaw.ui.javafx.schedule;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RuntimeState;
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
+import com.javaclaw.schedule.ExecutionPolicy;
 import com.javaclaw.task.TaskNotificationChannel;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import javafx.event.ActionEvent;
@@ -17,6 +18,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.VBox;
+import javafx.util.StringConverter;
 
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
@@ -61,6 +63,7 @@ public final class ScheduleDetailController implements AutoCloseable {
     @FXML private TextField cronField;
     @FXML private Label cronHint;
     @FXML private TextArea promptArea;
+    @FXML private ComboBox<ExecutionPolicy> executionPolicyCombo;
     @FXML private ToggleSwitch notifyToggle;
     @FXML private ComboBox<String> channelCombo;
     @FXML private ToggleSwitch authorizeToggle;
@@ -82,10 +85,44 @@ public final class ScheduleDetailController implements AutoCloseable {
 
     @FXML
     private void initialize() {
-        intervalUnitCombo.getItems().setAll("分钟", "小时", "天");
-        for (String key : TaskNotificationChannel.ORDERED_CHANNELS) {
-            channelCombo.getItems().add(TaskNotificationChannel.displayLabel(key));
-        }
+        intervalUnitCombo.getItems().setAll("minute", "hour", "day");
+        intervalUnitCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(String key) {
+                return switch (key == null ? "" : key) {
+                    case "hour" -> "小时";
+                    case "day" -> "天";
+                    default -> "分钟";
+                };
+            }
+            @Override public String fromString(String text) {
+                throw new UnsupportedOperationException("间隔单位由选项值确定");
+            }
+        });
+        intervalUnitCombo.setValue("minute");
+        executionPolicyCombo.getItems().setAll(ExecutionPolicy.values());
+        executionPolicyCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(ExecutionPolicy policy) {
+                if (policy == null) return "";
+                return policy == ExecutionPolicy.UNTIL_CONDITION
+                        ? "目标验证完成后停用" : "持续执行";
+            }
+            @Override public ExecutionPolicy fromString(String text) {
+                throw new UnsupportedOperationException("执行策略由选项值确定");
+            }
+        });
+        executionPolicyCombo.valueProperty().addListener((ignored, previous, selected) -> {
+            if (!suppressEvents) changedAction.run();
+        });
+        channelCombo.getItems().setAll(TaskNotificationChannel.ORDERED_CHANNELS);
+        channelCombo.setConverter(new StringConverter<>() {
+            @Override public String toString(String key) {
+                return TaskNotificationChannel.displayLabel(key);
+            }
+            @Override public String fromString(String text) {
+                throw new UnsupportedOperationException("通知渠道由选项值确定");
+            }
+        });
+        channelCombo.setValue(TaskNotificationChannel.NONE);
         historyList.setCellFactory(ignored -> historyCells.create());
         enabledToggle.selectedProperty().addListener((ignored, previous, enabled) -> {
             if (!suppressEvents) toggleAction.accept(enabled);
@@ -133,10 +170,12 @@ public final class ScheduleDetailController implements AutoCloseable {
         String once = (onceDateField.getText().strip() + " " + onceTimeField.getText().strip()).strip();
         return new SaveCommand(task.id(), nameField.getText(), task.description(),
                 viewModel.triggerTypeProperty().get(), positiveInt(intervalValueField.getText()),
-                unitKey(intervalUnitCombo.getValue()), dailyTimeField.getText(), cronField.getText(),
+                intervalUnitCombo.getValue(), dailyTimeField.getText(), cronField.getText(),
                 once, promptArea.getText(), enabledToggle.isSelected(), task.version(),
-                notifyToggle.isSelected(), TaskNotificationChannel.fromLabel(channelCombo.getValue()),
-                authorizeToggle.isSelected(), draft);
+                notifyToggle.isSelected(), channelCombo.getValue(),
+                authorizeToggle.isSelected(), draft,
+                executionPolicyCombo.getValue() == null
+                        ? ExecutionPolicy.RECURRING : executionPolicyCombo.getValue());
     }
 
     Task task() { return viewModel.taskProperty().get(); }
@@ -193,12 +232,18 @@ public final class ScheduleDetailController implements AutoCloseable {
             onceTimeField.setText(once[1].isBlank() ? "08:30" : once[1]);
             intervalValueField.setText(String.valueOf(Math.max(1,
                     task.intervalValue() > 0 ? task.intervalValue() : task.intervalMinutes())));
-            intervalUnitCombo.setValue(unitLabel(task.intervalUnit()));
+            intervalUnitCombo.setValue(java.util.List.of("minute", "hour", "day")
+                    .contains(Objects.requireNonNullElse(task.intervalUnit(), ""))
+                    ? task.intervalUnit() : "minute");
             dailyTimeField.setText(task.dailyTime().isBlank() ? "09:00" : task.dailyTime());
             cronField.setText(task.cronExpression());
             promptArea.setText(task.prompt());
+            executionPolicyCombo.setValue(task.executionPolicy());
             notifyToggle.setSelected(task.notifyEnabled());
-            channelCombo.setValue(TaskNotificationChannel.displayLabel(task.notifyChannel()));
+            channelCombo.setValue(TaskNotificationChannel.ORDERED_CHANNELS
+                    .contains(Objects.requireNonNullElse(task.notifyChannel(), ""))
+                    ? task.notifyChannel()
+                            : TaskNotificationChannel.NONE);
             channelCombo.setDisable(!task.notifyEnabled());
             authorizeToggle.setSelected(task.unattendedToolsAuthorized());
             updateTriggerFields();
@@ -231,9 +276,15 @@ public final class ScheduleDetailController implements AutoCloseable {
         lastBadge.getStyleClass().removeAll("jc-badge-ok", "jc-badge-fail", "jc-badge-stopped");
         showNode(lastBadge, hasLast);
         if (hasLast) {
-            lastBadge.setText(task.lastRunStatus());
-            lastBadge.getStyleClass().add("成功".equals(task.lastRunStatus()) ? "jc-badge-ok"
-                    : "已取消".equals(task.lastRunStatus()) ? "jc-badge-stopped" : "jc-badge-fail");
+            var taskResult = task.history().isEmpty() ? null : task.history().getFirst().taskResult();
+            lastBadge.setText(ScheduleOutcomePresentation.label(task.executionStatus(), taskResult));
+            lastBadge.getStyleClass().add(task.executionStatus()
+                    == com.javaclaw.application.schedule.ScheduleExecutionStatus.CANCELLED ? "jc-badge-stopped"
+                    : ScheduleOutcomePresentation.runCompleted(task.executionStatus())
+                        ? taskResult != null && taskResult.outcome()
+                                == com.javaclaw.framework.api.TaskOutcome.VERIFIED_COMPLETE
+                                ? "jc-badge-ok" : "jc-badge-stopped"
+                        : "jc-badge-fail");
         }
         runsStat.setText(task.runCount() + " / " + task.failCount());
     }
@@ -275,14 +326,6 @@ public final class ScheduleDetailController implements AutoCloseable {
     private static int positiveInt(String value) {
         try { return Math.max(1, Integer.parseInt(value.strip())); }
         catch (RuntimeException ignored) { return 1; }
-    }
-
-    private static String unitLabel(String key) {
-        return "hour".equals(key) ? "小时" : "day".equals(key) ? "天" : "分钟";
-    }
-
-    private static String unitKey(String label) {
-        return "小时".equals(label) ? "hour" : "天".equals(label) ? "day" : "minute";
     }
 
     private static void showNode(Node node, boolean visible) {

@@ -17,8 +17,9 @@ public final class GoalPrompts {
             规则：
             1. 目标数量 1~4 个，每个目标简洁具体（可验证）
             2. 必须同时给出结构化核验点 criteria 列表，每条形如 {"type":"...", "predicate":"..."}
-               - type 取值：artifact_exists / command_exit_zero / output_contains / external_check / freeform
-               - predicate 是该核验项的具体内容（路径、命令、关键词、检查项描述）
+               - type 取值：artifact_exists / command_exit_zero / external_check / freeform
+               - predicate 是该核验项的具体内容（路径、命令、检查项描述）
+               - 不得生成 output_contains；字面内容匹配只能由用户通过独立的结构化条件明确指定
             3. successCriteria 是对整体完成度的自然语言总结
             4. 简单问答、闲聊 → goals 与 criteria 都返回空列表
             5. 严格返回 JSON，不要其他文字

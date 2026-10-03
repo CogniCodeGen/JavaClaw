@@ -90,7 +90,7 @@ public final class WorkflowViewController implements AutoCloseable {
         titleLabel.textProperty().bind(viewModel.titleProperty());
         titleHint.textProperty().bind(viewModel.titleHintProperty());
         saveStateLabel.textProperty().bind(viewModel.saveStateProperty());
-        viewModel.saveStateProperty().addListener(
+        viewModel.saveStatusProperty().addListener(
                 (ignored, previous, value) -> updateSaveStateStyle(value));
         nodePalette.disableProperty().bind(viewModel.readOnlyProperty()
                 .or(viewModel.selectedWorkflowProperty().isNull()));
@@ -319,12 +319,14 @@ public final class WorkflowViewController implements AutoCloseable {
                 ? failure.getClass().getSimpleName() : failure.getMessage()));
     }
 
-    private void updateSaveStateStyle(String value) {
+    private void updateSaveStateStyle(WorkflowViewModel.SaveStatus value) {
         saveStateLabel.getStyleClass().removeAll(
                 "workflow-save-pending", "workflow-save-readonly");
-        if ("只读".equals(value)) saveStateLabel.getStyleClass().add("workflow-save-readonly");
-        else if ("保存中…".equals(value) || "保存失败".equals(value)) {
-            saveStateLabel.getStyleClass().add("workflow-save-pending");
+        if (value == null) return;
+        switch (value) {
+            case READ_ONLY -> saveStateLabel.getStyleClass().add("workflow-save-readonly");
+            case SAVING, FAILED -> saveStateLabel.getStyleClass().add("workflow-save-pending");
+            case NONE, SAVED -> { }
         }
     }
 

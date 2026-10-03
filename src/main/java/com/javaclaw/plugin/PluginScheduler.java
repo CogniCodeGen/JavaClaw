@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Plugin API 3.0 执行适配器。
+ * Plugin API 4.0 执行适配器。
  *
  * <p>所有任务正文复用进程级 {@link ManagedTaskExecutor} 的 I/O 虚拟线程池；本类只增加插件身份、
  * 独立并发配额、统一 API 句柄和卸载边界。延时及固定频率任务复用根级单线程触发器，触发线程

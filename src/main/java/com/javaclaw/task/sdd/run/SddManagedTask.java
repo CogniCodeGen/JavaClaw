@@ -26,6 +26,8 @@ public class SddManagedTask {
     public int progress;
     /** 终态结果说明（完成/失败/待人工原因）。 */
     public String result;
+    /** Separate user-task acceptance; null denotes historical records without verification. */
+    public com.javaclaw.framework.api.TaskResult taskResult;
 
     public long totalInputTokens;
     public long totalOutputTokens;

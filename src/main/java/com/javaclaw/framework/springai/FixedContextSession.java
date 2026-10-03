@@ -170,7 +170,7 @@ final class FixedContextSession {
         ToolDescriptor descriptor = new ToolDescriptor(toolName(source),
                 "Read fixed context " + source.id(), schema,
                 source.group(), source.requiredPermissions(), true);
-        return new FrameworkTool() {
+        return new com.javaclaw.framework.spi.FrameworkContextReadTool() {
             @Override public ToolDescriptor descriptor() { return descriptor; }
             @Override public JsonNode execute(JsonNode arguments, ToolExecutionContext context) {
                 FixedContextSnapshot snapshot = source.read(request.runRequest());

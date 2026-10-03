@@ -20,6 +20,8 @@ import javafx.collections.ObservableList;
 /** 工作流页面状态；不持有应用服务、仓储或运行时对象。 */
 public final class WorkflowViewModel {
 
+    public enum SaveStatus { NONE, SAVED, SAVING, READ_ONLY, FAILED }
+
     private final ObservableList<WorkflowItem> workflows = FXCollections.observableArrayList();
     private final ObservableList<GraphRun> runs = FXCollections.observableArrayList();
     private final ObjectProperty<WorkflowItem> selectedWorkflow = new SimpleObjectProperty<>();
@@ -30,6 +32,8 @@ public final class WorkflowViewModel {
     private final StringProperty title = new SimpleStringProperty("工作流中心");
     private final StringProperty titleHint = new SimpleStringProperty("选择一个工作流开始编排");
     private final StringProperty saveState = new SimpleStringProperty("");
+    private final ObjectProperty<SaveStatus> saveStatus =
+            new SimpleObjectProperty<>(SaveStatus.NONE);
     private final StringProperty canvasHint = new SimpleStringProperty(
             "拖拽节点调整流程 · 右键节点创建连线");
     private final StringProperty console = new SimpleStringProperty("");
@@ -56,6 +60,8 @@ public final class WorkflowViewModel {
 
     public StringProperty saveStateProperty() { return saveState; }
 
+    public ObjectProperty<SaveStatus> saveStatusProperty() { return saveStatus; }
+
     public StringProperty canvasHintProperty() { return canvasHint; }
 
     public StringProperty consoleProperty() { return console; }
@@ -81,7 +87,7 @@ public final class WorkflowViewModel {
             readOnly.set(false);
             title.set("工作流中心");
             titleHint.set("选择一个工作流开始编排");
-            saveState.set("");
+            setSaveStatus(SaveStatus.NONE);
             dirty.set(false);
             runs.clear();
             return;
@@ -101,7 +107,7 @@ public final class WorkflowViewModel {
         graph.set(editor.current());
         if (!readOnly.get()) {
             dirty.set(true);
-            saveState.set("保存中…");
+            setSaveStatus(SaveStatus.SAVING);
         }
     }
 
@@ -111,12 +117,23 @@ public final class WorkflowViewModel {
 
     public void markSaved() {
         dirty.set(false);
-        saveState.set(readOnly.get() ? "只读" : "已保存");
+        setSaveStatus(readOnly.get() ? SaveStatus.READ_ONLY : SaveStatus.SAVED);
     }
 
     public void markSaveFailed() {
         dirty.set(true);
-        saveState.set("保存失败");
+        setSaveStatus(SaveStatus.FAILED);
+    }
+
+    private void setSaveStatus(SaveStatus status) {
+        saveStatus.set(status);
+        saveState.set(switch (status) {
+            case NONE -> "";
+            case SAVED -> "已保存";
+            case SAVING -> "保存中…";
+            case READ_ONLY -> "只读";
+            case FAILED -> "保存失败";
+        });
     }
 
     public void selectNode(NodeDefinition node) {

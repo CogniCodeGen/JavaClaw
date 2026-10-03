@@ -121,7 +121,7 @@ class ScheduleDomainBehaviorTest {
         task.recordCancellation();
         assertEquals(3, task.getRunCount());
         assertEquals(1, task.getFailCount());
-        assertEquals("已取消", task.getLastRunStatus());
+        assertEquals("CANCELLED", task.getLastRunStatus());
         assertFalse(task.getLastRunTime().isBlank());
     }
 

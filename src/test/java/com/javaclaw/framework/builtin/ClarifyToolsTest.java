@@ -11,9 +11,8 @@ class ClarifyToolsTest {
 
     @Test
     void rejectsAnEmptyClarificationWithoutSuspendingTheRun() {
-        String result = new ClarifyTools().askUserClarification(" ", null);
-
-        assertTrue(result.contains("[失败]"), result);
+        assertThrows(IllegalArgumentException.class,
+                () -> new ClarifyTools().askUserClarification(" ", null));
     }
 
     @Test

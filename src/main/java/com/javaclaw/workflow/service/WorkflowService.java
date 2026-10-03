@@ -3,6 +3,7 @@ package com.javaclaw.workflow.service;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
@@ -308,10 +309,14 @@ public final class WorkflowService implements AutoCloseable, com.javaclaw.framew
             } else if (event instanceof GraphEvent.RunFinished e) {
                 activeByThread.remove(thread, e.runId());
                 if (e.status() == RunStatus.FAILED) sendError(callbacks, new IllegalStateException(e.error()));
-                else if (e.status() == RunStatus.RECOVERY_REQUIRED)
+                else if (e.status() == RunStatus.RECOVERY_REQUIRED
+                        || e.status() == RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION
+                        || e.status() == RunStatus.PAUSED)
                     sendError(callbacks, new com.javaclaw.framework.api.TurnPausedException(e.error()));
-                else if (e.status() == RunStatus.CANCELLED) sendCancelled(callbacks);
-                else sendComplete(callbacks);
+                else if (e.status() == RunStatus.CANCELLED) sendCancelled(callbacks, e.error());
+                else if (e.status() == RunStatus.WAITING_INPUT)
+                    callbacks.onTerminal(new ConversationOutcome.WaitingInput(e.runId(), "工作流等待输入"));
+                else sendComplete(callbacks, taskResultFor(e.runId()));
             }
         };
     }
@@ -441,9 +446,15 @@ public final class WorkflowService implements AutoCloseable, com.javaclaw.framew
                 if (finished.status() == RunStatus.FAILED) {
                     sendError(pending.callbacks(), new IllegalStateException(finished.error()));
                 } else if (finished.status() == RunStatus.CANCELLED) {
-                    sendCancelled(pending.callbacks());
+                    sendCancelled(pending.callbacks(), finished.error());
+                } else if (finished.status() == RunStatus.WAITING_INPUT) {
+                    pending.callbacks().onTerminal(new ConversationOutcome.WaitingInput(
+                            finished.runId(), "工作流等待输入"));
+                } else if (finished.status() != RunStatus.COMPLETED) {
+                    sendError(pending.callbacks(), new com.javaclaw.framework.api.TurnPausedException(
+                            finished.error() == null ? "工作流已暂停" : finished.error()));
                 } else {
-                    sendComplete(pending.callbacks());
+                    sendComplete(pending.callbacks(), taskResultFor(finished.runId()));
                 }
                 return;
             }
@@ -468,9 +479,17 @@ public final class WorkflowService implements AutoCloseable, com.javaclaw.framew
         }
     }
 
-    private static void sendComplete(ConversationCallbacks callbacks) {
+    private TaskResult taskResultFor(String runId) {
+        GraphRun run = executions.load(runId);
+        TaskResult nested = run == null ? null : run.taskResult();
+        return nested == null
+                ? TaskResult.unverified("工作流已结束，但没有任务验收证据")
+                : nested;
+    }
+
+    private static void sendComplete(ConversationCallbacks callbacks, TaskResult result) {
         try {
-            callbacks.onTerminal(ConversationOutcome.completed());
+            callbacks.onTerminal(ConversationOutcome.completed(result));
         } catch (Throwable callbackFailure) {
             log.debug("工作流完成回调失败", callbackFailure);
         }
@@ -484,13 +503,20 @@ public final class WorkflowService implements AutoCloseable, com.javaclaw.framew
         }
     }
 
-    private static void sendCancelled(ConversationCallbacks callbacks) {
+    private static void sendCancelled(ConversationCallbacks callbacks, String detail) {
         try {
-            callbacks.onTerminal(new ConversationOutcome.Cancelled(
-                    com.javaclaw.api.conversation.CancellationReason.USER_REQUEST, true));
+            String reason = detail == null || detail.isBlank() ? "工作流已取消" : detail;
+            callbacks.onTerminal(ConversationOutcome.cancelled(
+                    com.javaclaw.api.conversation.CancellationReason.UNKNOWN,
+                    new TaskResult(com.javaclaw.framework.api.TaskOutcome.BLOCKED,
+                            List.of(), reason, List.of()), reason));
         } catch (Throwable callbackFailure) {
             log.debug("工作流取消回调失败", callbackFailure);
         }
+    }
+
+    private static void sendCancelled(ConversationCallbacks callbacks) {
+        sendCancelled(callbacks, "");
     }
 
     private static ConversationCallbacks mutedRecoveryCallbacks() {

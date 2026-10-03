@@ -225,7 +225,7 @@ final class ServicePluginRegistrar {
                 log.info("服务插件[{}]已验证，等待用户显式批准", descriptor.id());
                 return DiscoveryState.PENDING_APPROVAL;
             } else if (!requestGrant(descriptor, verification,
-                    manualOnFirstApproval ? "批准服务插件：" : "安装服务插件：")) {
+                    manualOnFirstApproval ? GrantAction.APPROVE : GrantAction.INSTALL)) {
                 log.warn("服务插件[{}]尚未获得用户显式批准，已拒绝注册", descriptor.id());
                 return DiscoveryState.PENDING_APPROVAL;
             } else {
@@ -325,13 +325,26 @@ final class ServicePluginRegistrar {
     private boolean requestGrant(
             PluginDescriptor descriptor,
             ArtifactVerification verification) {
-        return requestGrant(descriptor, verification, "安装服务插件：");
+        return requestGrant(descriptor, verification, GrantAction.INSTALL);
+    }
+
+    private enum GrantAction {
+        INSTALL("安装服务插件：", "安装"),
+        APPROVE("批准服务插件：", "批准并注册");
+
+        private final String title;
+        private final String verb;
+
+        GrantAction(String title, String verb) {
+            this.title = title;
+            this.verb = verb;
+        }
     }
 
     private boolean requestGrant(
             PluginDescriptor descriptor,
             ArtifactVerification verification,
-            String titlePrefix) {
+            GrantAction action) {
         if (interaction == null || !interaction.isAvailable()) {
             log.warn("无交互端口，服务插件[{}]安装已安全拒绝", descriptor.id());
             return false;
@@ -344,7 +357,6 @@ final class ServicePluginRegistrar {
         String permissions = descriptor.capabilities().isEmpty() ? "无"
                 : descriptor.capabilities().stream().map(Enum::name).sorted()
                 .collect(Collectors.joining("、"));
-        String action = titlePrefix.startsWith("批准") ? "批准并注册" : "安装";
         String key = verification.signerKeySha256();
         String description = "发布者：" + verification.publisher()
                 + (verification.signed()
@@ -355,9 +367,9 @@ final class ServicePluginRegistrar {
                 + "\nDesktop 反向调用权限：" + permissions
                 + "\n外部监听声明：" + endpoints
                 + (hints.usesNativeCode() ? "\n⚠ 该插件包含 native 代码，崩溃将由独立进程隔离。" : "")
-                + "\n\n仅在信任该发布者和上述风险时" + action + "。";
+                + "\n\n仅在信任该发布者和上述风险时" + action.verb + "。";
         return interaction.confirm(new ConfirmRequest(
-                titlePrefix + descriptor.name(), "服务插件", description,
+                action.title + descriptor.name(), "服务插件", description,
                 ConfirmKind.CONFIRM, 90, "", false));
     }
 

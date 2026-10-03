@@ -63,7 +63,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
             List<SessionSnapshot> sessions =
                     jdbc.query(
                             """
-                            SELECT c.id, c.title, c.created_at
+                            SELECT c.id, c.title, c.created_at, c.auto_title_pending
                             FROM chat_sessions c
                             WHERE c.workspace_id = ? AND NOT EXISTS (
                               SELECT 1 FROM agent_threads t WHERE t.workspace_id=c.workspace_id
@@ -77,7 +77,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                                             row.getString("title"),
                                             LocalDateTime.parse(
                                                     row.getString("created_at"),
-                                                    TIMESTAMP_FORMATTER)),
+                                                    TIMESTAMP_FORMATTER),
+                                            row.getBoolean("auto_title_pending")),
                             workspace);
             log.info("会话索引已从 H2 加载: {} 个会话", sessions.size());
             return sessions;
@@ -105,9 +106,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                         jdbc.batchUpdate(
                                 """
                                 MERGE INTO chat_sessions(
-                                    workspace_id, id, title, created_at, updated_at)
+                                    workspace_id, id, title, created_at, auto_title_pending, updated_at)
                                 KEY(workspace_id, id)
-                                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 """,
                                 writable,
                                 writable.size(),
@@ -117,6 +118,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                                     statement.setString(3, session.title());
                                     statement.setString(
                                             4, session.createdAt().format(TIMESTAMP_FORMATTER));
+                                    statement.setBoolean(5, session.autoTitlePending());
                                 });
                     });
             log.info("会话索引已保存到 H2: {} 个会话", snapshot.size());

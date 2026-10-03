@@ -9,7 +9,7 @@ import java.util.Set;
 /**
  * 工具风险等级注册表
  *
- * <p>维护工具名 → {@link ToolRiskLevel} 映射。未注册的工具不触发确认。</p>
+ * <p>维护工具名 → {@link ToolRiskLevel} 映射。未登记的写工具需要确认，未知工具拒绝。</p>
  *
  * <p>{@code cmd_execute} 以 {@code CONFIRM} 等级登记：在托管任务中由
  * {@link ToolConfirmationManager} 统一确认（以便触发 PlannedAction 的免确认匹配）；
@@ -74,18 +74,20 @@ public final class ToolRiskRegistry {
         put(levels, labels, "sys_key_press", ToolRiskLevel.NOTIFY, "系统键盘按键");
         put(levels, labels, "sys_key_combo", ToolRiskLevel.NOTIFY, "系统键盘组合键");
 
-        // ==================== 桌面自动化（操作其他软件） ====================
-        // 启动外部程序可见副作用较大，上 CONFIRM；激活/截图/键鼠属高频交互，沿用系统鼠键约定走 NOTIFY。
-        // desktop_probe / desktop_list_windows 为只读探测，不登记（不触发确认）。
-        put(levels, labels, "desktop_launch", ToolRiskLevel.CONFIRM, "启动外部程序");
-        put(levels, labels, "desktop_activate", ToolRiskLevel.NOTIFY, "激活窗口");
-        put(levels, labels, "desktop_capture", ToolRiskLevel.NOTIFY, "桌面截图");
-        put(levels, labels, "desktop_inspect", ToolRiskLevel.NOTIFY, "检视窗口元素");
-        put(levels, labels, "desktop_click", ToolRiskLevel.NOTIFY, "桌面鼠标点击");
-        put(levels, labels, "desktop_click_ref", ToolRiskLevel.NOTIFY, "按编号点击元素");
-        put(levels, labels, "desktop_type", ToolRiskLevel.NOTIFY, "桌面键盘输入");
-        put(levels, labels, "desktop_type_ref", ToolRiskLevel.NOTIFY, "按编号输入文本");
-        put(levels, labels, "desktop_key", ToolRiskLevel.NOTIFY, "桌面按键");
+        // ==================== 目标绑定桌面会话 ====================
+        // 设置中的电脑应用访问开关与系统权限是统一授权；执行由会话服务再次校验。
+        put(levels, labels, "desktop_session_probe", ToolRiskLevel.NOTIFY, "探测桌面平台能力");
+        put(levels, labels, "desktop_session_targets", ToolRiskLevel.NOTIFY, "发现桌面目标窗口");
+        put(levels, labels, "desktop_session_launch_application", ToolRiskLevel.NOTIFY, "启动桌面应用");
+        put(levels, labels, "desktop_session_open", ToolRiskLevel.NOTIFY, "打开桌面目标会话");
+        put(levels, labels, "desktop_session_snapshot", ToolRiskLevel.NOTIFY, "读取桌面会话截图");
+        put(levels, labels, "desktop_session_observe", ToolRiskLevel.NOTIFY, "识别桌面会话画面");
+        put(levels, labels, "desktop_session_click", ToolRiskLevel.NOTIFY, "桌面会话点击");
+        put(levels, labels, "desktop_session_type", ToolRiskLevel.NOTIFY, "桌面会话输入");
+        put(levels, labels, "desktop_session_key", ToolRiskLevel.NOTIFY, "桌面会话按键");
+        put(levels, labels, "desktop_session_scroll", ToolRiskLevel.NOTIFY, "桌面会话滚动");
+        put(levels, labels, "desktop_session_takeover", ToolRiskLevel.NOTIFY, "桌面会话前台接管");
+        put(levels, labels, "desktop_session_close", ToolRiskLevel.NOTIFY, "关闭桌面会话");
 
         // ==================== 浏览器 — 导航/Tab/视口（NOTIFY） ====================
         put(levels, labels, "web_navigate", ToolRiskLevel.NOTIFY, "浏览器导航");
@@ -184,19 +186,21 @@ public final class ToolRiskRegistry {
         labels.put(tool, label);
     }
 
-    /**
-     * "可按目录限定免确认"的工具集合
-     *
-     * <p>UI 用一个目录选择器统一管理：只要工具调用的描述文本里出现该目录（作为子串），
-     * 即视为在范围内而放行。包含文件读写工具，以及 cmd_execute（命令里常含目录路径，
-     * 例如 {@code cat /path/to/file}，命中后可跳过确认）。</p>
-     */
+    /** Tools for which the settings UI may show a directory scope. No policy parses display text. */
     private static final Set<String> DIR_SCOPED_TOOLS = Set.of(
             "sys_file_write", "sys_file_move", "sys_file_copy", "sys_file_delete", "cmd_execute",
             "code_edit", "code_insert"
     );
 
     private ToolRiskRegistry() {}
+
+    /** Exact registered session tools; the framework bypasses per-call review for these only. */
+    public static boolean isDesktopSessionTool(String name) {
+        if (name == null) return false;
+        var definition = HostTools.CONTRACTS.get(name);
+        return definition != null && "desktop-session".equals(definition.contract().group())
+                && LEVELS.containsKey(name);
+    }
 
     /**
      * 查询工具的风险等级
@@ -205,6 +209,64 @@ public final class ToolRiskRegistry {
      */
     public static ToolRiskLevel levelOf(String toolName) {
         return LEVELS.get(toolName);
+    }
+
+    /** Exact host-owned @Tool inventory, independent of a model or plugin supplied descriptor. */
+    public static boolean isKnownHostTool(String name) {
+        return HostTools.CONTRACTS.containsKey(name);
+    }
+
+    public static boolean isKnownHostReadOnly(String name) {
+        var definition = HostTools.CONTRACTS.get(name);
+        var contract = definition == null ? null : definition.contract();
+        if (contract == null || !contract.idempotent()) return false;
+        return java.util.Set.of(contract.permissions()).equals(java.util.Set.of("tool.read"));
+    }
+
+    public static boolean matchesHostContract(com.javaclaw.framework.spi.ToolDescriptor descriptor) {
+        var definition = HostTools.CONTRACTS.get(descriptor.name());
+        var contract = definition == null ? null : definition.contract();
+        return contract != null && contract.group().equals(descriptor.group())
+                && descriptor.requiredPermissions().equals(
+                        com.javaclaw.framework.api.PermissionSet.of(contract.permissions()))
+                && descriptor.idempotent() == contract.idempotent()
+                && descriptor.effectPolicy() == contract.effectPolicy();
+    }
+
+    /** Exact declaring class of a host tool; an extension cannot impersonate its name. */
+    public static boolean matchesHostImplementation(String name, Class<?> implementation) {
+        var definition = HostTools.CONTRACTS.get(name);
+        return definition != null && definition.owner() == implementation;
+    }
+
+    private static final class HostTools {
+        private record Definition(com.javaclaw.framework.spi.ToolContract contract, Class<?> owner) { }
+        private static final Map<String, Definition> CONTRACTS = load();
+
+        private static Map<String, Definition> load() {
+            Map<String, Definition> found = new HashMap<>();
+            var types = new java.util.ArrayList<>(
+                    com.javaclaw.application.agent.WorkspaceToolObjects.toolContractTypes());
+            types.add(com.javaclaw.framework.builtin.ClarifyTools.class);
+            for (Class<?> type : types) {
+                var classContract = org.springframework.core.annotation.AnnotationUtils.findAnnotation(
+                        type, com.javaclaw.framework.spi.ToolContract.class);
+                for (var method : type.getDeclaredMethods()) {
+                    var tool = org.springframework.core.annotation.AnnotationUtils.findAnnotation(
+                            method, org.springframework.ai.tool.annotation.Tool.class);
+                    if (tool == null) continue;
+                    var contract = org.springframework.core.annotation.AnnotationUtils.findAnnotation(
+                            method, com.javaclaw.framework.spi.ToolContract.class);
+                    if (contract == null) contract = classContract;
+                    if (contract == null) throw new IllegalStateException("missing host tool contract: " + type);
+                    String name = tool.name().isBlank() ? method.getName() : tool.name();
+                    if (found.putIfAbsent(name, new Definition(contract, type)) != null) {
+                        throw new IllegalStateException("duplicate host tool contract: " + name);
+                    }
+                }
+            }
+            return Map.copyOf(found);
+        }
     }
 
     /** 工具是否受管（需确认或通知） */

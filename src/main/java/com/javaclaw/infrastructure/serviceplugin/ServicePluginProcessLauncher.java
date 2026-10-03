@@ -2,6 +2,7 @@ package com.javaclaw.infrastructure.serviceplugin;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.application.serviceplugin.ServicePluginHostServiceRouter;
+import com.javaclaw.application.serviceplugin.ServicePluginLogEntry;
 import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService.ResourceConfiguration;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -102,7 +103,7 @@ final class ServicePluginProcessLauncher {
                 ProcessTerminator.destroyTreeForcibly(process);
                 throw new IllegalStateException("服务插件启动已取消");
             }
-            Deque<String> processLogs = new ArrayDeque<>();
+            Deque<ServicePluginLogEntry> processLogs = new ArrayDeque<>();
             drainOutput(definition.id(), process.getInputStream(), "stdout", processLogs);
             drainOutput(definition.id(), process.getErrorStream(), "stderr", processLogs);
             accepted = listener.accept();
@@ -145,7 +146,7 @@ final class ServicePluginProcessLauncher {
     }
 
     private void drainOutput(String pluginId, InputStream stream, String channel,
-                             Deque<String> destination) {
+                             Deque<ServicePluginLogEntry> destination) {
         tasks.submit(TaskSpec.io("读取服务插件日志 " + pluginId + " " + channel), context -> {
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(stream, StandardCharsets.UTF_8))) {
@@ -156,7 +157,8 @@ final class ServicePluginProcessLauncher {
                             "$1=<redacted>");
                     synchronized (destination) {
                         if (destination.size() >= 2_000) destination.removeFirst();
-                        destination.addLast(channel + ": " + safe);
+                        destination.addLast(new ServicePluginLogEntry(
+                                ServicePluginLogEntry.Kind.RUNTIME, channel + ": " + safe));
                     }
                 }
             } catch (IOException failure) {

@@ -1,5 +1,10 @@
 package com.javaclaw.task.sdd;
 
+import com.javaclaw.framework.api.TaskOutcome;
+import com.javaclaw.framework.api.TaskResult;
+
+import java.util.List;
+
 /**
  * 编排运行的终态结论。
  *
@@ -7,7 +12,15 @@ package com.javaclaw.task.sdd;
  * @param message 可读说明（写回任务结果/通知）
  * @author JavaClaw
  */
-public record SddOutcome(Result result, String message) {
+public record SddOutcome(Result result, String message, TaskResult taskResult) {
+
+    public SddOutcome(Result result, String message) {
+        this(result, message, defaultTaskResult(result, message));
+    }
+
+    public SddOutcome {
+        if (taskResult == null) taskResult = defaultTaskResult(result, message);
+    }
 
     public enum Result {
         /** 验收通过并归档。 */
@@ -26,4 +39,12 @@ public record SddOutcome(Result result, String message) {
     public static SddOutcome failed(String msg) { return new SddOutcome(Result.FAILED, msg); }
 
     public boolean isCompleted() { return result == Result.COMPLETED; }
+
+    private static TaskResult defaultTaskResult(Result result, String message) {
+        if (result == Result.COMPLETED) {
+            return TaskResult.unverified("SDD 验收阶段结束，未取得关联可信收据");
+        }
+        return new TaskResult(TaskOutcome.BLOCKED, List.of(),
+                message == null ? "SDD 编排未完成" : message, List.of());
+    }
 }
