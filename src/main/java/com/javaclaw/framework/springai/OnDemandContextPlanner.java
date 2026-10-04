@@ -281,8 +281,15 @@ final class OnDemandContextPlanner {
 
     /** Reuse a durable user clarification while its first context read awaits approval. */
     UserMessage pendingInputResumeMessage() {
+        return pendingInputResumeMessage(List.of());
+    }
+
+    UserMessage pendingInputResumeMessage(List<Message> incoming) {
         ResumeCommand command = pendingInputResumeCommand();
-        return command == null ? null : SpringAiPromptFactory.resumeCommandMessage(command);
+        if (command == null) return null;
+        ReasoningRequest pending = new ReasoningRequest(request.runId(), request.plan(), request.runRequest(),
+                command, request.control(), request.events(), request.approvedToolInvocation());
+        return SpringAiPromptFactory.resumeCommandMessage(pending, incoming, runs);
     }
 
     private ResumeCommand pendingInputResumeCommand() {

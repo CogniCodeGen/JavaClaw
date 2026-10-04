@@ -2,7 +2,9 @@ package com.javaclaw.application.chat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.framework.api.ThreadEvent;
-import com.javaclaw.application.chat.ChatHistoryApplicationService.*;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.DeliveryStatus;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -42,6 +44,13 @@ public final class ChatThreadTranscript {
                     String text = clarification(clarification.path("reason").asText(""),
                             clarification.path("question").asText(""));
                     messages.add(message(MessageRole.ASSISTANT, text, event, List.of(), DeliveryStatus.COMPLETE));
+                } else {
+                    String text = output.path("text").asText("");
+                    if (text.isBlank()) text = output.path("value").asText("");
+                    if (!text.isBlank()) {
+                        messages.add(message(MessageRole.ASSISTANT, text, event,
+                                List.of(), DeliveryStatus.COMPLETE));
+                    }
                 }
             } else if (Set.of("turn/completed", "turn/failed", "turn/cancelled").contains(event.type())) {
                 JsonNode output = payload.path("output");

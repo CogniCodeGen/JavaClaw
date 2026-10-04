@@ -10,9 +10,13 @@ public record TaskContractV3(int version, String originalRequest,
                              List<TaskCriterionV3> criteria, boolean applicable,
                              boolean reliable, String source,
                              List<String> reasonCodes, List<String> unresolvedInputs,
-                             DesktopObservationPolicy desktopObservationPolicy) {
+                             DesktopObservationPolicy desktopObservationPolicy,
+                             IntentStatus intentStatus) {
     /** Chosen by the host; model output cannot reduce the observation evidence requirement. */
     public enum DesktopObservationPolicy { LEGACY_WINDOW, REQUIRED_SUBJECT }
+
+    /** 保留结构化规划的意图状态；旧定义和记录缺少该字段时使用 UNKNOWN。 */
+    public enum IntentStatus { UNKNOWN, RESOLVED, NEEDS_HUMAN, UNSUPPORTED }
 
     public TaskContractV3 {
         if (version != 3) throw new IllegalArgumentException("unsupported task contract version");
@@ -23,6 +27,7 @@ public record TaskContractV3(int version, String originalRequest,
         unresolvedInputs = boundedDiagnostics(unresolvedInputs, 12, 512, false);
         desktopObservationPolicy = Objects.requireNonNullElse(desktopObservationPolicy,
                 DesktopObservationPolicy.LEGACY_WINDOW);
+        intentStatus = Objects.requireNonNullElse(intentStatus, IntentStatus.UNKNOWN);
         if (criteria.size() > 12 || !applicable && !criteria.isEmpty()
                 || reliable && applicable && criteria.isEmpty()) {
             throw new IllegalArgumentException("invalid task contract criteria");
@@ -33,6 +38,15 @@ public record TaskContractV3(int version, String originalRequest,
                 throw new IllegalArgumentException("duplicate criterion id: " + criterion.id());
             }
         }
+    }
+
+    /** 保留未声明结构化意图状态的现有定义与持久化契约。 */
+    public TaskContractV3(int version, String originalRequest, List<TaskCriterionV3> criteria,
+            boolean applicable, boolean reliable, String source,
+            List<String> reasonCodes, List<String> unresolvedInputs,
+            DesktopObservationPolicy desktopObservationPolicy) {
+        this(version, originalRequest, criteria, applicable, reliable, source,
+                reasonCodes, unresolvedInputs, desktopObservationPolicy, IntentStatus.UNKNOWN);
     }
 
     /** Keeps existing definitions and persisted contracts compatible with version 3. */

@@ -61,7 +61,7 @@ class TaskModelDecisionGateBoundaryTest {
 
     @Test
     void technicalApprovalAndEmptyResumesPreserveTheExistingDurableControlDecision() {
-        for (String type : List.of("delegation.continue", "tool.approval", "managed.continue", "user.input")) {
+        for (String type : List.of("delegation.continue", "tool.approval", "managed.continue", "user.input", "input")) {
             List<RunEventEnvelope> events = new ArrayList<>(decision(1, "current", ModelDecisionV1.Decision.CLAIM_DONE));
             var payload = JsonNodeFactory.instance.objectNode().put("commandType", type);
             payload.putObject("command");
@@ -81,6 +81,17 @@ class TaskModelDecisionGateBoundaryTest {
 
             assertEquals(ModelDecisionV1.Decision.BLOCKED,
                     TaskModelDecisionGate.latestModelDecision(events).orElseThrow());
+        }
+    }
+
+    @Test
+    void 聊天补充命令同样使旧完成决定失效且未授权事件不能改变边界() {
+        for (String producer : List.of("framework.core", "plugin.untrusted")) {
+            List<RunEventEnvelope> events = new ArrayList<>(decision(1, "old", ModelDecisionV1.Decision.CLAIM_DONE));
+            var payload = JsonNodeFactory.instance.objectNode().put("commandType", "input");
+            payload.putObject("command").put("text", "项目保存到 target/snake");
+            events.add(event(6, "core.run.resumed", 1, producer, payload));
+            assertEquals(producer.equals("framework.core"), TaskModelDecisionGate.latestModelDecision(events).isEmpty());
         }
     }
 

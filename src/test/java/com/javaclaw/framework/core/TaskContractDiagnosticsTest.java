@@ -68,6 +68,21 @@ class TaskContractDiagnosticsTest {
         assertTrue(output.path("text").asText().endsWith("执行后续操作前暂停。"));
     }
 
+    @Test
+    void 明确缺失输入展示提问并保留继续任务提示() {
+        var output = TaskContractDiagnostics.inputRequiredOutput(json,
+                contract(List.of("MISSING_TARGET_LOCATION"), List.of("请提供项目保存目录")));
+        assertEquals("task.contract.needs_input", output.path("kind").asText());
+        assertTrue(output.path("text").asText().contains("请提供项目保存目录"));
+        assertTrue(output.path("text").asText().endsWith("补充后将继续当前任务。"));
+        assertFalse(output.has("planningFailure"));
+        assertFalse(output.path("text").asText().contains("规划未通过"));
+        var longOutput = TaskContractDiagnostics.inputRequiredOutput(json,
+                contract(List.of("AMBIGUOUS_GOAL"), List.of("内容".repeat(400))));
+        assertTrue(longOutput.path("text").asText().length() < 600);
+        assertTrue(longOutput.path("text").asText().endsWith("补充后将继续当前任务。"));
+    }
+
     private static TaskContractV3 contract(List<String> reasons, List<String> inputs) {
         return new TaskContractV3(3, "查看联系人", List.of(), true, false,
                 "model", reasons, inputs);

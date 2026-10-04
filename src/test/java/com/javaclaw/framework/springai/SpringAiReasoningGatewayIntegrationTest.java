@@ -3257,6 +3257,149 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void 同文普通历史在截图审批恢复及重启后仍只保留一份原任务(boolean restart) throws Exception {
+        验证同文历史截图审批恢复(restart, false);
+    }
+
+    @Test
+    void 截图审批重启恢复保留原任务完整附件快照和冻结验收条件() throws Exception {
+        验证同文历史截图审批恢复(true, true);
+    }
+
+    private void 验证同文历史截图审批恢复(boolean restart, boolean attachments) throws Exception {
+        assertTrue(com.javaclaw.util.ProjectAccessPolicy.strictIsolationEnabled(),
+                "真实截图回归必须在 AWT 调用前由严格隔离策略拒绝");
+        String goal = "请截取当前屏幕并保存截图";
+        String attachmentBody = "附件中的截图说明必须完整保留：包含当前窗口的标题。";
+        byte[] imageBytes = new byte[]{1, 3, 5, 7};
+        Path directory = Files.createTempDirectory(Path.of("target"), "same-user-screenshot-");
+        Path text = directory.resolve("notes.txt");
+        Path image = directory.resolve("reference.png");
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicReference<UserMessage> frozenOriginal = new AtomicReference<>();
+        List<Prompt> delivered = new ArrayList<>();
+        FixtureConfig config = new FixtureConfig().harness().systemScreenshot()
+                .context(contextConfiguration(true, 48_000, 16_000, 4));
+        ChatModel model = prompt -> {
+            delivered.add(prompt);
+            List<UserMessage> originals = prompt.getInstructions().stream()
+                    .filter(UserMessage.class::isInstance).map(UserMessage.class::cast)
+                    .filter(SpringAiPromptFactory::isOriginalTask).toList();
+            assertEquals(1, originals.size(), "每次 Provider 请求只能包含一份已标记的原任务");
+            UserMessage original = originals.getFirst();
+            List<UserMessage> plainHistory = prompt.getInstructions().stream()
+                    .filter(UserMessage.class::isInstance).map(UserMessage.class::cast)
+                    .filter(message -> goal.equals(message.getText())
+                            && !SpringAiPromptFactory.isOriginalTask(message)).toList();
+            assertEquals(1, plainHistory.size(), "与当前目标同文的普通聊天历史仍应是普通历史");
+            assertFalse(plainHistory.getFirst().getMetadata()
+                    .containsKey(OriginalTaskSnapshot.IDENTITY_METADATA));
+            if (frozenOriginal.get() == null) {
+                frozenOriginal.set(original);
+                if (!attachments) {
+                    assertTrue(SpringAiPromptFactory.sameUserContent(original, plainHistory.getFirst()),
+                            "必须覆盖普通历史与原任务的正文及媒体完全相同的恢复边界");
+                }
+            } else {
+                assertTrue(SpringAiPromptFactory.sameUserContent(frozenOriginal.get(), original),
+                        "审批恢复必须复用完整原任务正文与媒体");
+                assertEquals(frozenOriginal.get().getMetadata().get(OriginalTaskSnapshot.IDENTITY_METADATA),
+                        original.getMetadata().get(OriginalTaskSnapshot.IDENTITY_METADATA));
+                assertEquals(frozenOriginal.get().getMetadata().get(OriginalTaskSnapshot.CONTENT_METADATA),
+                        original.getMetadata().get(OriginalTaskSnapshot.CONTENT_METADATA));
+            }
+            if (attachments) {
+                assertTrue(original.getText().contains(attachmentBody));
+                assertEquals(1, original.getMedia().size());
+                org.junit.jupiter.api.Assertions.assertArrayEquals(imageBytes,
+                        original.getMedia().getFirst().getDataAsByteArray());
+            }
+            int call = providerCalls.incrementAndGet();
+            if (call == 1) return namedToolCallResponse("sys_screenshot", "{}", 2, 1);
+            assertEquals(2, call, "截图失败后应直接提交真实阻塞结果，不重放截图或重复修复上下文");
+            var response = prompt.getInstructions().stream()
+                    .filter(ToolResponseMessage.class::isInstance).map(ToolResponseMessage.class::cast)
+                    .flatMap(message -> message.getResponses().stream())
+                    .filter(value -> value.name().equals("sys_screenshot")).findFirst().orElseThrow();
+            JsonNode failed = toolEnvelope(response);
+            assertEquals("FAILED", failed.path("status").asText());
+            assertTrue(failed.toString().contains(com.javaclaw.util.ProjectAccessPolicy
+                    .unconfinedExecutionDeniedReason()));
+            assertEquals(List.of(), jsonStrings(failed.path("evidenceRefs")));
+            ObjectNode decision = JsonNodeFactory.instance.objectNode()
+                    .put("decision", "BLOCKED").put("userMessage", "项目隔离策略拒绝全屏截图");
+            decision.putArray("evidenceRefs");
+            decision.putArray("unmetCriterionIds").add("capture");
+            return namedToolCallResponse(HarnessDecisionToolCallback.NAME, decision.toString(), 2, 1);
+        };
+        try {
+            List<InputBlock> inputs = new ArrayList<>(List.of(
+                    InputBlock.message("user", goal),
+                    InputBlock.message("assistant", "请确认允许截图"), InputBlock.text(goal)));
+            if (attachments) {
+                Files.writeString(text, attachmentBody);
+                Files.write(image, imageBytes);
+                inputs.add(InputBlock.file("notes.txt", text.toAbsolutePath().toUri().toString(), "text/plain"));
+                inputs.add(InputBlock.file("reference.png", image.toAbsolutePath().toUri().toString(), "image/png"));
+            }
+            try (Fixture fixture = new Fixture(model, toolCallBudget(2), new AtomicInteger(), config)) {
+                TaskContractV3 contract = new TaskContractV3(3, goal, List.of(
+                        new TaskCriterionV3("capture", "保存截图文件", "file.write",
+                                CapabilityMetadata.TargetKind.FILE, directory.resolve("screen.png")
+                                        .toAbsolutePath().toString(), EffectReceiptV1.Status.VERIFIED, "")),
+                        true, true, "definition");
+                RunHandle handle = fixture.engine.start(fixture.request(inputs,
+                        Map.of(TaskContractCompiler.ATTRIBUTE, fixture.json.valueToTree(contract))));
+                RunSnapshot waiting = fixture.engine.get(handle.id());
+                assertEquals(RunState.WAITING_APPROVAL, waiting.state(), waiting.error());
+                assertEquals(1, providerCalls.get());
+                assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .noneMatch(event -> event.type().equals("core.tool.started")));
+                var approvalEvent = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.run.waiting_approval"))
+                        .reduce((previous, next) -> next).orElseThrow();
+                ToolApprovalChallenge challenge = ToolApprovalChallenge.fromEventPayload(approvalEvent.payload());
+                assertEquals("sys_screenshot", challenge.tool());
+                if (attachments) {
+                    Files.delete(text);
+                    Files.delete(image);
+                }
+                if (restart) fixture.restart();
+                // sys_screenshot 的严格隔离前置校验确定失败，不会进入 AWT 或读取真实屏幕。
+                handle = fixture.engine.resume(handle.id(), new ResumeCommand("tool.approval",
+                        JsonNodeFactory.instance.objectNode().put("approved", true)
+                                .put("fingerprint", challenge.fingerprint())));
+                RunOutcome outcome = awaitCompletion(fixture, handle);
+                assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+                assertEquals(2, providerCalls.get());
+                List<RunEventEnvelope> events = fixture.runs.eventsAfter(handle.id(), 0);
+                assertEquals(1, events.stream().filter(event -> event.type().equals("core.tool.started")
+                        && event.payload().path("tool").asText().equals("sys_screenshot")).count());
+                assertEquals(1, events.stream().filter(event -> event.type().equals("core.tool.completed")
+                        && event.payload().path("tool").asText().equals("sys_screenshot")
+                        && event.payload().path("status").asText().equals("FAILED")).count());
+                assertTrue(events.stream().noneMatch(event -> Set.of("core.task.repair_requested",
+                        "core.harness.protocol_repair_requested", "core.harness.protocol_violation")
+                        .contains(event.type())));
+                TaskContractV3 persisted = TaskResultEvaluator.latestContractV3(events, fixture.json).orElseThrow();
+                assertEquals(contract.criteria(), persisted.criteria(), "审批恢复不得改写冻结验收目标和证据等级");
+                TaskResult result = fixture.engine.taskResult(handle.id()).orElseThrow();
+                assertEquals(TaskOutcome.BLOCKED, result.outcome());
+                assertEquals(1, result.unmetCriteria().size());
+                assertTrue(result.unmetCriteria().getFirst().contains("保存截图文件")
+                        && result.unmetCriteria().getFirst().contains("VERIFIED"));
+                assertTrue(result.satisfiedCriteria().isEmpty(), "失败截图不能被验收为已完成");
+                assertJournalMatchesDeliveredPrompts(fixture, handle.id(), delivered);
+            }
+        } finally {
+            Files.deleteIfExists(text);
+            Files.deleteIfExists(image);
+            Files.deleteIfExists(directory);
+        }
+    }
+
     @Test
     void toolCallsUseTheConfiguredObservationRegistry() throws Exception {
         AtomicInteger observations = new AtomicInteger();
@@ -8374,6 +8517,7 @@ class SpringAiReasoningGatewayIntegrationTest {
         private boolean autoApproveDesktop;
         private boolean autoApproveWeb;
         private boolean systemFileRead;
+        private boolean systemScreenshot;
         private boolean singleIoPermit;
         private int fillerTools;
         private Map<String, String> webToolDescriptions = Map.of();
@@ -8455,6 +8599,10 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
         private FixtureConfig systemFileRead() {
             systemFileRead = true;
+            return this;
+        }
+        private FixtureConfig systemScreenshot() {
+            systemScreenshot = true;
             return this;
         }
         private FixtureConfig autoApproveWeb() {
@@ -8796,14 +8944,16 @@ class SpringAiReasoningGatewayIntegrationTest {
             config.webToolDescriptions.forEach((name, description) ->
                     registrar.tool(context -> auxiliaryTool(name, "web", new AtomicInteger(),
                             "web", description)));
-            if (config.systemFileRead) {
+            if (config.systemFileRead || config.systemScreenshot) {
                 SpringAiAnnotatedToolRegistry hostTools = new SpringAiAnnotatedToolRegistry(
                         new ObjectMapper().findAndRegisterModules());
                 hostTools.register("workspace", context -> ToolObjectBundle.of(List.of(
                         new com.javaclaw.system.SystemTools(null, Path.of("target", "screenshots")))));
                 registrar.toolProvider(hostTools);
                 registrar.toolPolicy((tool, configuration, request) ->
-                        !tool.name().startsWith("sys_") || tool.name().equals("sys_file_read")
+                        !tool.name().startsWith("sys_")
+                                || config.systemFileRead && tool.name().equals("sys_file_read")
+                                || config.systemScreenshot && tool.name().equals("sys_screenshot")
                                 ? ToolPolicyDecision.ALLOW : ToolPolicyDecision.DENY);
             }
             if (config.simulatedDesktopSession) {

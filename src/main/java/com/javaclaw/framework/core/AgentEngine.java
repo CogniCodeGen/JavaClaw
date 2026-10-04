@@ -381,6 +381,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         return activeRuns.size();
     }
 
+    /** 直接工具调用也消耗引擎持有的 Turn 控制预算，后续模型调用不能重新取得额度。 */
+    void recordDirectToolCall(RunId runId, String fingerprint) {
+        ActiveRun active = activeRuns.get(runId);
+        if (active == null) throw new IllegalStateException("tool owner turn is not attached: " + runId);
+        active.control.recordToolCall(fingerprint);
+    }
+
     private void launch(
             ActiveRun active,
             ResumeCommand resume,
@@ -442,6 +449,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 TaskContractV3 contract = TaskResultEvaluator.latestContractV3(
                         runs.eventsAfter(active.id, 0), json).orElse(null);
                 if (contract != null && !contract.reliable()) {
+                    if (requiresContractInput(contract, active.request)) {
+                        finishTurn(active, ReasoningResult.waitingForInput(
+                                TaskContractDiagnostics.inputRequiredOutput(json, contract),
+                                "TASK_NEEDS_INPUT"));
+                        finishExecutionTurn(active);
+                        return;
+                    }
                     ObjectNode diagnostic = TaskContractDiagnostics.pausedOutput(json, contract, true);
                     var stopped = runs.append(active.id, Set.of(RunState.RUNNING), RunState.RUNNING,
                             event(active.request, "core.task.stop", 3, "framework.core",
@@ -527,6 +541,14 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             return request.withAttribute(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE, resolved);
         }
         return request;
+    }
+
+    private static boolean requiresContractInput(TaskContractV3 contract, RunRequest request) {
+        return contract != null && !contract.reliable()
+                && contract.intentStatus() == TaskContractV3.IntentStatus.NEEDS_HUMAN
+                && Set.of("model", "model-repair").contains(contract.source())
+                && !contract.unresolvedInputs().isEmpty()
+                && !request.attributes().containsKey(TaskContractCompiler.ATTRIBUTE);
     }
 
     private void appendReasoningEvent(
@@ -800,7 +822,12 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         if (!active.detached.compareAndSet(false, true)) return;
         active.control.cancel();
         StoredRun stored = runs.find(active.id).orElse(null);
-        if (stored != null && !stored.snapshot().state().terminal() && stored.snapshot().state() != RunState.CREATED) {
+        // 规划提问尚未执行任务；保留等待状态，让重启后的答案仍归属原任务。
+        boolean waitingForContractInput = stored != null && stored.snapshot().state() == RunState.WAITING_INPUT
+                && requiresContractInput(TaskResultEvaluator.latestContractV3(
+                        runs.eventsAfter(active.id, 0), json).orElse(null), active.request);
+        if (stored != null && !stored.snapshot().state().terminal()
+                && stored.snapshot().state() != RunState.CREATED && !waitingForContractInput) {
             ObjectNode payload = JsonNodeFactory.instance.objectNode();
             payload.put("reason", "KERNEL_SHUTDOWN");
             runs.append(active.id, Set.of(stored.snapshot().state()), RunState.PAUSED,

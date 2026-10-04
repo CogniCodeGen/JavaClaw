@@ -63,6 +63,16 @@ final class PersistedRunStateRestorer {
         return new ApprovalState(pendingApproval, pendingApprovedInvocation);
     }
 
+    /** 仅回放所属 Turn 的累计调用预算和重复调用检测状态。 */
+    static void restoreToolCalls(List<RunEventEnvelope> events, RunControl control) {
+        for (RunEventEnvelope event : events) {
+            if (event.type().equals("core.tool.started")
+                    && event.producer().equals("framework.core")) {
+                control.restoreToolCall(event.payload().path("fingerprint").asText(""));
+            }
+        }
+    }
+
     /**
      * Inherit only unresolved effects from an ordered journal of one previous Run.
      * Tool counters, task-repair mode, deadlines and approval grants belong to the new Run.

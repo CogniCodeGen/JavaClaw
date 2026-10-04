@@ -140,9 +140,9 @@ final class OnDemandContextSession {
             return selected;
         }
         int fixedPending = fixed.pendingReads();
-        UserMessage pendingInput = planner.pendingInputResumeMessage();
+        UserMessage pendingInput = planner.pendingInputResumeMessage(incoming);
         List<Message> planningIncoming = new ArrayList<>(incoming);
-        if (pendingInput != null) planningIncoming.add(pendingInput);
+        if (pendingInput != null && !planningIncoming.contains(pendingInput)) planningIncoming.add(pendingInput);
         String promptKey = digest(StepMessageCodec.messages(planningIncoming).toString());
         List<AgentStep> recordedSteps = steps.steps(request.runId());
         long providerSteps = recordedSteps.stream()
@@ -162,8 +162,10 @@ final class OnDemandContextSession {
             List<ToolCallback> callbacks = controlOnly();
             List<Message> finalContext = assembler.base(incoming);
             finalContext.addAll(incoming.stream().filter(message -> !(message instanceof SystemMessage))
+                    .filter(message -> !(message instanceof UserMessage user
+                            && SpringAiPromptFactory.isOriginalTask(user)))
                     .filter(message -> !HostContextBlock.owned(message)).toList());
-            finalContext.add(SpringAiPromptFactory.originalTaskMessage(request));
+            finalContext.add(SpringAiPromptFactory.originalTaskMessage(request, incoming));
             var current = computerUse.cursor(incoming);
             if (current.engaged()) finalContext.add(assembler.dynamic(HostContextBlock.Kind.CONTROL,
                     ComputerUseContextSelection.message(current, false), true, current.evidenceRefs()));
@@ -554,8 +556,8 @@ final class OnDemandContextSession {
                     + "may be stale. Use an authorized probe to check current system capability "
                     + "before declaring the same blocker again:\n" + runtimeContext), true, List.of()));
         }
-        assembled.add(SpringAiPromptFactory.originalTaskMessage(request));
-        UserMessage resume = SpringAiPromptFactory.resumeCommandMessage(request);
+        assembled.add(SpringAiPromptFactory.originalTaskMessage(request, planningIncoming));
+        UserMessage resume = SpringAiPromptFactory.resumeCommandMessage(request, planningIncoming, runs);
         if (resume == null) resume = pendingInput;
         if (resume != null) assembled.add(resume);
         List<Message> latestExchange = latestExchange(planningIncoming);

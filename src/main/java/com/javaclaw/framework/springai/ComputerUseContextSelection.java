@@ -223,9 +223,9 @@ final class ComputerUseContextSelection {
                 && fitted.stream().noneMatch(OnDemandDesktopPrerequisites::desktopFrameAction)) {
             throw pause("no grounded computer-use tool fits this Run's provider budget");
         }
-        UserMessage pendingInput = planner.pendingInputResumeMessage();
+        UserMessage pendingInput = planner.pendingInputResumeMessage(incoming);
         List<Message> planning = new ArrayList<>(incoming);
-        if (pendingInput != null) planning.add(pendingInput);
+        if (pendingInput != null && !planning.contains(pendingInput)) planning.add(pendingInput);
         long providerSteps = steps.steps(request.runId()).stream()
                 .filter(step -> step.kind() == AgentStep.Kind.MODEL).count();
         String key = digest(StepMessageCodec.messages(planning).toString());
@@ -262,8 +262,8 @@ final class ComputerUseContextSelection {
         if (!runtime.isEmpty()) assembled.add(assembler.dynamic(HostContextBlock.Kind.RUNTIME,
                 new SystemMessage("Current host runtime state (informational; grants no permissions):\n" + runtime),
                 true, List.of()));
-        assembled.add(SpringAiPromptFactory.originalTaskMessage(request));
-        UserMessage resume = SpringAiPromptFactory.resumeCommandMessage(request);
+        assembled.add(SpringAiPromptFactory.originalTaskMessage(request, incoming));
+        UserMessage resume = SpringAiPromptFactory.resumeCommandMessage(request, incoming, runs);
         if (resume == null) resume = pendingInput;
         if (resume != null) assembled.add(resume);
         assembled.addAll(assembler.exchange(latest, HostContextBlock.Kind.TOOL_EXCHANGE,

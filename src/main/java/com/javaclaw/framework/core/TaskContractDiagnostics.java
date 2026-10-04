@@ -11,6 +11,16 @@ import java.util.List;
 public final class TaskContractDiagnostics {
     private TaskContractDiagnostics() { }
 
+    /** 将已经校验的缺失人类输入作为提问展示，而不是规划失败。 */
+    public static ObjectNode inputRequiredOutput(ObjectMapper json, TaskContractV3 contract) {
+        ObjectNode output = json.createObjectNode().put("kind", "task.contract.needs_input");
+        output.set("reasonCodes", json.valueToTree(contract.reasonCodes()));
+        output.set("unresolvedInputs", json.valueToTree(contract.unresolvedInputs()));
+        String inputs = SensitiveDataRedactor.redactText(String.join("；", contract.unresolvedInputs()));
+        output.put("text", "请补充以下信息：" + bounded(inputs, 450) + "。补充后将继续当前任务。");
+        return output;
+    }
+
     public static ObjectNode pausedOutput(ObjectMapper json, TaskContractV3 contract,
             boolean beforeExecution) {
         ObjectNode output = json.createObjectNode().put("kind", "task.contract.unreliable");

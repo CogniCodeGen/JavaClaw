@@ -74,7 +74,7 @@ final class TaskHarnessLifecycle {
     /** Only a new human clarification can revise an unresolved model plan on a paused Run. */
     void reviseUnreliableContract(RunId id, RunRequest request, ResumeCommand resume,
             RunControl control, Consumer<RunEventEnvelope> published) {
-        if (!enabled(id) || resume == null || !"user.input".equals(resume.type())
+        if (!enabled(id) || resume == null || !humanInputType(resume.type())
                 || !resume.payload().path("text").isTextual()
                 || resume.payload().path("text").asText().isBlank()
                 || request.attributes().containsKey(TaskContractCompiler.ATTRIBUTE)
@@ -89,7 +89,7 @@ final class TaskHarnessLifecycle {
                 .filter(event -> event.type().equals("core.run.resumed")
                         && event.producer().equals("framework.core"))
                 .max(java.util.Comparator.comparingLong(RunEventEnvelope::sequence)).orElse(null);
-        if (resumed == null || !"user.input".equals(resumed.payload().path("commandType").asText())
+        if (resumed == null || !humanInputType(resumed.payload().path("commandType").asText())
                 || !resume.payload().equals(resumed.payload().path("command"))
                 || revisedAfter(events, resumed.sequence())) return;
         control.throwIfCancelled();
@@ -114,6 +114,10 @@ final class TaskHarnessLifecycle {
     private static boolean canClarify(TaskContractV3 contract) {
         return contract != null && !contract.reliable()
                 && Set.of("model", "model-repair", "unknown").contains(contract.source());
+    }
+
+    private static boolean humanInputType(String type) {
+        return "user.input".equals(type) || "input".equals(type);
     }
 
     private static boolean revisedAfter(List<RunEventEnvelope> events, long sequence) {
@@ -141,7 +145,7 @@ final class TaskHarnessLifecycle {
         for (RunEventEnvelope event : events) {
             if (event.sequence() >= currentResume || !event.type().equals("core.run.resumed")
                     || !event.producer().equals("framework.core")
-                    || !"user.input".equals(event.payload().path("commandType").asText())) continue;
+                    || !humanInputType(event.payload().path("commandType").asText())) continue;
             var text = event.payload().path("command").path("text");
             if (text.isTextual() && !text.asText().isBlank()) inputs.add(InputBlock.message("user", text.asText()));
         }

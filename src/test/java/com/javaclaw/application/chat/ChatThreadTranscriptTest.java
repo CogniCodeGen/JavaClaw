@@ -10,7 +10,9 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatThreadTranscriptTest {
     private static final RunScope BRANCH = new RunScope("workspace", "user", "branch");
@@ -65,6 +67,37 @@ class ChatThreadTranscriptTest {
         assertTrue(recovered.get(1).adopted());
         assertNull(recovered.getLast().deliveryStatus());
         assertEquals(recovered, ChatThreadTranscript.recoverTail(recovered, journal));
+    }
+
+    @Test void 恢复模型提问和用户回答且不把内部原因当成消息() {
+        ObjectNode waiting = wrapped();
+        ((ObjectNode) waiting.path("event").path("payload")).put("reason", "MODEL_NEEDS_INPUT")
+                .putObject("output").put("kind", "harness.needs_input").put("text", "请选择 PDF 或 Markdown");
+        ObjectNode resumed = wrapped();
+        ((ObjectNode) resumed.path("event").path("payload")).put("commandType", "input")
+                .putObject("command").put("text", "Markdown");
+        ObjectNode empty = wrapped();
+        ((ObjectNode) empty.path("event").path("payload")).put("reason", "MODEL_NEEDS_INPUT")
+                .putObject("output").put("text", "  ");
+        var messages = ChatThreadTranscript.project(List.of(
+                event(1, "turn/waiting_input", "t", waiting),
+                event(2, "turn/resumed", "t", resumed),
+                event(3, "turn/waiting_input", "t", empty)));
+
+        assertEquals(List.of("请选择 PDF 或 Markdown", "Markdown"),
+                messages.stream().map(ChatHistoryApplicationService.MessageSnapshot::content).toList());
+        assertEquals(ChatHistoryApplicationService.MessageRole.ASSISTANT, messages.getFirst().role());
+        assertEquals(ChatHistoryApplicationService.DeliveryStatus.COMPLETE, messages.getFirst().deliveryStatus());
+        assertEquals(messages, ChatThreadTranscript.recoverTail(List.of(messages.getFirst()), messages));
+        assertEquals(messages, ChatThreadTranscript.recoverTail(messages, messages));
+    }
+
+    @Test void 旧等待事件使用非空备用提问正文() {
+        ObjectNode waiting = wrapped();
+        ((ObjectNode) waiting.path("event").path("payload")).putObject("output")
+                .put("text", "").put("value", "还需要指定日期");
+        var messages = ChatThreadTranscript.project(List.of(event(1, "turn/waiting_input", "t", waiting)));
+        assertEquals("还需要指定日期", messages.getFirst().content());
     }
 
     @Test void preservesAttachmentReferencesAndTerminalStatusWithoutFabricatingMissingResponses() {

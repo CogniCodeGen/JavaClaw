@@ -152,7 +152,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 String systemPrompt;
                 List<Message> messages;
                 StepContextProjector.Projection activeProjection;
-                List<Message> originalHistory = prompts.messages(request);
+                List<Message> originalHistory = prompts.messages(request,
+                        recovered == null ? List.of() : recovered.providerMessages(), runStore);
                 boolean onDemandEnabled = request.plan().descriptor().onDemandContextPolicy() != null;
                 if (recovered == null) {
                     String prepared = onDemandEnabled

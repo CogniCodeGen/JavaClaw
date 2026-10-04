@@ -287,6 +287,7 @@ class TaskContractCompilerTest {
         assertFalse(contract.reliable());
         assertTrue(contract.reasonCodes().containsAll(List.of("AMBIGUOUS_TARGET", "MODEL_UNRELIABLE",
                 "UNRESOLVED_INPUTS", "EMPTY_CRITERIA", "PLAN_REPAIR_EXHAUSTED")));
+        assertEquals(TaskContractV3.IntentStatus.UNKNOWN, contract.intentStatus());
         assertEquals(List.of("Which application should be opened?"), contract.unresolvedInputs());
         assertEquals("AMBIGUOUS_TARGET", JSON.valueToTree(contract).path("reasonCodes").get(0).asText());
     }
@@ -384,10 +385,12 @@ class TaskContractCompilerTest {
     @Test
     void legacyContractJsonRemainsReadableAndExplicitUnreliableDefinitionsAreNotReplanned() throws Exception {
         var definition = JSON.valueToTree(new TaskContractV3(3, "old", List.of(), true, false, "definition"));
-        ((com.fasterxml.jackson.databind.node.ObjectNode) definition).remove(List.of("reasonCodes", "unresolvedInputs"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) definition).remove(
+                List.of("reasonCodes", "unresolvedInputs", "intentStatus"));
         TaskContractV3 decoded = JSON.treeToValue(definition, TaskContractV3.class);
         assertTrue(decoded.reasonCodes().isEmpty());
         assertTrue(decoded.unresolvedInputs().isEmpty());
+        assertEquals(TaskContractV3.IntentStatus.UNKNOWN, decoded.intentStatus());
         ModelTaskGateway planner = task -> { throw new AssertionError("explicit definitions must not be replanned"); };
 
         TaskContractV3 contract = new TaskContractCompiler(planner, JSON).compileV3(RunId.random(),
@@ -456,7 +459,7 @@ class TaskContractCompilerTest {
     }
 
     @Test
-    void aGenuineUnspecifiedRequestedAccountIsNeverPromotedByTheHost() {
+    void 明确需要补充账号信息时保留澄清状态且不再次修复() {
         AtomicInteger calls = new AtomicInteger();
         ModelTaskGateway planner = task -> {
             calls.incrementAndGet();
@@ -466,7 +469,7 @@ class TaskContractCompilerTest {
             ((com.fasterxml.jackson.databind.node.ObjectNode) output).putArray("reasonCodes")
                     .add("AMBIGUOUS_REQUESTED_ACCOUNT");
             ((com.fasterxml.jackson.databind.node.ObjectNode) output).putArray("unresolvedInputs")
-                    .add("Which of your two QQ accounts should be used?");
+                    .add("请问应使用哪个 QQ 账号？");
             return CompletableFuture.completedFuture(new ModelTaskResult(
                     output, "fixture", 0, 0, false, Map.of()));
         };
@@ -474,10 +477,11 @@ class TaskContractCompilerTest {
         TaskContractV3 contract = new TaskContractCompiler(planner, JSON)
                 .compileV3(RunId.random(), request("切到我另一个 QQ 账号查看联系人"), () -> false);
 
-        assertEquals(2, calls.get());
+        assertEquals(1, calls.get());
         assertFalse(contract.reliable());
+        assertEquals(TaskContractV3.IntentStatus.NEEDS_HUMAN, contract.intentStatus());
         assertTrue(contract.reasonCodes().contains("AMBIGUOUS_REQUESTED_ACCOUNT"));
-        assertEquals(List.of("Which of your two QQ accounts should be used?"), contract.unresolvedInputs());
+        assertEquals(List.of("请问应使用哪个 QQ 账号？"), contract.unresolvedInputs());
     }
 
     @Test

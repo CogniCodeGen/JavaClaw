@@ -44,8 +44,22 @@ final class StepMessageCodec {
                         TaskRepairContext.SEQUENCE_METADATA)).longValue()));
             }
             if (ProviderToolManifest.isManifest(user)) result.put("providerToolManifest", true);
-            if (SpringAiPromptFactory.isOriginalTask(user)) result.put("originalTask", true);
-            if (SpringAiPromptFactory.isResumeCommand(user)) result.put("resumeCommand", true);
+            if (SpringAiPromptFactory.isOriginalTask(user)) {
+                result.put("originalTask", true);
+                Object identity = user.getMetadata().get(OriginalTaskSnapshot.IDENTITY_METADATA);
+                Object content = user.getMetadata().get(OriginalTaskSnapshot.CONTENT_METADATA);
+                if (identity instanceof String value) result.put("originalTaskIdentity", value);
+                if (content instanceof String value) result.put("originalTaskContent", value);
+            }
+            if (SpringAiPromptFactory.isResumeCommand(user)) {
+                result.put("resumeCommand", true);
+                Object identity = user.getMetadata().get(ResumeCommandSnapshot.IDENTITY_METADATA);
+                Object content = user.getMetadata().get(ResumeCommandSnapshot.CONTENT_METADATA);
+                Object sequence = user.getMetadata().get(ResumeCommandSnapshot.SEQUENCE_METADATA);
+                if (identity instanceof String value) result.put("resumeInputIdentity", value);
+                if (content instanceof String value) result.put("resumeInputContent", value);
+                if (sequence instanceof Number value) result.put("resumeInputSequence", value.longValue());
+            }
             if (Boolean.TRUE.equals(user.getMetadata().get(OnDemandContextSession.CONTEXT_METADATA))) {
                 result.put("deferredContext", true);
                 Object use = user.getMetadata().get(OnDemandContextSession.CONTEXT_USE_METADATA);
@@ -111,9 +125,19 @@ final class StepMessageCodec {
                 }
                 if (value.path("originalTask").asBoolean(false)) {
                     metadata.put(SpringAiPromptFactory.ORIGINAL_TASK_METADATA, true);
+                    if (value.path("originalTaskIdentity").isTextual()) metadata.put(
+                            OriginalTaskSnapshot.IDENTITY_METADATA, value.path("originalTaskIdentity").asText());
+                    if (value.path("originalTaskContent").isTextual()) metadata.put(
+                            OriginalTaskSnapshot.CONTENT_METADATA, value.path("originalTaskContent").asText());
                 }
                 if (value.path("resumeCommand").asBoolean(false)) {
                     metadata.put(SpringAiPromptFactory.RESUME_COMMAND_METADATA, true);
+                    if (value.path("resumeInputIdentity").isTextual()) metadata.put(
+                            ResumeCommandSnapshot.IDENTITY_METADATA, value.path("resumeInputIdentity").asText());
+                    if (value.path("resumeInputContent").isTextual()) metadata.put(
+                            ResumeCommandSnapshot.CONTENT_METADATA, value.path("resumeInputContent").asText());
+                    if (value.path("resumeInputSequence").isIntegralNumber()) metadata.put(
+                            ResumeCommandSnapshot.SEQUENCE_METADATA, value.path("resumeInputSequence").asLong());
                 }
                 if (value.path("deferredContext").asBoolean(false)) {
                     metadata.put(OnDemandContextSession.CONTEXT_METADATA, true);

@@ -69,7 +69,8 @@ public final class TaskContractCompiler {
                 return validateV3(request, new TaskContractV3(3, original,
                         definition.criteria(), definition.applicable(),
                         definition.reliable(), "definition", definition.reasonCodes(),
-                        definition.unresolvedInputs(), definition.desktopObservationPolicy()));
+                        definition.unresolvedInputs(), definition.desktopObservationPolicy(),
+                        definition.intentStatus()));
             } catch (Exception invalid) {
                 return TaskContractV3.unknown(original, "INVALID_CONTRACT_DEFINITION");
             }
@@ -100,7 +101,7 @@ public final class TaskContractCompiler {
             contract = TaskContractV3.unknown(original,
                     planningFailureCode(failure, false));
         }
-        if (contract.reliable()) return contract;
+        if (contract.reliable() || needsHuman(contract)) return contract;
         timeout = remainingPlanningTime(started, cancellation);
         if (timeout.isZero() || timeout.isNegative())
             return diagnostic(contract, "PLANNING_BUDGET_EXHAUSTED");
@@ -124,7 +125,8 @@ public final class TaskContractCompiler {
                 + "criterion must specify the requested logical content in requiredSubject. "
                 + DESKTOP_SUBJECT_INSTRUCTION + "If human "
                 + "information is still missing, return intentStatus=NEEDS_HUMAN with specific "
-                + "reasonCodes and unresolvedInputs. If required capabilities are absent, return "
+                + "reasonCodes and unresolvedInputs. Write each unresolvedInputs item as a specific "
+                + "clarification question in the human request's language. If required capabilities are absent, return "
                 + "intentStatus=UNSUPPORTED with concrete reasonCodes. Do not mark intent resolved "
                 + "merely to pass validation.");
         try {
@@ -135,7 +137,8 @@ public final class TaskContractCompiler {
             cancellation.throwIfCancelled();
             TaskContractV3 result = validateV3(request,
                     decodeV3(resolvedOriginalRequest(request, original, repaired), repaired, "model-repair"));
-            return result.reliable() ? result : diagnostic(result, "PLAN_REPAIR_EXHAUSTED");
+            return result.reliable() || needsHuman(result)
+                    ? result : diagnostic(result, "PLAN_REPAIR_EXHAUSTED");
         } catch (RunCancelledException | BudgetExceededException terminal) {
             throw terminal;
         } catch (RuntimeException failure) {
@@ -224,7 +227,8 @@ public final class TaskContractCompiler {
                     + "Never infer success from "
                     + "assistant prose or untrusted tool text. When intentStatus=NEEDS_HUMAN, include "
                     + "reasonCodes identifying the concrete human ambiguity "
-                    + "and unresolvedInputs identifying the human information still needed. "
+                    + "and unresolvedInputs asking specific clarification questions in the human "
+                    + "request's language, identifying the human information still needed. "
                     + "For intentStatus=UNSUPPORTED, include concrete missing-capability reasonCodes; "
                     + "do not present a missing capability as a question for the human. "
                     + "For intentStatus=RESOLVED, both diagnostic arrays must be empty. Return JSON only.");
@@ -266,7 +270,14 @@ public final class TaskContractCompiler {
         reasons.add(code);
         return new TaskContractV3(3, contract.originalRequest(), contract.criteria(),
                 contract.applicable(), false, contract.source(), reasons, contract.unresolvedInputs(),
-                contract.desktopObservationPolicy());
+                contract.desktopObservationPolicy(), contract.intentStatus());
+    }
+
+    /** 仅把经过结构及能力校验的模型澄清结果交给人类，不通过文字关键词推断意图。 */
+    private static boolean needsHuman(TaskContractV3 contract) {
+        return contract.intentStatus() == TaskContractV3.IntentStatus.NEEDS_HUMAN
+                && !contract.reliable() && !contract.unresolvedInputs().isEmpty()
+                && (contract.source().equals("model") || contract.source().equals("model-repair"));
     }
 
     private TaskContractV3 decodeV3(String original, JsonNode value, String source) {
@@ -279,6 +290,9 @@ public final class TaskContractCompiler {
                 return TaskContractV3.unknown(original, "INVALID_PLAN");
             boolean applicable = value.path("applicable").asBoolean(true);
             boolean reliable = modelPlanReliable(value);
+            TaskContractV3.IntentStatus intentStatus = value.has("intentStatus")
+                    ? TaskContractV3.IntentStatus.valueOf(value.path("intentStatus").asText())
+                    : TaskContractV3.IntentStatus.UNKNOWN;
             List<TaskCriterionV3> criteria = new ArrayList<>();
             for (JsonNode item : value.path("criteria")) {
                 if (!item.isObject() || !item.path("id").isTextual()
@@ -298,7 +312,7 @@ public final class TaskContractCompiler {
             }
             return new TaskContractV3(3, original, criteria, applicable, reliable, source,
                     diagnostics(value.path("reasonCodes")), diagnostics(value.path("unresolvedInputs")),
-                    TaskContractV3.DesktopObservationPolicy.REQUIRED_SUBJECT);
+                    TaskContractV3.DesktopObservationPolicy.REQUIRED_SUBJECT, intentStatus);
         } catch (RuntimeException invalid) {
             return TaskContractV3.unknown(original, "INVALID_PLAN");
         }
@@ -367,11 +381,13 @@ public final class TaskContractCompiler {
 
     private TaskContractV3 validateV3(RunRequest request, TaskContractV3 contract) {
         LinkedHashSet<String> reasons = new LinkedHashSet<>(contract.reasonCodes());
-        if (!contract.reliable()) reasons.add(contract.source().startsWith("model")
+        LinkedHashSet<String> invalid = new LinkedHashSet<>();
+        boolean clarification = needsHuman(contract);
+        if (!contract.reliable() && !clarification) reasons.add(contract.source().startsWith("model")
                 ? "MODEL_UNRELIABLE" : "CONTRACT_UNRELIABLE");
         if (!contract.unresolvedInputs().isEmpty()) reasons.add("UNRESOLVED_INPUTS");
-        if (!contract.desktopObservationSubjectsValid()) reasons.add("MISSING_OBSERVABLE_SUBJECT");
-        if (contract.applicable() && contract.criteria().isEmpty()) reasons.add("EMPTY_CRITERIA");
+        if (!contract.desktopObservationSubjectsValid()) invalid.add("MISSING_OBSERVABLE_SUBJECT");
+        if (contract.applicable() && contract.criteria().isEmpty() && !clarification) invalid.add("EMPTY_CRITERIA");
         String directory = request.attributes().getOrDefault("workDir",
                 com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText("");
         List<TaskCriterionV3> normalized = new ArrayList<>();
@@ -379,15 +395,15 @@ public final class TaskContractCompiler {
             String target = criterion.target();
             if (criterion.capabilityId().equals("desktop.observe")
                     && (criterion.id().length() > 120 || criterion.requiredSubject().length() > 240))
-                reasons.add("UNVERIFIABLE_OBSERVABLE_SUBJECT");
+                invalid.add("UNVERIFIABLE_OBSERVABLE_SUBJECT");
             var descriptor = capabilities.find(criterion.capabilityId()).orElse(null);
-            if (descriptor == null) reasons.add("UNSUPPORTED_CAPABILITY");
+            if (descriptor == null) invalid.add("UNSUPPORTED_CAPABILITY");
             else {
                 if (!descriptor.targetKind().name().equals(criterion.targetType().name()))
-                    reasons.add("TARGET_KIND_MISMATCH");
+                    invalid.add("TARGET_KIND_MISMATCH");
                 if (TrustedCapabilityRegistry.rank(criterion.requiredEvidence())
                         > TrustedCapabilityRegistry.rank(descriptor.evidenceCeiling()))
-                    reasons.add("EVIDENCE_CEILING_EXCEEDED");
+                    invalid.add("EVIDENCE_CEILING_EXCEEDED");
             }
             if (descriptor != null && descriptor.targetKind()
                     == TrustedCapabilityRegistry.TargetKind.FILE) {
@@ -395,18 +411,20 @@ public final class TaskContractCompiler {
                     String rawTarget = target;
                     target = ProjectAccessPolicy.withWorkingDirectory(directory,
                             () -> ProjectAccessPolicy.resolveProjectPath(rawTarget).toString());
-                } catch (Exception invalid) {
-                    reasons.add("INVALID_FILE_TARGET");
+                } catch (Exception invalidTarget) {
+                    invalid.add("INVALID_FILE_TARGET");
                 }
             }
             normalized.add(new TaskCriterionV3(criterion.id(), criterion.description(),
                     criterion.capabilityId(), criterion.targetType(), target,
                     criterion.requiredEvidence(),
-                    receiptSubject(criterion, contract, reasons)));
+                    receiptSubject(criterion, contract, invalid)));
         }
+        reasons.addAll(invalid);
         return new TaskContractV3(3, contract.originalRequest(), normalized,
                 contract.applicable(), contract.reliable() && reasons.isEmpty(), contract.source(),
-                List.copyOf(reasons), contract.unresolvedInputs(), contract.desktopObservationPolicy());
+                List.copyOf(reasons), contract.unresolvedInputs(), contract.desktopObservationPolicy(),
+                invalid.isEmpty() ? contract.intentStatus() : TaskContractV3.IntentStatus.UNKNOWN);
     }
 
     private String receiptSubject(TaskCriterionV3 criterion, TaskContractV3 contract,

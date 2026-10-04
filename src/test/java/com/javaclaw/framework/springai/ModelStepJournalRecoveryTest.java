@@ -265,13 +265,14 @@ class ModelStepJournalRecoveryTest {
                 .filter(candidate -> candidate.descriptor().name().equals(name)).findFirst().orElseThrow();
     }
 
-    @Test
-    void auditedHumanContractRevisionStartsFreshWithoutDispatchingOldPendingTools() {
+    @ParameterizedTest
+    @ValueSource(strings = {"user.input", "input"})
+    void 两种已审计的人类补充命令都不得调度旧目标的待执行工具(String command) {
         try (Fixture fixture = new Fixture()) {
             fixture.completedModelStep(List.of("visible"), List.of(
                     new AssistantMessage.ToolCall("old-pending", "function", "visible", "{}")));
             fixture.store.record("core.run.resumed", 1, "framework.core",
-                    fixture.json.createObjectNode().put("commandType", "user.input")
+                    fixture.json.createObjectNode().put("commandType", command)
                             .set("command", fixture.json.createObjectNode().put("text", "cancel the old goal")));
             long resume = fixture.store.events.size();
             fixture.store.events.add(new RunEventEnvelope(fixture.runId.value(), resume + 1, Instant.now(),

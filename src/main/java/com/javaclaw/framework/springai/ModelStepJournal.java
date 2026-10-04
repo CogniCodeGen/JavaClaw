@@ -548,7 +548,8 @@ final class ModelStepJournal {
                     && resumed.type().equals("core.run.resumed") && resumed.schemaVersion() == 1
                     && resumed.producer().equals("framework.core")
                     && ("core.run.resumed:" + resumed.sequence()).equals(revision.causationId())
-                    && resumed.payload().path("commandType").asText().equals("user.input")
+                    && java.util.Set.of("user.input", "input")
+                            .contains(resumed.payload().path("commandType").asText())
                     && resumed.payload().path("command").path("text").isTextual()
                     && !resumed.payload().path("command").path("text").asText().isBlank())) return true;
         }
@@ -582,15 +583,14 @@ final class ModelStepJournal {
         boolean legacyDesktopBatch = legacyDesktopRecovery.legacyDesktopBatch(last);
         if (!legacyDesktopBatch) providerTools.validate(last, catalog, decisionCallback);
         List<Message> messages = new ArrayList<>(StepMessageCodec.messages(last.input().path("messages")));
-        if (request.plan().descriptor().stepContextPolicy() != null) {
-            UserMessage original = SpringAiPromptFactory.originalTaskMessage(request);
-            long matching = messages.stream()
-                    .filter(UserMessage.class::isInstance).map(UserMessage.class::cast)
-                    .filter(SpringAiPromptFactory::isOriginalTask)
-                    .filter(message -> SpringAiPromptFactory.sameUserContent(message, original))
-                    .count();
-            if (matching != 1) {
-                throw recoveryRequired(last, "persisted provider prompt lacks the original task");
+        if (request.plan().descriptor().stepContextPolicy() != null
+                || OriginalTaskSnapshot.hasAttachments(request)
+                || messages.stream().anyMatch(message -> message instanceof UserMessage user
+                        && SpringAiPromptFactory.isOriginalTask(user))) {
+            try {
+                messages = OriginalTaskSnapshot.restore(request, messages);
+            } catch (IllegalStateException invalid) {
+                throw recoveryRequired(last, invalid.getMessage());
             }
         }
         ChatResponse finalResponse = null;
@@ -729,9 +729,11 @@ final class ModelStepJournal {
                 finalResponse = null;
             }
         }
-        UserMessage resume = appendResume ? SpringAiPromptFactory.resumeCommandMessage(request) : null;
+        UserMessage resume = appendResume
+                ? SpringAiPromptFactory.resumeCommandMessage(request, messages, runs) : null;
         if (resume != null) {
-            messages.add(resume);
+            // 同一恢复命令已在持久化提示中出现时复用，不能重复添加必保留消息。
+            if (!messages.contains(resume)) messages.add(resume);
             finalResponse = null;
         }
         boolean replayPrompt = last.state() != AgentStep.State.COMPLETED && resume == null;

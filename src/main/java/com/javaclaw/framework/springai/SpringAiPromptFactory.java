@@ -6,14 +6,13 @@ import com.javaclaw.framework.api.ResumeCommand;
 import com.javaclaw.framework.core.ReasoningRequest;
 import com.javaclaw.framework.core.TaskContractCompiler;
 import com.javaclaw.framework.spi.ExtensionStateStore;
+import com.javaclaw.framework.spi.RunStore;
 import com.javaclaw.prompt.AgentPrompts;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
-import org.springframework.util.MimeTypeUtils;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +73,10 @@ final class SpringAiPromptFactory {
     }
 
     List<Message> messages(ReasoningRequest request) {
+        return messages(request, List.of(), null);
+    }
+
+    List<Message> messages(ReasoningRequest request, List<Message> frozenMessages, RunStore runs) {
         List<Message> messages = new ArrayList<>();
         for (InputBlock block : request.runRequest().inputs()) {
             if (!block.type().equals("core.message")) continue;
@@ -85,28 +88,15 @@ final class SpringAiPromptFactory {
                 messages.add(new UserMessage(text));
             }
         }
-        if (request.plan().descriptor().stepContextPolicy() == null) {
-            messages.add(unprojectedUserMessage(request));
-        } else {
-            messages.add(originalTaskMessage(request));
-            UserMessage resume = resumeCommandMessage(request);
-            if (resume != null) messages.add(resume);
+        UserMessage original = originalTaskMessage(request, frozenMessages);
+        messages.add(original);
+        List<Message> resumeSources = new ArrayList<>(frozenMessages);
+        if (resumeSources.stream().noneMatch(value -> value instanceof UserMessage user && isOriginalTask(user))) {
+            resumeSources.add(original);
         }
+        UserMessage resume = resumeCommandMessage(request, resumeSources, runs);
+        if (resume != null) messages.add(resume);
         return List.copyOf(messages);
-    }
-
-    /** Keep the current request in one user message when projection is disabled. */
-    private static UserMessage unprojectedUserMessage(ReasoningRequest request) {
-        UserMessage original = originalTaskMessage(request);
-        StringBuilder text = new StringBuilder(original.getText());
-        if (request.resumeCommand() != null
-                && !request.resumeCommand().type().equals("tool.approval")) {
-            text.append("\n\nResume command (").append(request.resumeCommand().type())
-                    .append("): ").append(request.resumeCommand().payload());
-        }
-        UserMessage.Builder builder = UserMessage.builder().text(text.toString());
-        if (!original.getMedia().isEmpty()) builder.media(original.getMedia());
-        return builder.build();
     }
 
     static boolean isOriginalTask(UserMessage message) {
@@ -170,6 +160,22 @@ final class SpringAiPromptFactory {
     }
 
     static UserMessage originalTaskMessage(ReasoningRequest request) {
+        StringBuilder text = new StringBuilder(originalTaskText(request));
+        List<Media> media = new ArrayList<>();
+        SpringAiAttachmentReader attachments = new SpringAiAttachmentReader(
+                attachmentTextBudget(request, text.length()));
+        for (InputBlock block : request.runRequest().inputs()) {
+            if (!block.type().equals("core.file") && !block.type().equals("core.image")
+                    && !block.type().equals("core.audio")) continue;
+            attachments.append(text, media, block.data());
+        }
+        UserMessage.Builder builder = UserMessage.builder().text(text.toString())
+                .metadata(Map.of(ORIGINAL_TASK_METADATA, true));
+        if (!media.isEmpty()) builder.media(media);
+        return OriginalTaskSnapshot.stamp(request, builder.build());
+    }
+
+    static String originalTaskText(ReasoningRequest request) {
         String current = inputText(request);
         String effective = effectiveTaskText(request);
         StringBuilder text = new StringBuilder(effective);
@@ -181,15 +187,21 @@ final class SpringAiPromptFactory {
                             + "continuing after a changed setting; do not infer a current block from "
                             + "an assistant's earlier failure report.");
         }
-        List<Media> media = new ArrayList<>();
-        for (InputBlock block : request.runRequest().inputs()) {
-            if (!block.type().equals("core.file") && !block.type().equals("core.image")) continue;
-            appendAttachment(text, media, block.data());
+        return text.toString();
+    }
+
+    /** 后续模型步复用首次消息正文及媒体，不重新读取可能已修改或删除的附件。 */
+    static UserMessage originalTaskMessage(ReasoningRequest request, List<Message> messages) {
+        return OriginalTaskSnapshot.find(request, messages).orElseGet(() -> originalTaskMessage(request));
+    }
+
+    private static int attachmentTextBudget(ReasoningRequest request, int taskCharacters) {
+        if (request.plan() == null || request.plan().descriptor().stepContextPolicy() == null) {
+            return SpringAiAttachmentReader.MAX_TOTAL_TEXT_CHARACTERS;
         }
-        UserMessage.Builder builder = UserMessage.builder().text(text.toString())
-                .metadata(Map.of(ORIGINAL_TASK_METADATA, true));
-        if (!media.isEmpty()) builder.media(media);
-        return builder.build();
+        int available = request.plan().descriptor().stepContextPolicy().maxMessageCharacters() / 2
+                - taskCharacters;
+        return Math.max(0, Math.min(SpringAiAttachmentReader.MAX_TOTAL_TEXT_CHARACTERS, available));
     }
 
     static String effectiveTaskText(ReasoningRequest request) {
@@ -205,37 +217,12 @@ final class SpringAiPromptFactory {
         return resumeCommandMessage(request.resumeCommand());
     }
 
-    static UserMessage resumeCommandMessage(ResumeCommand command) {
-        if (command == null || command.type().equals("tool.approval")) {
-            return null;
-        }
-        if (java.util.Set.of("delegation.continue", "schedule.continue", "managed.continue")
-                .contains(command.type()) && command.payload().isEmpty()) {
-            return null;
-        }
-        return UserMessage.builder()
-                .text("Resume command (" + command.type() + "): "
-                        + command.payload())
-                .metadata(Map.of(RESUME_COMMAND_METADATA, true))
-                .build();
+    static UserMessage resumeCommandMessage(ReasoningRequest request, List<Message> incoming, RunStore runs) {
+        return ResumeCommandSnapshot.resolve(request, incoming, runs);
     }
 
-    private static void appendAttachment(
-            StringBuilder text, List<Media> media, JsonNode data) {
-        String name = data.path("name").asText("attachment");
-        String uri = data.path("uri").asText("");
-        String mediaType = data.path("mediaType").asText("application/octet-stream");
-        text.append("\n[Attachment: ").append(name).append("; ").append(mediaType).append(']');
-        if (uri.isBlank() || !(mediaType.startsWith("image/") || mediaType.startsWith("audio/"))) {
-            return;
-        }
-        try {
-            media.add(Media.builder().name(name)
-                    .mimeType(MimeTypeUtils.parseMimeType(mediaType))
-                    .data(URI.create(uri)).build());
-        } catch (RuntimeException ignored) {
-            // 文本附件描述仍会提供给模型。
-        }
+    static UserMessage resumeCommandMessage(ResumeCommand command) {
+        return ResumeCommandSnapshot.create(command);
     }
 
     private static String inputText(ReasoningRequest request) {

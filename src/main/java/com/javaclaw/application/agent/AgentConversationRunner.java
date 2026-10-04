@@ -242,8 +242,15 @@ public final class AgentConversationRunner implements AutoCloseable {
             callbacks.onEvent(new ConversationEvent.Custom(
                     "clarify_request", output.path("payload")));
         } else {
-            callbacks.onEvent(new ConversationEvent.Hint(
-                    payload.path("reason").asText("Agent 正在等待输入")));
+            String question = output.path("text").asText("");
+            if (question.isBlank()) question = output.path("value").asText("");
+            if (!question.isBlank()) {
+                // 在结束本次投递前显示提问，等待输入的 Turn 仍保留在框架中。
+                callbacks.onEvent(new ConversationEvent.Reply(question));
+            } else {
+                callbacks.onEvent(new ConversationEvent.Hint(
+                        payload.path("reason").asText("Agent 正在等待输入")));
+            }
         }
         if (current.interactive) {
             runs.remove(current.handle.id(), current);

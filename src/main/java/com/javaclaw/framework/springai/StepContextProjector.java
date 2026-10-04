@@ -104,20 +104,9 @@ final class StepContextProjector {
     /** Check the exact final Provider prompt after all Advisors have run. */
     void validate(List<Message> actual, ReasoningRequest request) {
         if (policy == null) return;
-        UserMessage original = SpringAiPromptFactory.originalTaskMessage(request);
-        boolean originalPresent = actual.stream().anyMatch(message ->
-                message instanceof UserMessage user
-                        && SpringAiPromptFactory.isOriginalTask(user)
-                        && SpringAiPromptFactory.sameUserContent(user, original));
-        if (!originalPresent) throw new IllegalStateException("original task is missing from provider context");
+        OriginalTaskSnapshot.require(request, actual);
 
-        UserMessage resume = SpringAiPromptFactory.resumeCommandMessage(request);
-        if (resume != null && actual.stream().noneMatch(message ->
-                message instanceof UserMessage user
-                        && SpringAiPromptFactory.isResumeCommand(user)
-                        && SpringAiPromptFactory.sameUserContent(user, resume))) {
-            throw new IllegalStateException("latest resume command is missing from provider context");
-        }
+        ResumeCommandSnapshot.requireCurrent(request, actual);
 
         if (!StepMessageCodec.messages(actual).equals(StepMessageCodec.messages(project(actual).messages()))) {
             throw new IllegalStateException("provider context bypasses the message budget or tool protocol");
@@ -130,6 +119,18 @@ final class StepContextProjector {
             throw new IllegalStateException("provider context was not prepared by the tool advisor");
         }
         validate(actual, request);
+        UserMessage original = OriginalTaskSnapshot.require(request, expected);
+        UserMessage actualOriginal = OriginalTaskSnapshot.require(request, actual);
+        if (!SpringAiPromptFactory.sameUserContent(actualOriginal, original)) {
+            throw new IllegalStateException("original task differs from the prepared provider snapshot");
+        }
+        UserMessage resume = ResumeCommandSnapshot.requireCurrent(request, expected);
+        UserMessage actualResume = ResumeCommandSnapshot.requireCurrent(request, actual);
+        if (resume != null && (!SpringAiPromptFactory.sameUserContent(actualResume, resume)
+                || !java.util.Objects.equals(actualResume.getMetadata().get(ResumeCommandSnapshot.IDENTITY_METADATA),
+                        resume.getMetadata().get(ResumeCommandSnapshot.IDENTITY_METADATA)))) {
+            throw new IllegalStateException("resume input differs from the prepared provider snapshot");
+        }
         validateRequiredEvidence(expected, actual);
         List<Unit> expectedUnits = units(expected);
         UserMessage repair = TaskRepairContext.latest(expected);

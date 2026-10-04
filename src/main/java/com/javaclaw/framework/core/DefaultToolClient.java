@@ -20,11 +20,13 @@ import com.javaclaw.framework.api.ManagedTurn;
 import com.javaclaw.framework.api.AgentStep;
 import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.api.RunBudget;
 import com.javaclaw.framework.spi.RunStore;
 import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.framework.spi.ToolEffectPolicy;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -158,13 +160,13 @@ public final class DefaultToolClient implements ToolClient {
         com.javaclaw.framework.spi.CancellationToken cancellation = () -> request.cancellation().cancelled()
                 || (ownedTurn != null && ownedTurn.cancelled())
                 || (runs != null && runs.find(runId).map(value -> value.snapshot().state() != RunState.RUNNING).orElse(true));
-        RunControl control = new RunControl(plan.descriptor().budget(), clock);
-        restoreEffectAttempts(control, runId);
-        ToolContext context = new ToolContext(runId, request.scope(),
-                plan.descriptor().permissions(), cancellation,
-                control.deadline(), effectiveOwner);
         List<FrameworkTool> tools = new ArrayList<>();
         try {
+            RunControl control = invocationControl(plan.descriptor().budget(), runId);
+            control.throwIfCancelled();
+            ToolContext context = new ToolContext(runId, request.scope(),
+                    plan.descriptor().permissions(), cancellation,
+                    control.deadline(), effectiveOwner);
             plan.toolFactories().forEach(factory -> tools.add(factory.create(context)));
             plan.toolProviderFactories().forEach(provider ->
                     tools.addAll(provider.create(context)));
@@ -187,7 +189,7 @@ public final class DefaultToolClient implements ToolClient {
 
                 @Override public void toolStarted(com.fasterxml.jackson.databind.JsonNode step,
                                                   com.fasterxml.jackson.databind.JsonNode started) {
-                    if (durable != null) durable.toolStarted(step, started);
+                    if (durable != null) persistToolStart(runId, durable, step, started);
                     events.add(new ToolCallEvent("core.step.started", 1, "framework.core", step));
                     events.add(new ToolCallEvent("core.tool.started", 1, "framework.core", started));
                 }
@@ -235,9 +237,44 @@ public final class DefaultToolClient implements ToolClient {
         }
     }
 
+    private RunControl invocationControl(RunBudget budget, RunId runId) {
+        Instant deadline = clock.instant().plus(budget.timeout());
+        if (runs != null) {
+            var stored = runs.find(runId).orElseThrow(() ->
+                    new IllegalStateException("tool owner turn does not exist: " + runId));
+            Instant ownerDeadline = PersistedRunDeadline.resolve(stored, stored.request().budget(),
+                    runs.eventsAfter(runId, 0));
+            if (ownerDeadline.isBefore(deadline)) deadline = ownerDeadline;
+        }
+        RunControl control = new RunControl(budget, clock, deadline);
+        restoreEffectAttempts(control, runId);
+        return control;
+    }
+
+    /** 持久化开始事件前，在 Turn 的接受锁内检查总预算，避免并发节点或恢复重置计数。 */
+    private void persistToolStart(RunId runId, ReasoningEventSink durable,
+                                  com.fasterxml.jackson.databind.JsonNode step,
+                                  com.fasterxml.jackson.databind.JsonNode started) {
+        runs.withRunAcceptanceLock(runId, () -> {
+            var stored = runs.find(runId).orElseThrow(() ->
+                    new IllegalStateException("tool owner turn does not exist: " + runId));
+            if (stored.snapshot().state() != RunState.RUNNING)
+                throw new IllegalStateException("tool owner turn is not running");
+            var journal = runs.eventsAfter(runId, 0);
+            RunControl ownerControl = new RunControl(stored.request().budget(), clock,
+                    PersistedRunDeadline.resolve(stored, stored.request().budget(), journal));
+            PersistedRunStateRestorer.restoreToolCalls(journal, ownerControl);
+            String fingerprint = started.path("fingerprint").asText("");
+            ownerControl.recordToolCall(fingerprint);
+            if (agents instanceof AgentEngine engine) engine.recordDirectToolCall(runId, fingerprint);
+            durable.toolStarted(step, started);
+            return null;
+        });
+    }
+
     /**
-     * Direct TOOL nodes get a fresh control object per call. Restore durable effect identities
-     * so a graph retry with a new invocation ID cannot resend an uncertain side effect.
+     * 节点保留局部预算控制；Turn 总预算由持久化开始边界统一校验。
+     * 回放副作用身份，避免图重试使用新的调用 ID 重发结果未明的副作用。
      */
     private void restoreEffectAttempts(RunControl control, RunId runId) {
         if (runs == null) return;

@@ -118,7 +118,8 @@ final class TaskModelDecisionGate {
 
     private static boolean newHumanInput(RunEventEnvelope event) {
         var payload = event.payload();
-        return "user.input".equals(payload.path("commandType").asText())
+        String type = payload.path("commandType").asText();
+        return ("user.input".equals(type) || "input".equals(type))
                 && payload.path("command").path("text").isTextual()
                 && !payload.path("command").path("text").asText().isBlank();
     }

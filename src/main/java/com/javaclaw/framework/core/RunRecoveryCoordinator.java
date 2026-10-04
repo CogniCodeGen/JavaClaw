@@ -17,7 +17,6 @@ import com.javaclaw.framework.spi.StoredRun;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.Optional;
@@ -159,26 +158,10 @@ final class RunRecoveryCoordinator {
         return json.treeToValue(persisted, ExecutionPlanDescriptor.class);
     }
 
-    /** Older journals use their original creation time and locked budget. */
+    /** 旧日志与直接工具调用使用相同的原始截止时间规则。 */
     private Instant persistedDeadline(StoredRun stored, ExecutionPlanDescriptor descriptor) {
-        Instant historical = stored.snapshot().createdAt().plus(descriptor.budget().timeout());
-        for (RunEventEnvelope event : runs.eventsAfter(stored.snapshot().id(), 0)) {
-            if (!event.type().equals("core.run.created") || event.schemaVersion() != 1
-                    || !event.producer().equals("framework.core")) continue;
-            String recorded = event.payload().path("deadline").asText("");
-            if (!recorded.isBlank()) {
-                try {
-                    Instant deadline = Instant.parse(recorded);
-                    // A malformed later deadline cannot increase the immutable Run budget.
-                    return deadline.isBefore(historical) ? deadline : historical;
-                } catch (DateTimeParseException invalid) {
-                    // Invalid persisted text cannot replace the original locked deadline.
-                    return historical;
-                }
-            }
-            break;
-        }
-        return historical;
+        return PersistedRunDeadline.resolve(stored, descriptor.budget(),
+                runs.eventsAfter(stored.snapshot().id(), 0));
     }
 
     private void markBlocked(StoredRun stored, String code, String detail) {
