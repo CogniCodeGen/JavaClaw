@@ -11,6 +11,9 @@ import com.javaclaw.framework.core.StepEvents;
 import com.javaclaw.framework.api.AgentStep;
 import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.spi.*;
+import com.javaclaw.framework.spi.ModelTaskOutputException;
+import com.javaclaw.framework.spi.ModelTaskTimeoutException;
+import com.javaclaw.framework.spi.ReadOnlyTaskTimeoutException;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.Usage;
@@ -100,7 +103,7 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         return execute(request, executor);
     }
 
-    private CompletableFuture<ModelTaskResult> execute(
+    private ModelTaskFuture execute(
             ModelTaskRequest request, CancellableTaskExecutor carrier) {
         request.cancellation().throwIfCancelled();
         if (!activeOwner(request)) throw new IllegalStateException(
@@ -110,17 +113,19 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         TaskLifecycle lifecycle = new TaskLifecycle(request);
         ModelTaskResult cached = request.cacheAllowed() ? cache.get(cacheKey) : null;
         CompletableFuture<ModelTaskResult> task;
+        boolean ownRequestDeadline = false;
         if (cached != null) {
             ModelTaskResult hit = new ModelTaskResult(cached.output(), cached.model(),
                     0, 0, true, cached.metadata());
             task = CompletableFuture.completedFuture(hit);
         } else {
-            Duration timeout = effectiveTimeout(request);
+            TaskTimeout timeout = effectiveTimeout(request);
+            ownRequestDeadline = timeout.ownRequestDeadline();
             task = com.javaclaw.framework.core.CancellableTaskStages.submitReadOnly(
-                    carrier, "model-task-" + request.purpose(), timeout,
+                    carrier, "model-task-" + request.purpose(), timeout.duration(),
                     request.cancellation(), () -> executeWithRetry(request, lifecycle));
         }
-        ModelTaskFuture published = new ModelTaskFuture(request, lifecycle, task);
+        ModelTaskFuture published = new ModelTaskFuture(request, lifecycle, task, ownRequestDeadline);
         task.whenComplete((result, failure) -> {
             if (!published.settling.compareAndSet(false, true)) return;
             Throwable cause = failure == null ? null : unwrap(failure);
@@ -167,9 +172,18 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
     @Override
     public ModelTaskResult executeInline(ModelTaskRequest request) {
         // 直接使用独立虚拟承载线程，避免主模型已持有 IO 配额时再申请同一配额。
-        try { return execute(request, INLINE_EXECUTOR).join(); }
+        ModelTaskFuture task = execute(request, INLINE_EXECUTOR);
+        try { return task.join(); }
         catch (java.util.concurrent.CompletionException failure) {
             Throwable cause = unwrap(failure);
+            if (cause instanceof ReadOnlyTaskTimeoutException timeout
+                    && task.ownRequestDeadline && timeout.getSuppressed().length == 0
+                    && !Thread.currentThread().isInterrupted()
+                    && !request.cancellation().cancelled()
+                    && request.cancellation().remaining().compareTo(Duration.ZERO) > 0
+                    && ownerBeforeDeadline(request)) {
+                throw new ModelTaskTimeoutException(timeout);
+            }
             if (cause instanceof TimeoutException) throw new IllegalStateException(
                     "inline model task timed out: " + request.purpose(), cause);
             if (cause instanceof java.util.concurrent.CancellationException) throw new RunCancelledException();
@@ -301,6 +315,31 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                 .orElse(false);
     }
 
+    /** Absent or malformed owner deadline evidence cannot turn a failure into an optional timeout. */
+    private boolean ownerBeforeDeadline(ModelTaskRequest request) {
+        if (runs == null || !activeOwner(request)) return false;
+        var owner = runs.find(request.ownerRunId()).orElse(null);
+        // A child may share an earlier ancestor deadline; do not infer that deadline here.
+        if (owner == null || owner.request().linkage().parentRunId() != null) return false;
+        var created = runs.eventsAfter(request.ownerRunId(), 0).stream()
+                .filter(event -> event.runId().equals(request.ownerRunId().value())
+                        && event.type().equals("core.run.created")
+                        && event.schemaVersion() == 1 && event.producer().equals("framework.core"))
+                .min(java.util.Comparator.comparingLong(com.javaclaw.framework.api.RunEventEnvelope::sequence))
+                .orElse(null);
+        if (created == null || !created.payload().path("deadline").isTextual()) return false;
+        try {
+            java.time.Instant deadline = java.time.Instant.parse(created.payload().path("deadline").asText());
+            java.time.Instant frozenLimit = owner.snapshot().createdAt()
+                    .plus(usageLedger.remainingBudget(request.ownerRunId()).timeout());
+            if (frozenLimit.isBefore(deadline)) deadline = frozenLimit;
+            // Do not guess a managed workflow's waiting-time extension; expiry fails closed.
+            return java.time.Instant.now().isBefore(deadline) && activeOwner(request);
+        } catch (java.time.format.DateTimeParseException malformed) {
+            return false;
+        }
+    }
+
     private boolean usageOwnerOpen(ModelTaskRequest request) {
         // PAUSED 保留可恢复的收费证据；真正结束的 run 只保留物理 ledger/observer 计账。
         return runs == null || runs.find(request.ownerRunId())
@@ -327,11 +366,13 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
         private final ModelTaskRequest request;
         private final TaskLifecycle lifecycle;
         private final CompletableFuture<ModelTaskResult> task;
+        private final boolean ownRequestDeadline;
         ModelTaskFuture(ModelTaskRequest request, TaskLifecycle lifecycle,
-                        CompletableFuture<ModelTaskResult> task) {
+                        CompletableFuture<ModelTaskResult> task, boolean ownRequestDeadline) {
             this.request = request;
             this.lifecycle = lifecycle;
             this.task = task;
+            this.ownRequestDeadline = ownRequestDeadline;
         }
         @Override public boolean cancel(boolean mayInterruptIfRunning) {
             if (!settling.compareAndSet(false, true)) return false;
@@ -446,16 +487,18 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                         "owner run not found for model task: " + request.ownerRunId()));
     }
 
-    private static Duration effectiveTimeout(ModelTaskRequest request) {
+    private record TaskTimeout(Duration duration, boolean ownRequestDeadline) { }
+
+    private static TaskTimeout effectiveTimeout(ModelTaskRequest request) {
         Duration ownerRemaining = request.cancellation().remaining();
         request.cancellation().throwIfCancelled();
         Duration timeout = request.timeout().compareTo(ownerRemaining) <= 0
                 ? request.timeout() : ownerRemaining;
         if (timeout.isZero() || timeout.isNegative()) {
             request.cancellation().throwIfCancelled();
-            return Duration.ofNanos(1);
+            return new TaskTimeout(Duration.ofNanos(1), false);
         }
-        return timeout;
+        return new TaskTimeout(timeout, request.timeout().compareTo(ownerRemaining) < 0);
     }
 
     private void recordUsage(

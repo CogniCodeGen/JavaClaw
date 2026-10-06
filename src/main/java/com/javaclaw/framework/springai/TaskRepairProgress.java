@@ -20,6 +20,7 @@ final class TaskRepairProgress {
         // makes the final criterion-by-ID acceptance decision.
         for (RunEventEnvelope event : evidence) {
             if (!trustedReceiptAfter(event, repair)) continue;
+            if (newSatisfiedFileRead(events, evidence, event, repair, current)) return true;
             String status = event.payload().path("status").asText("");
             String operation = event.payload().path("operation").asText("");
             if (status.equals("OBSERVED")
@@ -29,6 +30,57 @@ final class TaskRepairProgress {
                     && dispatchedBusinessAction(evidence, event, repair)) return true;
         }
         return false;
+    }
+
+    private static boolean newSatisfiedFileRead(List<RunEventEnvelope> events,
+            List<RunEventEnvelope> evidence,
+            RunEventEnvelope event, RunEventEnvelope repair, TaskResult current) {
+        JsonNode payload = event.payload();
+        String reference = payload.path("evidenceRef").asText("");
+        // Only an actual host file observation selected by the strict frozen-contract
+        // evaluator can advance a read task. A new invocation ID alone is insufficient.
+        if (reference.isBlank() || !current.evidenceRefs().contains(reference)
+                || !trustedFileRead(event)) return false;
+        RunEventEnvelope previousReview = events.stream()
+                .filter(review -> review.runId().equals(repair.runId())
+                        && review.sequence() < repair.sequence()
+                        && review.type().equals("core.task.review")
+                        && review.schemaVersion() == 3
+                        && review.producer().equals("framework.springai"))
+                .max(Comparator.comparingLong(RunEventEnvelope::sequence)).orElse(null);
+        Set<String> selectedBefore = new java.util.HashSet<>();
+        if (previousReview != null) {
+            previousReview.payload().path("evidenceRefs").forEach(
+                    value -> { if (value.isTextual()) selectedBefore.add(value.asText()); });
+        }
+        // A formerly out-of-order read can become the new required ordered evidence.
+        // Compare only receipts selected by the immediately preceding trusted review;
+        // absent that review, retain the conservative all-history comparison.
+        return evidence.stream().noneMatch(previous -> previous != event
+                && !trustedReceiptAfter(previous, repair) && trustedFileRead(previous)
+                && (previousReview == null || selectedBefore.contains(
+                        previous.payload().path("evidenceRef").asText("")))
+                && previous.payload().path("target").asText("").equals(
+                        payload.path("target").asText(""))
+                && previous.payload().path("metadata").path("fileContentSha256").asText("")
+                        .equals(payload.path("metadata").path("fileContentSha256").asText(""))
+                && previous.payload().path("metadata").path("fileContentCharacters").asText("")
+                        .equals(payload.path("metadata").path("fileContentCharacters").asText("")));
+    }
+
+    private static boolean trustedFileRead(RunEventEnvelope event) {
+        JsonNode payload = event.payload();
+        JsonNode metadata = payload.path("metadata");
+        return event.type().equals("core.tool.receipt") && event.schemaVersion() == 1
+                && event.producer().equals("framework.core")
+                && payload.path("tool").asText("").equals("sys_file_read")
+                && payload.path("operation").asText("").equals("read")
+                && payload.path("status").asText("").equals("OBSERVED")
+                && !payload.path("target").asText("").isBlank()
+                && metadata.path("fileContentFormat").asText("")
+                        .equals("stripped-utf8-sha256-v1")
+                && metadata.path("fileContentSha256").asText("").matches("[0-9a-f]{64}")
+                && metadata.path("fileContentCharacters").asText("").matches("0|[1-9][0-9]*");
     }
 
     private static boolean trustedReceiptAfter(RunEventEnvelope event, RunEventEnvelope repair) {

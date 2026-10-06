@@ -345,6 +345,14 @@ final class DesktopToolPayloads {
         return data;
     }
 
+    static ObjectNode snapshot(String sessionId, DesktopFrame frame, String imagePath,
+            DesktopSessionInfo capturedSession, String captureId) {
+        ObjectNode data = snapshot(sessionId, frame, imagePath);
+        data.put("captureId", captureId);
+        data.set("target", target(capturedSession.target()));
+        return data;
+    }
+
     static ObjectNode sessionState(String sessionId, DesktopSessionState.Kind state,
             boolean foregroundGranted, DesktopActionResult.NextStep nextStep) {
         ObjectNode data = base("desktop.state");

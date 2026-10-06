@@ -92,6 +92,7 @@ public final class MemoryFactRowController {
         tools.setVisible(!editing && !selectionButton.isManaged());
         tools.setManaged(tools.isVisible());
         if (editing) {
+            editArea.setText(fact.text());
             editArea.requestFocus();
             editArea.positionCaret(editArea.getLength());
         }

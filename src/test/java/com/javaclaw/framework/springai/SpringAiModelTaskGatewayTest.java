@@ -12,6 +12,7 @@ import com.javaclaw.framework.spi.CancellableTask;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
 import com.javaclaw.framework.spi.CancellationToken;
 import com.javaclaw.framework.spi.ModelTaskAuditSink;
+import com.javaclaw.framework.spi.ModelTaskOutputException;
 import com.javaclaw.framework.spi.ModelTaskRequest;
 import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.framework.spi.ModelTier;

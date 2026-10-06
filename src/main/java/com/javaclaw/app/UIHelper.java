@@ -17,6 +17,7 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeView;
+import javafx.scene.layout.Region;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -194,20 +195,16 @@ public final class UIHelper {
         Label label = new Label(message);
         label.setWrapText(true);
         label.setMinWidth(0);
-        double contentWidth = Math.min(
-                ALERT_CONTENT_WIDTH,
-                Math.max(ALERT_CONTENT_MIN_WIDTH, label.prefWidth(-1)));
-        label.setPrefWidth(contentWidth);
+        label.setPrefWidth(ALERT_CONTENT_WIDTH);
+        label.setMinHeight(Region.USE_PREF_SIZE);
         label.setMaxWidth(Double.MAX_VALUE);
         label.getStyleClass().add("dialog-message");
 
         ScrollPane scroll = createDialogScrollPane(label, "dialog-message-scroll");
         scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scroll.setPrefViewportWidth(contentWidth);
-        double preferredHeight = label.prefHeight(contentWidth);
-        scroll.setPrefViewportHeight(Math.min(
-                ALERT_CONTENT_MAX_HEIGHT,
-                Math.max(36, preferredHeight)));
+        scroll.setPrefViewportWidth(ALERT_CONTENT_WIDTH);
+        // 未进入 Scene 的 Label 尚无 CSS/skin，不能在这里用 prefHeight 计算正文高度。
+        scroll.setPrefViewportHeight(36);
         scroll.setMaxHeight(ALERT_CONTENT_MAX_HEIGHT);
         pane.setContent(scroll);
     }
@@ -264,12 +261,47 @@ public final class UIHelper {
         double maxHeight = maxDialogHeight(bounds);
         stage.setMaxWidth(maxWidth);
         stage.setMaxHeight(maxHeight);
+        boolean resizedAlert = resizeAlertContent(pane, maxWidth);
+        if (resizedAlert) {
+            pane.requestLayout();
+            pane.layout();
+            stage.sizeToScene();
+        }
         if (stage.getWidth() > maxWidth) {
             stage.setWidth(maxWidth);
         }
         if (stage.getHeight() > maxHeight) {
             stage.setHeight(maxHeight);
         }
+        if (resizedAlert) {
+            // show 前按占位正文居中的坐标，在正文增高后也必须留在所属屏幕的可视区域内。
+            stage.setX(Math.max(bounds.getMinX(),
+                    Math.min(stage.getX(), bounds.getMaxX() - stage.getWidth())));
+            stage.setY(Math.max(bounds.getMinY(),
+                    Math.min(stage.getY(), bounds.getMaxY() - stage.getHeight())));
+        }
+    }
+
+    private static boolean resizeAlertContent(DialogPane pane, double maxWidth) {
+        if (!(pane.getContent() instanceof ScrollPane scroll)
+                || !scroll.getStyleClass().contains("dialog-message-scroll")
+                || !(scroll.getContent() instanceof Label label)) {
+            return false;
+        }
+
+        // 此时正文已挂到窗口：先应用字体/间距，再以实际阅读宽度测量换行后的完整高度。
+        pane.applyCss();
+        label.setPrefWidth(Region.USE_COMPUTED_SIZE);
+        double availableWidth = Math.max(1,
+                maxWidth - pane.getInsets().getLeft() - pane.getInsets().getRight());
+        double contentWidth = Math.min(availableWidth, Math.min(
+                ALERT_CONTENT_WIDTH,
+                Math.max(ALERT_CONTENT_MIN_WIDTH, label.prefWidth(-1))));
+        label.setPrefWidth(contentWidth);
+        scroll.setPrefViewportWidth(contentWidth);
+        scroll.setPrefViewportHeight(Math.min(ALERT_CONTENT_MAX_HEIGHT,
+                Math.max(36, label.prefHeight(contentWidth))));
+        return true;
     }
 
     private static Rectangle2D visualBounds(Dialog<?> dialog) {

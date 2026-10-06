@@ -6,6 +6,7 @@ import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
@@ -15,7 +16,7 @@ import java.net.URL;
 import java.util.Objects;
 import java.util.Optional;
 
-/** 创建并释放 FXML 工作流测试输入弹窗。 */
+/** 工作流测试输入、名称输入和删除确认弹窗。 */
 public final class WorkflowInputDialogFactory {
 
     private static final URL VIEW = Objects.requireNonNull(
@@ -52,5 +53,21 @@ public final class WorkflowInputDialogFactory {
         } catch (IOException failure) {
             throw new UncheckedIOException("加载工作流测试输入弹窗失败", failure);
         }
+    }
+
+    Optional<String> showRename(Window owner, String name) {
+        TextInputDialog dialog = ui.createTextInputDialog(
+                name, "重命名工作流", "工作流名称:", null);
+        if (owner != null) dialog.initOwner(owner);
+        return dialog.showAndWait();
+    }
+
+    boolean confirmDelete(Window owner, String name) {
+        var dialog = ui.createConfirmAlert("删除工作流",
+                "确定要删除工作流「" + name + "」吗？\n"
+                        + "将永久删除该工作流及其运行历史、检查点和状态，无法撤销。\n"
+                        + "未结束的运行必须先取消。", null);
+        if (owner != null) dialog.initOwner(owner);
+        return dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
     }
 }

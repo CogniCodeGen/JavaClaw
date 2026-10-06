@@ -31,7 +31,7 @@ public final class MemoryUseCase implements MemoryApplicationService {
         String error = memory.probeEmbedding();
         int moved = 0;
         Snapshot current = memory.load();
-        if ((error == null || error.isBlank()) && current.embedding().pendingCount() > 0) {
+        if ((error == null || error.isBlank()) && current.embedding().canRefill()) {
             moved = memory.promoteAllPending();
         }
         return result(moved, moved > 0 ? "已自动回填 " + moved + " 条记忆" : "");
@@ -60,8 +60,11 @@ public final class MemoryUseCase implements MemoryApplicationService {
     @Override
     public OperationResult editFact(EditFactCommand command) {
         Objects.requireNonNull(command, "command");
-        memory.editFact(required(command.id(), "事实 ID"), required(command.text(), "事实内容"));
-        return result(1, "事实已更新并重新嵌入");
+        String id = required(command.id(), "事实 ID");
+        memory.editFact(id, required(command.text(), "事实内容"));
+        Snapshot current = memory.load();
+        boolean pending = current.facts().stream().anyMatch(fact -> fact.id().equals(id) && fact.pending());
+        return new OperationResult(current, 1, pending ? "事实已更新，等待嵌入" : "事实已更新");
     }
 
     @Override

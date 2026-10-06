@@ -231,11 +231,37 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         if (current.terminal()) return handle(runId);
         if (current != RunState.PAUSED && current != RunState.WAITING_INPUT && current != RunState.WAITING_APPROVAL)
             throw new IllegalStateException("run is not resumable: " + runId);
+        if (PersistedRunDeadline.workflowCoordinator(active.request)
+                && (current == RunState.PAUSED || current == RunState.WAITING_INPUT)) {
+            active.control.restoreDeadline(PersistedRunDeadline.resolve(requireRun(runId),
+                    active.plan.descriptor().budget(), runs.eventsAfter(runId, 0), clock.instant()));
+        }
         if (active.control.expired()) {
             cancel(runId, active.control.cancellationReason().orElseGet(active.control::timeoutReason));
             return handle(runId);
         }
         if (!runs.claim(runId)) throw new IllegalStateException("another turn owns this thread");
+        if (command.type().equals("input.continue")) {
+            // Continuing a restored approval only reopens the current challenge. It is not a grant.
+            if (active.pendingApproval != null) {
+                if (current != RunState.PAUSED && current != RunState.WAITING_APPROVAL) {
+                    throw new IllegalStateException("pending approval has no resumable approval state");
+                }
+                ObjectNode review = JsonNodeFactory.instance.objectNode();
+                review.set("approval", active.pendingApproval.toJson());
+                review.put("reason", "APPROVAL_REVIEW_REQUESTED");
+                var reopened = runs.append(runId, Set.of(current), RunState.WAITING_APPROVAL,
+                        event(active.request, "core.run.waiting_approval", "framework.core", review, null),
+                        null, null);
+                if (reopened.isEmpty()) throw new IllegalStateException("pending approval could not be reopened");
+                active.sink.tryEmitNext(reopened.get());
+                return new EngineRunHandle(active);
+            }
+            if (current == RunState.WAITING_APPROVAL) {
+                throw new IllegalStateException("waiting approval has no pending challenge");
+            }
+            command = new ResumeCommand("input", command.payload());
+        }
         ApprovedToolInvocation approvedInvocation = active.pendingApprovedInvocation;
         if (command.type().equals("tool.approval")) {
             String fingerprint = command.payload().path("fingerprint").asText("");
@@ -348,7 +374,11 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
     public java.util.Optional<Instant> deadline(RunId runId) {
         StoredRun stored = requireReadableRun(runId);
         ActiveRun active = activeRuns.get(runId);
-        if (active != null) return java.util.Optional.of(active.control.deadline());
+        if (active != null && !(PersistedRunDeadline.workflowCoordinator(active.request)
+                && (stored.snapshot().state() == RunState.PAUSED
+                    || stored.snapshot().state() == RunState.WAITING_INPUT))) {
+            return java.util.Optional.of(active.control.deadline());
+        }
         return recovery.deadline(stored);
     }
 

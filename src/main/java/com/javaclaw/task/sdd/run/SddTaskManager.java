@@ -82,6 +82,12 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
     private final String workspaceId;
     private final SddTaskStore store;
     private com.javaclaw.framework.api.ThreadClient threads;
+    private com.javaclaw.framework.spi.RunStore evidenceRuns;
+
+    public SddTaskManager bindEvidenceStore(com.javaclaw.framework.spi.RunStore runs) {
+        evidenceRuns = java.util.Objects.requireNonNull(runs, "runs");
+        return this;
+    }
 
     public SddTaskManager bindThreadClient(com.javaclaw.framework.api.ThreadClient client) {
         threads = java.util.Objects.requireNonNull(client, "client");
@@ -174,6 +180,7 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
                                               String workDir, long tokenBudget, String notificationChannel,
                                               String nowStamp) {
         ensureOpen();
+        if (tokenBudget < 0) throw new IllegalArgumentException("Token 预算必须是非负整数（0 表示不限）");
         String safeWorkDir = workDir;
         if (workDir != null && !workDir.isBlank()) {
             Path resolved = ProjectAccessPolicy.resolveProjectPath(workDir);
@@ -239,6 +246,8 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
             epoch = epochSequence.incrementAndGet();
             runEpochs.put(id, epoch);
             // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
+            // Both fields describe this execution; previous outcomes remain in the run journal/logs.
+            task.result = null;
             task.taskResult = null;
             setState(task, SddTaskState.RUNNING, null);
             submission = new DriverSubmission(id, new java.util.concurrent.CompletableFuture<>());
@@ -284,9 +293,18 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
             var gate = interactionPort != null
                     ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
             runner = new SddTaskRunner(context, settings, skillRuntime,
-                    (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
+                    new com.javaclaw.task.sdd.SddTokenSink() {
+                        @Override public void record(String phase, long in, long out) {
+                            recordTokens(task, phase, in, out);
+                        }
+                        @Override public void record(String phase, com.javaclaw.framework.api.RunId runId,
+                                                     long in, long out) {
+                            recordTokens(task, phase, in, out, runId.value());
+                        }
+                    }, gate, progress,
                     completionStamp, workflowService, jdbc, json, processes, workspaceId,
                     agents, modelTasks, workspace)
+                    .evidenceStore(evidenceRuns)
                     .budgetGuard(() -> isOverBudget(task))
                     .execTimeoutSec(settings.getSddExecTimeoutSeconds())
                     .structuredTimeoutSec(settings.getSddStructuredTimeoutSeconds())
@@ -514,7 +532,16 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
     }
 
     private synchronized void recordTokens(SddManagedTask task, String phase, long in, long out) {
+        recordTokens(task, phase, in, out, null);
+    }
+
+    private synchronized void recordTokens(SddManagedTask task, String phase, long in, long out,
+                                           String runId) {
         if (!tasks.contains(task) || store.isDeleted(task.id)) return;
+        if (runId != null) {
+            if (task.recordedRunIds == null) task.recordedRunIds = new java.util.LinkedHashSet<>();
+            if (!task.recordedRunIds.add(runId)) return;
+        }
         boolean wasOver = isOverBudget(task);
         task.totalInputTokens += in;
         task.totalOutputTokens += out;
@@ -531,6 +558,8 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
                     + task.tokenBudget + "），将在当前步骤结束后停为待人工",
                     SddProgress.LogKind.WARN);
         }
+        // Persist the charge marker and totals together before a retry or pause can replay this Run.
+        if (runId != null) saveAll();
         notifyTaskChanged(task);
     }
 
@@ -541,9 +570,10 @@ public final class SddTaskManager implements AutoCloseable, com.javaclaw.framewo
 
     /** 调整任务 token 预算（超限停为待人工后，调高预算即可续跑；0 表示不限制）。 */
     public synchronized void updateTokenBudget(String id, long newBudget) {
+        if (newBudget < 0) throw new IllegalArgumentException("Token 预算必须是非负整数（0 表示不限）");
         SddManagedTask t = get(id);
         if (t == null) return;
-        t.tokenBudget = Math.max(0, newBudget);
+        t.tokenBudget = newBudget;
         saveAll();
         notifyTaskChanged(t);
     }

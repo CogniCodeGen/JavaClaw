@@ -46,12 +46,20 @@ public interface ChatHistoryApplicationService {
             List<String> imagePaths,
             boolean adopted,
             DeliveryStatus deliveryStatus,
-            TurnUsage usage) {
+            TurnUsage usage,
+            List<String> attachmentPaths) {
+        public MessageSnapshot(MessageRole role, String content, LocalDateTime timestamp,
+                               List<String> imagePaths, boolean adopted,
+                               DeliveryStatus deliveryStatus, TurnUsage usage) {
+            this(role, content, timestamp, imagePaths, adopted, deliveryStatus, usage, List.of());
+        }
+
         public MessageSnapshot {
             if (role == null) throw new IllegalArgumentException("消息角色不能为空");
             content = content == null ? "" : content;
             timestamp = timestamp == null ? LocalDateTime.now() : timestamp;
             imagePaths = imagePaths == null ? List.of() : List.copyOf(imagePaths);
+            attachmentPaths = attachmentPaths == null ? List.of() : List.copyOf(attachmentPaths);
         }
     }
 

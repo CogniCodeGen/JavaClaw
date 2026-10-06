@@ -71,7 +71,7 @@
                                         </VBox>
                                         <VBox spacing="4.0" HBox.hgrow="ALWAYS" styleClass="sdd-stat-tile">
                                             <children>
-                                                <Label text="耗时" styleClass="sdd-stat-label"/>
+                                                <Label text="自创建" styleClass="sdd-stat-label"/>
                                                 <Label fx:id="elapsedValue" styleClass="sdd-stat-value"/>
                                                 <Label fx:id="elapsedHint" styleClass="sdd-stat-hint"/>
                                             </children>

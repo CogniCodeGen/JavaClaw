@@ -13,11 +13,16 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
+import javafx.beans.value.ChangeListener;
+import javafx.event.Event;
+import javafx.event.EventHandler;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Slider;
+import javafx.scene.input.InputEvent;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -42,6 +47,7 @@ public final class KnowledgeSettingsController implements AutoCloseable {
     @FXML private Label chunkValueLabel;
     @FXML private Slider chunkSlider;
     @FXML private Label overlapValueLabel;
+    @FXML private Label overlapMaxLabel;
     @FXML private Slider overlapSlider;
     @FXML private Button rebuildButton;
     @FXML private Button clearButton;
@@ -58,6 +64,12 @@ public final class KnowledgeSettingsController implements AutoCloseable {
     private Consumer<String> notifier = ignored -> { };
     private Runnable openModelSettings = () -> { };
     private boolean applying;
+    private boolean updatingValues;
+    private boolean savingChunkSettings;
+    private final EventHandler<InputEvent> chunkInputGuard = this::guardChunkSettingsInput;
+    private final ChangeListener<Boolean> chunkSaveBusyListener = (ignored, previous, busy) -> {
+        if (!busy) savingChunkSettings = false;
+    };
 
     public KnowledgeSettingsController(
             KnowledgeApplicationService useCases,
@@ -78,6 +90,11 @@ public final class KnowledgeSettingsController implements AutoCloseable {
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
         rebuildButton.disableProperty().bind(rebuildAction.busyProperty());
         clearButton.disableProperty().bind(clearAction.busyProperty());
+        chunkSlider.disableProperty().bind(rebuildAction.busyProperty().or(clearAction.busyProperty()));
+        overlapSlider.disableProperty().bind(rebuildAction.busyProperty().or(clearAction.busyProperty()));
+        chunkSlider.addEventFilter(InputEvent.ANY, chunkInputGuard);
+        overlapSlider.addEventFilter(InputEvent.ANY, chunkInputGuard);
+        saveAction.busyProperty().addListener(chunkSaveBusyListener);
         chunkSlider.valueProperty().addListener((ignored, previous, value) -> updateValues());
         overlapSlider.valueProperty().addListener((ignored, previous, value) -> updateValues());
     }
@@ -121,47 +138,95 @@ public final class KnowledgeSettingsController implements AutoCloseable {
     void openModelSettings() { openModelSettings.run(); }
 
     @FXML private void modelSettingsRequested() { openModelSettings(); }
-    @FXML private void chunkSettingsReleased() { saveChunkSettings(); }
+    @FXML private void chunkSettingsReleased(Event event) {
+        if (!(event instanceof KeyEvent key) || changesChunkSettings(key)) {
+            saveChunkSettings();
+        }
+    }
+
+    private void guardChunkSettingsInput(InputEvent event) {
+        if (savingChunkSettings
+                && (!(event instanceof KeyEvent key) || changesChunkSettings(key))) {
+            event.consume();
+        }
+    }
+
+    private static boolean changesChunkSettings(KeyEvent event) {
+        return switch (event.getCode()) {
+            case HOME, END, LEFT, RIGHT, UP, DOWN, PAGE_UP, PAGE_DOWN -> true;
+            default -> false;
+        };
+    }
     @FXML private void rebuildRequested() { rebuildIndex(); }
     @FXML private void clearRequested() { clearKnowledge(); }
 
     private void applySettings(Settings settings) {
         applying = true;
-        modelLabel.setText(settings.model().isBlank() ? "未配置" : settings.model());
-        providerLabel.setText(settings.provider() + " · "
-                + (settings.baseUrl().isBlank() ? "—" : settings.baseUrl()));
-        dimensionsLabel.setText(Integer.toString(settings.dimensions()));
-        chunkSlider.setValue(settings.chunkSize());
-        overlapSlider.setValue(settings.chunkOverlap());
-        updateValues();
-        applying = false;
+        try {
+            modelLabel.setText(settings.model().isBlank() ? "未配置" : settings.model());
+            providerLabel.setText(settings.provider() + " · "
+                    + (settings.baseUrl().isBlank() ? "—" : settings.baseUrl()));
+            dimensionsLabel.setText(Integer.toString(settings.dimensions()));
+            chunkSlider.setValue(settings.chunkSize());
+            overlapSlider.setValue(settings.chunkOverlap());
+            updateValues();
+        } finally {
+            applying = false;
+        }
     }
 
     private void updateValues() {
-        int chunkSize = (int) Math.round(chunkSlider.getValue());
-        int overlap = (int) Math.round(overlapSlider.getValue());
-        int percentage = chunkSize == 0 ? 0 : Math.round(overlap * 100f / chunkSize);
-        chunkValueLabel.setText(chunkSize + " 字符");
-        overlapValueLabel.setText(overlap + " 字符 · " + percentage + "%");
+        if (updatingValues) return;
+        updatingValues = true;
+        try {
+            int chunkSize = (int) Math.round(chunkSlider.getValue());
+            int maximumOverlap = Math.min(256, Math.max(0, chunkSize / 2));
+            overlapSlider.setMax(maximumOverlap);
+            overlapSlider.setValue(Math.max(0,
+                    Math.min(maximumOverlap, overlapSlider.getValue())));
+            int overlap = (int) Math.round(overlapSlider.getValue());
+            int percentage = chunkSize == 0 ? 0 : Math.round(overlap * 100f / chunkSize);
+            chunkValueLabel.setText(chunkSize + " 字符");
+            overlapValueLabel.setText(overlap + " 字符 · " + percentage + "%");
+            overlapMaxLabel.setText(Integer.toString(maximumOverlap));
+        } finally {
+            updatingValues = false;
+        }
     }
 
     private void saveChunkSettings() {
-        if (applying || viewModel.settings() == null) return;
+        if (applying || updatingValues || savingChunkSettings || saveAction.busyProperty().get()
+                || viewModel.settings() == null) return;
+        updateValues();
         int chunkSize = (int) Math.round(chunkSlider.getValue());
         int overlap = (int) Math.round(overlapSlider.getValue());
         Settings current = viewModel.settings();
         if (chunkSize == current.chunkSize() && overlap == current.chunkOverlap()) return;
-        saveAction.execute(TaskSpec.io("knowledge-save-chunk-settings"),
-                context -> useCases.saveChunkSettings(chunkSize, overlap),
-                settings -> {
-                    viewModel.updateSettings(settings);
-                    applySettings(settings);
-                    settingsChanged.run();
-                    notifier.accept("分块参数已保存");
-                }, failure -> {
-                    applySettings(current);
-                    notifier.accept("保存分块参数失败：" + errorMessage(failure));
-                });
+        savingChunkSettings = true;
+        try {
+            saveAction.execute(TaskSpec.io("knowledge-save-chunk-settings"),
+                    context -> useCases.saveChunkSettings(chunkSize, overlap),
+                    settings -> {
+                        try {
+                            viewModel.updateSettings(settings);
+                            applySettings(settings);
+                            settingsChanged.run();
+                            notifier.accept("分块参数已保存");
+                        } finally {
+                            savingChunkSettings = false;
+                        }
+                    }, failure -> {
+                        try {
+                            applySettings(current);
+                            notifier.accept("保存分块参数失败：" + errorMessage(failure));
+                        } finally {
+                            savingChunkSettings = false;
+                        }
+                    });
+        } catch (RuntimeException failure) {
+            savingChunkSettings = false;
+            throw failure;
+        }
     }
 
     private void rebuildIndex() {
@@ -199,6 +264,10 @@ public final class KnowledgeSettingsController implements AutoCloseable {
 
     @Override
     public void close() {
+        savingChunkSettings = false;
+        chunkSlider.removeEventFilter(InputEvent.ANY, chunkInputGuard);
+        overlapSlider.removeEventFilter(InputEvent.ANY, chunkInputGuard);
+        saveAction.busyProperty().removeListener(chunkSaveBusyListener);
         saveAction.close();
         rebuildAction.close();
         clearAction.close();
@@ -206,6 +275,8 @@ public final class KnowledgeSettingsController implements AutoCloseable {
         loadingOverlay.managedProperty().unbind();
         rebuildButton.disableProperty().unbind();
         clearButton.disableProperty().unbind();
+        chunkSlider.disableProperty().unbind();
+        overlapSlider.disableProperty().unbind();
         snapshotConsumer = ignored -> { };
         settingsChanged = () -> { };
         notifier = ignored -> { };

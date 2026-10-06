@@ -17,7 +17,8 @@
            xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
            fx:controller="com.javaclaw.ui.javafx.workflow.WorkflowViewController">
     <children>
-        <HBox styleClass="root, workflow-center">
+        <!-- 继承 Scene 根节点的主题令牌；子节点不能再次用 .root 重置为默认主题。 -->
+        <HBox styleClass="workflow-center">
             <children>
                 <VBox prefWidth="258.0" styleClass="modal-left-pane, workflow-left">
                     <children>
@@ -37,6 +38,17 @@
                                 <Button text="＋ 新建工作流" maxWidth="Infinity" HBox.hgrow="ALWAYS"
                                         onAction="#createRequested"
                                         styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"/>
+                            </children>
+                        </HBox>
+                        <HBox spacing="8.0" styleClass="workflow-create-row">
+                            <children>
+                                <Button fx:id="renameButton" text="重命名" maxWidth="Infinity"
+                                        HBox.hgrow="ALWAYS" onAction="#renameRequested"
+                                        accessibleText="重命名工作流"
+                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                <Button fx:id="deleteButton" text="删除工作流" maxWidth="Infinity"
+                                        HBox.hgrow="ALWAYS" onAction="#deleteRequested"
+                                        styleClass="button, jc-btn, jc-btn-danger, jc-btn-sm"/>
                             </children>
                         </HBox>
                         <Label text="工作流" styleClass="modal-nav-group"/>

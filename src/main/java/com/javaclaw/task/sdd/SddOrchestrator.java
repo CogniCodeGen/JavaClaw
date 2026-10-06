@@ -6,6 +6,7 @@ import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.Proposal;
 import com.javaclaw.task.sdd.spec.Scenario;
 import com.javaclaw.task.sdd.spec.SpecStore;
+import com.javaclaw.task.sdd.spec.SpecStore.PreparationStage;
 import com.javaclaw.task.sdd.spec.TaskItem;
 import com.javaclaw.task.sdd.verify.ScenarioVerifier;
 import com.javaclaw.task.sdd.verify.VerificationOutcome;
@@ -40,6 +41,7 @@ import java.util.function.BooleanSupplier;
  * @author JavaClaw
  */
 public final class SddOrchestrator {
+    private SddAcceptanceEvidence acceptanceEvidence;
 
     private static final Logger log = LoggerFactory.getLogger(SddOrchestrator.class);
 
@@ -123,6 +125,9 @@ public final class SddOrchestrator {
         String slug = ctx.slug();
         try {
             if (overBudget()) return budgetStop();
+            if (!store.recoverLegacyPreparation(slug)) {
+                return SddOutcome.needsHuman("准备阶段恢复快照未能保存");
+            }
 
             // 阶段 1-2：澄清 + 提案（+ 第一道评审）
             Proposal proposal = clarifyProposeWithReview(slug);
@@ -132,17 +137,39 @@ public final class SddOrchestrator {
 
             // 阶段 3：规格
             progress.phase("规格");
-            List<Capability> caps = agents.specify(ctx, proposal);
-            if (!store.writeCapabilitySpecs(slug, caps)) {
-                return SddOutcome.needsHuman("结构化规格缺失或无有效验收场景，无法进入实现阶段");
+            List<Capability> caps;
+            if (store.preparationComplete(slug, PreparationStage.SPECIFICATIONS)) {
+                caps = store.readChange(slug, ctx.id(), ctx.title()).capabilities();
+                progress.log("复用已保存的规格");
+            } else {
+                caps = agents.specify(ctx, proposal);
+                if (cancelled) return SddOutcome.cancelled();
+                if (!store.writeCapabilitySpecs(slug, caps)) {
+                    return SddOutcome.needsHuman("结构化规格缺失或无有效验收场景，无法进入实现阶段");
+                }
+                checkpoint(slug, PreparationStage.SPECIFICATIONS,
+                        store.preparationRevision(new OpenSpecChange(ctx.id(), slug, ctx.title(),
+                                proposal, caps, null, List.of()), PreparationStage.SPECIFICATIONS));
             }
             log.info("[SDD] {} 规格产出 {} 个能力", slug, caps.size());
             if (overBudget()) return budgetStop();
 
             // 阶段 4：设计（按需）
             progress.phase("设计");
-            String design = agents.design(ctx, proposal, caps);
-            if (design != null && !design.isBlank()) store.writeDesign(slug, design);
+            String design;
+            if (store.preparationComplete(slug, PreparationStage.DESIGN)) {
+                design = store.readChange(slug, ctx.id(), ctx.title()).design();
+                progress.log("复用已保存的设计阶段结果");
+            } else {
+                design = agents.design(ctx, proposal, caps);
+                if (cancelled) return SddOutcome.cancelled();
+                if (!store.writeDesign(slug, design)) {
+                    return SddOutcome.needsHuman("设计阶段结果未能保存");
+                }
+                checkpoint(slug, PreparationStage.DESIGN,
+                        store.preparationRevision(new OpenSpecChange(ctx.id(), slug, ctx.title(),
+                                proposal, caps, design, List.of()), PreparationStage.DESIGN));
+            }
             if (overBudget()) return budgetStop();
 
             // 阶段 5：任务拆解（+ 第二道评审）
@@ -162,6 +189,9 @@ public final class SddOrchestrator {
         String slug = ctx.slug();
         try {
             if (overBudget()) return budgetStop();
+            if (!store.preparationReady(slug)) {
+                return SddOutcome.needsHuman("准备阶段尚未完成或审批对应的产物已变更，请继续后重新确认");
+            }
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             if (change.tasks().isEmpty()) {
                 return SddOutcome.needsHuman("OpenSpec 尚未生成实现任务，无法进入实现阶段");
@@ -179,20 +209,16 @@ public final class SddOrchestrator {
 
     /**
      * 从既有 change 续跑 —— 恢复中断任务的入口。读 H2 中 slug 对应的 OpenSpec 文档：
-     * 若已拆解出 tasks 则跳过澄清/规格/计划，直接进实现+验收循环（实现循环天然从首个未勾项继续）；
-     * 否则回退到从头 {@link #run()}。
+     * 按已保存且与阶段产物匹配的准备检查点继续；不能用 tasks 存在推断人工评审已通过。
+     * 实现循环天然从首个未勾项继续。
      */
     public SddOutcome resume() {
         String slug = ctx.slug();
         try {
             if (overBudget()) return budgetStop();
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
-            if (change.tasks().isEmpty()) {
-                progress.log("既有 change 尚未拆解任务，从头开始");
-                return run();
-            }
             progress.log("从既有 change 续跑（当前 " + change.progressPercent() + "%）");
-            return implementPrepared();
+            return run();
         } catch (Exception e) {
             if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
             log.error("[SDD] {} 续跑异常", slug, e);
@@ -203,13 +229,26 @@ public final class SddOrchestrator {
     // ==================== 阶段 1-2：提案 + 评审 ====================
 
     private Proposal clarifyProposeWithReview(String slug) {
+        Proposal saved = store.readChange(slug, ctx.id(), ctx.title()).proposal();
+        if (saved != null && store.preparationComplete(slug, PreparationStage.PROPOSAL)) {
+            progress.log(SddProgress.LogKind.OK, "复用已确认的提案");
+            return saved;
+        }
         String feedback = null;
         for (int round = 1; round <= maxReviewRounds && !cancelled; round++) {
             progress.phase("提案");
-            Proposal proposal = agents.clarifyAndPropose(ctx, feedback);
-            store.writeProposal(slug, ctx.title(), proposal);
+            boolean reuse = round == 1 && saved != null;
+            Proposal proposal = reuse ? saved : agents.clarifyAndPropose(ctx, feedback);
+            if (cancelled) return null;
+            if (!reuse && !store.writeProposal(slug, ctx.title(), proposal)) {
+                throw new com.javaclaw.framework.api.TurnPausedException("提案未能保存，不能进入评审");
+            }
+            String revision = store.preparationRevision(new OpenSpecChange(ctx.id(), slug, ctx.title(),
+                    proposal, List.of(), null, List.of()), PreparationStage.PROPOSAL);
             ReviewGate.Decision d = gate.reviewProposal(ctx, proposal);
+            if (cancelled) return null;
             if (d.approved()) {
+                checkpoint(slug, PreparationStage.PROPOSAL, revision);
                 progress.log(SddProgress.LogKind.OK, "提案已确认（第 " + round + " 轮）");
                 return proposal;
             }
@@ -222,14 +261,25 @@ public final class SddOrchestrator {
     // ==================== 阶段 5：任务 + 评审 ====================
 
     private boolean planWithReview(String slug, Proposal proposal, List<Capability> caps, String design) {
+        OpenSpecChange saved = store.readChange(slug, ctx.id(), ctx.title());
+        if (!saved.tasks().isEmpty() && store.preparationComplete(slug, PreparationStage.PLAN)) {
+            progress.log(SddProgress.LogKind.OK, "复用已确认的计划");
+            return true;
+        }
         String feedback = null;
         for (int round = 1; round <= maxReviewRounds && !cancelled; round++) {
             progress.phase("任务拆解");
-            List<TaskItem> tasks = agents.planTasks(ctx, proposal, caps, design, feedback);
-            if (!store.writeTasks(slug, tasks)) return false;
+            boolean reuse = round == 1 && !saved.tasks().isEmpty();
+            List<TaskItem> tasks = reuse
+                    ? saved.tasks() : agents.planTasks(ctx, proposal, caps, design, feedback);
+            if (cancelled) return false;
+            if (!reuse && !store.writeTasks(slug, tasks)) return false;
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
+            String revision = store.preparationRevision(change, PreparationStage.PLAN);
             ReviewGate.Decision d = gate.reviewPlan(ctx, change);
+            if (cancelled) return false;
             if (d.approved()) {
+                checkpoint(slug, PreparationStage.PLAN, revision);
                 progress.log(SddProgress.LogKind.OK,
                         "计划已确认（第 " + round + " 轮，共 " + tasks.size() + " 项）");
                 return true;
@@ -238,6 +288,13 @@ public final class SddOrchestrator {
             progress.log(SddProgress.LogKind.WARN, "计划被驳回：" + nz(feedback));
         }
         return false;
+    }
+
+    private void checkpoint(String slug, PreparationStage stage, String revision) {
+        if (!store.completePreparation(slug, stage, revision)) {
+            throw new com.javaclaw.framework.api.TurnPausedException(
+                    "阶段检查点未能保存或审批对应的产物已变更：" + stage.name());
+        }
     }
 
     // ==================== 阶段 6：实现 + 验收 + 补做 ====================
@@ -294,6 +351,10 @@ public final class SddOrchestrator {
                     .filter(o -> !o.passed()).map(VerificationOutcome::scenario).toList();
 
             if (failed.isEmpty()) {
+                com.javaclaw.framework.api.TaskResult result = acceptanceEvidence == null
+                        ? com.javaclaw.framework.api.TaskResult.unverified("SDD 验收阶段结束，未取得关联可信收据")
+                        : acceptanceEvidence.accept(outcomes, () -> cancelled);
+                if (cancelled) return SddOutcome.cancelled();
                 progress.phase("归档");
                 if (!store.archive(slug, completionStamp)) {
                     return SddOutcome.needsHuman("验收已通过，但规格归档失败，需检查结构化快照");
@@ -301,7 +362,8 @@ public final class SddOrchestrator {
                 progress.progress(100);
                 progress.log(SddProgress.LogKind.OK,
                         "全部 " + scenarios.size() + " 个验收场景通过，已归档完成");
-                return SddOutcome.completed("验收通过（" + scenarios.size() + " 场景），已归档进 specs/");
+                return new SddOutcome(SddOutcome.Result.COMPLETED,
+                        "验收通过（" + scenarios.size() + " 场景），已归档进 specs/", result);
             }
 
             progress.log(SddProgress.LogKind.WARN,
@@ -347,9 +409,10 @@ public final class SddOrchestrator {
                 return null;
             }
             List<TaskItem> done = change.tasks().stream().filter(TaskItem::done).toList();
+            String approvedBasis = store.implementationBasis(slug, ctx.description(), change);
             SddAgents.ExecutionResult r;
             try {
-                r = agents.executeTask(ctx, next, done, caps);
+                r = agents.executeTask(ctx, next, done, change.capabilities(), approvedBasis);
                 sameItemFailures = 0;
             } catch (Exception e) {
                 if (e instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
@@ -383,6 +446,10 @@ public final class SddOrchestrator {
             // 未达标只记警告并仍勾选推进——真正的权威门是综合场景核验（会触发补做），
             // 故此处不"屏蔽重做"也不卡死循环。
             String fileCheck = checkDeclaredFiles(next);
+            if (acceptanceEvidence != null && !acceptanceEvidence.record(next, approvedBasis, r.executionId())) {
+                progress.log(SddProgress.LogKind.WARN,
+                        "实现项 #" + next.index() + " 缺少可持久关联的可信执行收据；完成进度不代表最终已核验");
+            }
             if (!store.checkTask(slug, next.index())) {
                 return SddOutcome.needsHuman("实现项完成状态未能写入结构化任务快照");
             }
@@ -422,5 +489,10 @@ public final class SddOrchestrator {
 
     private static String nz(String s) {
         return s == null ? "" : s;
+    }
+
+    SddOrchestrator acceptanceEvidence(SddAcceptanceEvidence evidence) {
+        acceptanceEvidence = evidence;
+        return this;
     }
 }

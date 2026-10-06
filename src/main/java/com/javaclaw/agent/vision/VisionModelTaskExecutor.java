@@ -37,6 +37,34 @@ final class VisionModelTaskExecutor {
         this.owner = owner;
     }
 
+    void requireActive() {
+        owner.throwIfCancelled();
+        if (Thread.currentThread().isInterrupted() || owner.remaining().isZero()
+                || owner.remaining().isNegative()) throw new RunCancelledException();
+    }
+
+    /** An optional candidate repair may lose OCR quality, never swallow owner control failures. */
+    void propagateControlFailure(Throwable failure) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        var pending = new java.util.ArrayDeque<Throwable>();
+        if (failure != null) pending.add(failure);
+        while (!pending.isEmpty()) {
+            Throwable current = pending.removeFirst();
+            if (!seen.add(current)) continue;
+            if (current instanceof RunCancelledException cancelled) throw cancelled;
+            if (current instanceof com.javaclaw.framework.api.BudgetExceededException exceeded) throw exceeded;
+            if (current instanceof com.javaclaw.framework.api.TurnPausedException paused) throw paused;
+            if (current instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                throw new RunCancelledException();
+            }
+            if (current.getCause() != null) pending.add(current.getCause());
+            Collections.addAll(pending, current.getSuppressed());
+        }
+        // Preserve the recorded pause/budget cause before checking a subsequently expired owner.
+        requireActive();
+    }
+
     JsonNode execute(String purpose, JsonNode input, List<InputBlock> images,
                      JsonNode schema, Duration timeout) throws Exception {
         owner.throwIfCancelled();

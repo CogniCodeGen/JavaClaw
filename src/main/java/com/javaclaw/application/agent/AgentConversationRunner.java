@@ -19,6 +19,7 @@ import com.javaclaw.framework.api.RunState;
 import com.javaclaw.framework.api.BudgetExceededException;
 import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.framework.api.TaskResultJson;
+import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.framework.api.TurnPausedException;
 import reactor.core.Disposable;
 
@@ -65,11 +66,13 @@ public final class AgentConversationRunner implements AutoCloseable {
                     com.fasterxml.jackson.databind.node.BooleanNode.FALSE).asBoolean();
             var waiting = interactive(request) || resumeSchedule
                     ? agents.activeTurn(request.scope()).orElse(null) : null;
+            var intent = waiting != null && !resumeSchedule
+                    ? InteractiveTurnRouting.intent(waiting.state(), request,
+                            agents.request(waiting.id()).orElse(null)) : null;
             if (!resumeSchedule && waiting != null
-                    && (waiting.state() == RunState.PAUSED || waiting.state() == RunState.WAITING_INPUT)
-                    && InteractiveTurnRouting.intent(waiting.state(), request,
-                            agents.request(waiting.id()).orElse(null))
-                            == InteractiveTurnRouting.Intent.NEW_TASK) {
+                    && (waiting.state() == RunState.PAUSED || waiting.state() == RunState.WAITING_INPUT
+                        || waiting.state() == RunState.WAITING_APPROVAL)
+                    && intent == InteractiveTurnRouting.Intent.NEW_TASK) {
                 // Keep the old journal and its unknown effects; a new goal owns a new contract.
                 boolean expired = agents.expired(waiting.id());
                 if (!agents.cancel(waiting.id(), new CancelReason(
@@ -81,7 +84,8 @@ public final class AgentConversationRunner implements AutoCloseable {
                 waiting = null;
             }
             if (waiting != null && (waiting.state() == RunState.WAITING_INPUT
-                    || waiting.state() == RunState.PAUSED)) {
+                    || waiting.state() == RunState.PAUSED
+                    || (!resumeSchedule && waiting.state() == RunState.WAITING_APPROVAL))) {
                 afterSequence = waiting.lastSequence();
                 var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
                 var inputs = payload.putArray("inputs");
@@ -91,7 +95,9 @@ public final class AgentConversationRunner implements AutoCloseable {
                             if (input.type().equals("core.text")) payload.put("text", input.data().path("text").asText());
                         });
                 handle = agents.resume(waiting.id(), new com.javaclaw.framework.api.ResumeCommand(
-                        resumeSchedule ? "schedule.continue" : "input", payload));
+                        resumeSchedule ? "schedule.continue"
+                                : intent == InteractiveTurnRouting.Intent.CONTINUE ? "input.continue" : "input",
+                        payload));
             } else {
                 handle = agents.start(request);
             }
@@ -128,8 +134,7 @@ public final class AgentConversationRunner implements AutoCloseable {
             }, callbacksExecutor);
             // Covers close racing between the initial closed check and publication in runs.
             if (closed.get()) {
-                agents.cancel(handle.id(), new CancelReason(
-                        CancellationReason.SHUTDOWN.name(), "adapter closed during start"));
+                closeActive(current);
             }
         } catch (Throwable failure) {
             runs.remove(handle.id(), current);
@@ -185,6 +190,7 @@ public final class AgentConversationRunner implements AutoCloseable {
             ConversationCallbacks callbacks,
             RunEventEnvelope event) {
         JsonNode payload = event.payload();
+        if (current.reply.onEvent(event, callbacks)) return;
         switch (event.type()) {
             case "core.model.started" -> callbacks.onEvent(
                     new ConversationEvent.Hint("模型正在推理…"));
@@ -199,7 +205,8 @@ public final class AgentConversationRunner implements AutoCloseable {
                 if (!payload.path("waitingInput").asBoolean(false)) {
                     callbacks.onEvent(new ConversationEvent.ToolResult(
                             payload.path("tool").asText("unknown"), render(payload.get("output")),
-                            payload.path("invocationId").asText(""), payload.get("output")));
+                            payload.path("invocationId").asText(""), payload.get("output"),
+                            executionStatus(payload)));
                 }
             }
             case "core.tool.failed" -> callbacks.onEvent(new ConversationEvent.ToolFailed(
@@ -217,7 +224,7 @@ public final class AgentConversationRunner implements AutoCloseable {
                 current.captureTaskResult(payload.path("taskResult"));
                 String reply = payload.path("output").path("text").asText("");
                 if (reply.isBlank()) reply = payload.path("output").path("value").asText("");
-                if (!reply.isBlank()) callbacks.onEvent(new ConversationEvent.Reply(reply));
+                current.reply.canonical(reply, callbacks);
             }
             case "core.task.outcome" -> current.captureTaskResult(payload);
             case "core.run.cancelled" -> {
@@ -246,7 +253,7 @@ public final class AgentConversationRunner implements AutoCloseable {
             if (question.isBlank()) question = output.path("value").asText("");
             if (!question.isBlank()) {
                 // 在结束本次投递前显示提问，等待输入的 Turn 仍保留在框架中。
-                callbacks.onEvent(new ConversationEvent.Reply(question));
+                current.reply.canonical(question, callbacks);
             } else {
                 callbacks.onEvent(new ConversationEvent.Hint(
                         payload.path("reason").asText("Agent 正在等待输入")));
@@ -277,15 +284,24 @@ public final class AgentConversationRunner implements AutoCloseable {
         }
         callbacks.onEvent(new ConversationEvent.Hint("工具等待授权：" + tool));
         callbacksExecutor.execute(() -> {
-            if (!runs.containsKey(current.handle.id()) || current.callbacks.isTerminal()) return;
+            if (runs.get(current.handle.id()) != current || current.callbacks.isTerminal()) return;
             FrameworkToolApprovalCoordinator.resolve(
-                    agents, current.handle, origin, payload);
+                    agents, current.handle, origin, payload,
+                    () -> closed.get() || runs.get(current.handle.id()) != current);
         });
     }
 
     private static String render(JsonNode value) {
         if (value == null || value.isNull()) return "";
         return value.isTextual() ? value.asText() : value.toString();
+    }
+
+    private static ToolExecutionStatus executionStatus(JsonNode payload) {
+        try {
+            return ToolExecutionStatus.valueOf(payload.path("status").asText("UNKNOWN"));
+        } catch (IllegalArgumentException invalid) {
+            return ToolExecutionStatus.UNKNOWN;
+        }
     }
 
     private static Throwable pausedFailure(JsonNode payload) {
@@ -436,8 +452,18 @@ public final class AgentConversationRunner implements AutoCloseable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            cancel(CancellationReason.SHUTDOWN);
+            for (Active current : runs.values()) closeActive(current);
         }
+    }
+
+    private void closeActive(Active current) {
+        if (current.interactive && agents.get(current.handle.id()).state() == RunState.WAITING_APPROVAL) {
+            // The kernel checkpoints this unresolved challenge; the product only releases its UI.
+            runs.remove(current.handle.id(), current);
+            current.disposeEvents();
+            return;
+        }
+        agents.cancel(current.handle.id(), cancelReason(CancellationReason.SHUTDOWN));
     }
 
     private static final class Active {
@@ -445,6 +471,7 @@ public final class AgentConversationRunner implements AutoCloseable {
         private final String sessionId;
         private final TerminalCallbackGuard callbacks;
         private final boolean interactive;
+        private final ConversationReplyProjection reply;
         private volatile Disposable events;
         private volatile Throwable terminalFailure;
         private volatile TaskResult taskResult;
@@ -458,9 +485,11 @@ public final class AgentConversationRunner implements AutoCloseable {
             this.sessionId = sessionId;
             this.callbacks = callbacks;
             this.interactive = interactive;
+            this.reply = new ConversationReplyProjection(handle.id().value());
         }
 
         private void disposeEvents() {
+            reply.close();
             Disposable current = events;
             if (current != null) current.dispose();
         }

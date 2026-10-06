@@ -654,7 +654,8 @@ public class McpClient {
 
         startedAtMs = 0L;
         // 失败状态保留以便 UI 展示错误；正常停止才回到 STOPPED
-        if (wasRunning || state.get() == ServerState.RUNNING || state.get() == ServerState.STARTING) {
+        if (state.get() != ServerState.FAILED
+                && (wasRunning || state.get() == ServerState.RUNNING || state.get() == ServerState.STARTING)) {
             transitionState(ServerState.STOPPED);
         }
 

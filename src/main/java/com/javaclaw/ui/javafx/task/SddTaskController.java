@@ -63,13 +63,15 @@ public final class SddTaskController implements AutoCloseable {
     private final SddTaskViewModel viewModel = new SddTaskViewModel();
     private final UiAsyncAction<Snapshot> loadAction;
     private final UiAsyncAction<Detail> detailAction;
+    private final UiAsyncAction<Detail> projectionAction;
     private final UiAsyncAction<Task> createAction;
     private final UiAsyncAction<Object> operationAction;
     private final AtomicBoolean closed = new AtomicBoolean();
     private AutoCloseable subscription;
     private Runnable closeAction = () -> { };
     private String selectedId = "";
-    private int selectedProgress = -1;
+    private boolean detailRefreshQueued;
+    private boolean detailRefreshPending;
     private OpenSpecChange currentChange;
 
     public SddTaskController(
@@ -84,6 +86,7 @@ public final class SddTaskController implements AutoCloseable {
         this.fx = Objects.requireNonNull(fx, "fx");
         loadAction = new UiAsyncAction<>(tasks, fx);
         detailAction = new UiAsyncAction<>(tasks, fx);
+        projectionAction = new UiAsyncAction<>(tasks, fx);
         createAction = new UiAsyncAction<>(tasks, fx);
         operationAction = new UiAsyncAction<>(tasks, fx);
     }
@@ -112,6 +115,9 @@ public final class SddTaskController implements AutoCloseable {
     void prepare() { requestSnapshot(); }
 
     void openCreate(String description) {
+        detailAction.cancel();
+        projectionAction.cancel();
+        detailRefreshPending = false;
         createPanelController.prepare(description);
         showPanel(createPanel);
         configureActions(null);
@@ -137,11 +143,16 @@ public final class SddTaskController implements AutoCloseable {
     private void select(Task task) {
         if (task == null) return;
         boolean switched = !task.id().equals(selectedId);
+        projectionAction.cancel();
+        detailRefreshPending = false;
         selectedId = task.id();
-        selectedProgress = task.progress();
         viewModel.select(task);
         taskList.getSelectionModel().select(task);
-        if (switched) detailPanelController.clearLogs();
+        if (switched) {
+            currentChange = null;
+            detailPanelController.clearLogs();
+        }
+        showDetail(task);
         requestDetail(task);
     }
 
@@ -149,10 +160,57 @@ public final class SddTaskController implements AutoCloseable {
         detailAction.execute(TaskSpec.io("sdd-detail-" + task.id()),
                 context -> new Detail(useCases.require(task.id()), useCases.specification(task.id())),
                 detail -> {
-                    if (!detail.task().id().equals(selectedId)) return;
+                    Task selected = viewModel.selectedProperty().get();
+                    if (selected == null || !selected.id().equals(detail.task().id())
+                            || !selected.id().equals(selectedId) || createPanel.isVisible()) return;
                     currentChange = detail.change().orElse(null);
-                    showDetail(detail.task());
+                    showDetail(selected);
                 }, failure -> failed("加载任务详情失败", failure));
+    }
+
+    private void queueDetailRefresh() {
+        if (closed.get() || createPanel.isVisible() || !detailPanel.isVisible()) return;
+        // Invalidate an older read before it can replace a newer runtime snapshot.
+        detailAction.cancel();
+        if (projectionAction.busyProperty().get()) {
+            detailRefreshPending = true;
+            return;
+        }
+        if (detailRefreshQueued) return;
+        detailRefreshQueued = true;
+        fx.dispatchLater(() -> {
+            detailRefreshQueued = false;
+            if (closed.get() || createPanel.isVisible() || !detailPanel.isVisible()) return;
+            Task selected = viewModel.selectedProperty().get();
+            if (selected != null && selected.id().equals(selectedId)) requestProjection(selected);
+        });
+    }
+
+    private void requestProjection(Task task) {
+        // Background document refreshes are deliberately absent from the loading overlay.
+        detailAction.cancel();
+        projectionAction.execute(TaskSpec.io("sdd-projection-" + task.id()),
+                context -> new Detail(useCases.require(task.id()), useCases.specification(task.id())),
+                detail -> {
+                    Task selected = viewModel.selectedProperty().get();
+                    if (selected != null && selected.id().equals(detail.task().id())
+                            && selected.id().equals(selectedId) && detailPanel.isVisible()
+                            && !createPanel.isVisible()) {
+                        currentChange = detail.change().orElse(null);
+                        detailPanelController.show(selected, currentChange);
+                    }
+                    finishProjectionRefresh();
+                }, failure -> {
+                    if (task.id().equals(selectedId) && detailPanel.isVisible()
+                            && !createPanel.isVisible()) failed("加载任务详情失败", failure);
+                    finishProjectionRefresh();
+                });
+    }
+
+    private void finishProjectionRefresh() {
+        if (!detailRefreshPending) return;
+        detailRefreshPending = false;
+        queueDetailRefresh();
     }
 
     private void showDetail(Task task) {
@@ -186,7 +244,10 @@ public final class SddTaskController implements AutoCloseable {
     private void cancelCreate() {
         Task selected = viewModel.selectedProperty().get();
         if (selected == null) showPanel(emptyPanel);
-        else showDetail(selected);
+        else {
+            showDetail(selected);
+            queueDetailRefresh();
+        }
     }
 
     private void operate(String name, Operation operation) {
@@ -221,8 +282,15 @@ public final class SddTaskController implements AutoCloseable {
 
     private void requestSnapshot(String selectId) {
         if (closed.get()) return;
+        if (selectId != null) {
+            detailAction.cancel();
+            projectionAction.cancel();
+            detailRefreshPending = false;
+            showPanel(emptyPanel);
+        }
         loadAction.execute(TaskSpec.io("sdd-snapshot"), context -> useCases.snapshot(), snapshot -> {
             viewModel.apply(snapshot);
+            if (createPanel.isVisible()) return;
             String wanted = selectId == null ? selectedId : selectId;
             Task selected = snapshot.tasks().stream()
                     .filter(task -> task.id().equals(wanted)).findFirst().orElse(null);
@@ -246,6 +314,9 @@ public final class SddTaskController implements AutoCloseable {
                                 case WARN -> SddLogEntry.Kind.WARN;
                             };
                     detailPanelController.appendLog(log.message(), kind);
+                    // Preparation documents change while the implementation percentage
+                    // remains zero. Reload their authoritative projection without parsing log text.
+                    queueDetailRefresh();
                 }
                 return;
             }
@@ -253,11 +324,10 @@ public final class SddTaskController implements AutoCloseable {
             Snapshot snapshot = merge(task);
             viewModel.apply(snapshot);
             if (!task.id().equals(selectedId)) return;
-            boolean progressChanged = task.progress() != selectedProgress;
-            selectedProgress = task.progress();
             viewModel.select(task);
-            if (progressChanged) requestDetail(task);
-            else showDetail(task);
+            if (createPanel.isVisible()) return;
+            showDetail(task);
+            queueDetailRefresh();
         });
     }
 
@@ -316,6 +386,7 @@ public final class SddTaskController implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         loadAction.close();
         detailAction.close();
+        projectionAction.close();
         createAction.close();
         operationAction.close();
         if (subscription != null) {

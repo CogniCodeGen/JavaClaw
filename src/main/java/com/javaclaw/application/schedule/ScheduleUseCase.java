@@ -95,9 +95,16 @@ public final class ScheduleUseCase implements ScheduleApplicationService {
         if (!List.of("once", "interval", "daily", "cron").contains(trigger)) {
             throw new ValidationException("不支持的触发方式：" + trigger);
         }
-        int interval = Math.max(1, command.intervalValue());
+        int interval = command.intervalValue();
         String unit = List.of("minute", "hour", "day").contains(command.intervalUnit())
                 ? command.intervalUnit() : "minute";
+        if ("interval".equals(trigger)) {
+            if (interval < 1) throw new ValidationException("运行间隔必须是大于 0 的整数");
+            int factor = switch (unit) { case "hour" -> 60; case "day" -> 1440; default -> 1; };
+            if ((long) interval * factor > Integer.MAX_VALUE) {
+                throw new ValidationException("运行间隔过大，换算成分钟后不能超过 2147483647");
+            }
+        } else interval = Math.max(1, interval);
         if (command.enabled()) {
             validateTrigger(trigger, interval, command.dailyTime(), command.cronExpression(),
                     command.onceDateTime());

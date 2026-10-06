@@ -94,7 +94,7 @@ final class OnDemandApplicationRecovery {
                         catalogScope = scope;
                         pages.put(data.path("offset").asInt(0), step);
                     }
-                    needsIdentity = catalogEligible;
+                    needsIdentity = catalogEligible && failure != null;
                 }
             } else if (tool.equals("desktop_session_open") && completed(step)
                     && step.output().path("status").asText().equals("SUCCEEDED")

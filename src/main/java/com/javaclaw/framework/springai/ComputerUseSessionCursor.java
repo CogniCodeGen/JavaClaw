@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.api.AgentStep;
 import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.RunId;
+import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.core.DesktopObservationBaseline;
 
 import java.time.Instant;
@@ -201,7 +202,9 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                 }
             }
             if (OnDemandDesktopPrerequisites.desktopFrameAction(tool)
-                    && !invocation.isBlank() && !reconciled(step, receipt,
+                    && !invocation.isBlank()
+                    && !rejectedBeforeExecution(step, ownedSteps, ownedEvents)
+                    && !reconciled(step, receipt,
                             reconciliation, receipts, receiptSequences, ownedSteps)) {
                 // A receipt certifying NOT_SENT is safe. UNKNOWN remains a
                 // pending business outcome; a paired later host frame may only
@@ -321,6 +324,62 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
         if (!opening && DesktopObservationBaseline.fromEvents(triple).stream().noneMatch(frame ->
                 frame.invocationId().equals(invocation))) return ControlAccess.UNKNOWN;
         return grant.equals("true") ? ControlAccess.GRANTED : ControlAccess.READ_ONLY;
+    }
+
+    /** Only a complete, uniquely bound host argument rejection proves that dispatch never started. */
+    private static boolean rejectedBeforeExecution(AgentStep step,
+            List<AgentStep> steps, List<RunEventEnvelope> events) {
+        JsonNode input = step.input();
+        JsonNode output = step.output();
+        if (step.kind() != AgentStep.Kind.TOOL || step.state() != AgentStep.State.COMPLETED
+                || input == null || !input.isObject() || output == null || !output.isObject()
+                || !input.path("tool").isTextual() || !input.path("invocationId").isTextual()
+                || !output.path("validationRejected").isBoolean()
+                || !output.path("validationRejected").booleanValue()
+                || !output.path("status").isTextual() || !output.path("status").textValue().equals("FAILED")
+                || !output.path("errorCode").isTextual()
+                || !output.path("errorCode").textValue().equals("INVALID_TOOL_ARGUMENTS")) return false;
+        String tool = input.path("tool").textValue();
+        String invocation = input.path("invocationId").textValue();
+        JsonNode feedback = output.path("rawOutput");
+        if (tool.isBlank() || invocation.isBlank() || !feedback.isObject()
+                || !feedback.path("executed").isBoolean() || feedback.path("executed").booleanValue()
+                || !feedback.path("tool").isTextual() || !feedback.path("tool").textValue().equals(tool)
+                || !feedback.path("error").isTextual()
+                || !feedback.path("error").textValue().equals("invalid_tool_arguments")) return false;
+        if (!step.id().equals(StepId.tool(step.turnId(), invocation))) return false;
+        var ownedSteps = steps.stream().filter(value -> value.turnId().equals(step.turnId())).toList();
+        if (ownedSteps.stream().filter(value -> value.id().equals(step.id())).count() != 1
+                || ownedSteps.stream().filter(value -> value.input() != null
+                        && value.input().path("invocationId").asText().equals(invocation)).count() != 1)
+            return false;
+        var ownedEvents = events.stream().filter(event -> event.runId().equals(step.turnId().value())).toList();
+        if (ownedEvents.stream().anyMatch(event -> Set.of(
+                        "core.tool.started", "core.tool.completed", "core.tool.receipt").contains(event.type())
+                        && event.payload().path("invocationId").asText().equals(invocation))) return false;
+        var lifecycle = ownedEvents.stream().filter(event -> Set.of(
+                        "core.step.started", "core.step.completed", "core.step.failed").contains(event.type())
+                        && event.payload().path("stepId").asText().equals(step.id().value())).toList();
+        if (lifecycle.size() != 2 || lifecycle.stream().anyMatch(event ->
+                event.schemaVersion() != 1 || !event.producer().equals("framework.core"))) return false;
+        var started = lifecycle.stream().filter(event -> event.type().equals("core.step.started"))
+                .findFirst().orElse(null);
+        var completed = lifecycle.stream().filter(event -> event.type().equals("core.step.completed"))
+                .findFirst().orElse(null);
+        if (started == null || completed == null || started.sequence() != step.startSequence()
+                || completed.sequence() != step.lastSequence() || started.sequence() >= completed.sequence()
+                || !started.payload().path("kind").asText().equals("TOOL")
+                || !started.payload().path("input").equals(input)
+                || !completed.payload().path("output").equals(output)) return false;
+        var rejections = ownedEvents.stream().filter(event -> event.type().equals("core.tool.arguments_rejected")
+                && event.payload().path("invocationId").asText().equals(invocation)).toList();
+        if (rejections.size() != 1) return false;
+        var rejected = rejections.getFirst();
+        return rejected.schemaVersion() == 1 && rejected.producer().equals("framework.springai")
+                && rejected.sequence() > completed.sequence()
+                && rejected.payload().path("tool").isTextual()
+                && rejected.payload().path("tool").textValue().equals(tool)
+                && rejected.payload().path("feedback").equals(feedback);
     }
 
     private static boolean controlRequired(AgentStep step, JsonNode receipt) {

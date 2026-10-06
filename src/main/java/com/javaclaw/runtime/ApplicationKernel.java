@@ -116,9 +116,9 @@ public final class ApplicationKernel implements AutoCloseable {
         ensureOpen();
         WorkspaceContext context = captureWorkspace();
         WorkspaceRuntime old = current;
-        current = null;
         if (old != null) {
-            quiesceRuntimeDependents();
+            quiesceRuntimeDependents(old);
+            current = null;
             old.close();
         }
 
@@ -138,7 +138,7 @@ public final class ApplicationKernel implements AutoCloseable {
     }
 
     /**
-     * 原子式切换工作区；目标工作区任一步骤失败都会切回原工作区并重建其运行时。
+     * 先关闭旧运行时再切换工作区；目标失败且清理成功后，重建原工作区。
      */
     public WorkspaceRuntime switchWorkspace(String targetWorkspaceId) {
         Objects.requireNonNull(targetWorkspaceId, "targetWorkspaceId");
@@ -156,9 +156,14 @@ public final class ApplicationKernel implements AutoCloseable {
         if (targetWorkspaceId.equals(previousId)) return current();
 
         WorkspaceRuntime old = current();
-        quiesceRuntimeDependents();
+        quiesceRuntimeDependents(old);
+        current = null;
+        boolean oldReleased = false;
+        WorkspaceRuntime replacement = null;
 
         try {
+            old.close();
+            oldReleased = true;
             if (!workspaces.switchWorkspace(targetWorkspaceId)) {
                 throw new IllegalStateException("WorkspaceManager 拒绝切换到 " + targetWorkspaceId);
             }
@@ -166,15 +171,29 @@ public final class ApplicationKernel implements AutoCloseable {
             WorkspaceContext targetContext = captureWorkspace();
             browserManager.rebindWorkspace(targetContext.browserDir(), targetContext.screenshotsDir());
 
-            WorkspaceRuntime replacement = createAndActivate(targetContext);
+            replacement = runtimeFactory.create(targetContext);
+            activate(replacement, false);
             current = replacement;
-            closeQuietly("旧工作区 Context", old::close);
             return replacement;
         } catch (RuntimeException | Error switchFailure) {
+            if (!oldReleased) {
+                throw new IllegalStateException("旧工作区运行时关闭失败，无法安全切换: " + previousId,
+                        switchFailure);
+            }
+            if (replacement != null) {
+                quiesceRuntimeDependents(replacement);
+                try {
+                    replacement.close();
+                } catch (RuntimeException | Error cleanupFailure) {
+                    switchFailure.addSuppressed(cleanupFailure);
+                    throw new IllegalStateException("目标工作区运行时清理失败，无法安全恢复: "
+                            + targetWorkspaceId, switchFailure);
+                }
+            }
             log.error("切换到工作区 {} 失败，开始回滚到 {}", targetWorkspaceId, previousId,
                     switchFailure);
             try {
-                recoverWorkspace(previousId, old);
+                recoverWorkspace(previousId);
             } catch (RuntimeException | Error rollbackFailure) {
                 switchFailure.addSuppressed(rollbackFailure);
                 log.error("工作区回滚失败，应用运行时不可用", rollbackFailure);
@@ -184,7 +203,7 @@ public final class ApplicationKernel implements AutoCloseable {
         }
     }
 
-    private void recoverWorkspace(String workspaceId, WorkspaceRuntime preserved) {
+    private void recoverWorkspace(String workspaceId) {
         if (!workspaceId.equals(workspaces.getCurrentWorkspaceId())
                 && !workspaces.switchWorkspace(workspaceId)) {
             throw new IllegalStateException("无法切回原工作区: " + workspaceId);
@@ -192,8 +211,7 @@ public final class ApplicationKernel implements AutoCloseable {
         reloadWorkspaceState();
         WorkspaceContext restoredContext = captureWorkspace();
         browserManager.rebindWorkspace(restoredContext.browserDir(), restoredContext.screenshotsDir());
-        activate(preserved, false);
-        current = preserved;
+        current = createAndActivate(restoredContext);
     }
 
     /** 创建后激活；激活链失败时必须释放未发布的运行时。 */
@@ -203,7 +221,12 @@ public final class ApplicationKernel implements AutoCloseable {
             activate(created, false);
             return created;
         } catch (RuntimeException | Error e) {
-            created.close();
+            quiesceRuntimeDependents(created);
+            try {
+                created.close();
+            } catch (RuntimeException | Error cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+            }
             throw e;
         }
     }
@@ -233,9 +256,8 @@ public final class ApplicationKernel implements AutoCloseable {
     }
 
     /** 先停靠所有持有旧运行时句柄的后台系统，再释放旧基础设施。 */
-    private void quiesceRuntimeDependents() {
+    private void quiesceRuntimeDependents(WorkspaceRuntime snapshot) {
         if (!externalServicesInitialized) return;
-        WorkspaceRuntime snapshot = current;
         if (snapshot != null) {
             closeQuietly("定时任务运行时", snapshot.scheduleManager()::suspendForRuntimeTransition);
         }

@@ -3,9 +3,11 @@ package com.javaclaw.ui.javafx.schedule;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RuntimeState;
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
+import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.schedule.ExecutionPolicy;
 import com.javaclaw.task.TaskNotificationChannel;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
+import javafx.beans.binding.Bindings;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
@@ -17,6 +19,8 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
 
@@ -68,6 +72,7 @@ public final class ScheduleDetailController implements AutoCloseable {
     @FXML private ComboBox<String> channelCombo;
     @FXML private ToggleSwitch authorizeToggle;
     @FXML private ListView<com.javaclaw.application.schedule.ScheduleApplicationService.History> historyList;
+    @FXML private GridPane historyHeader;
     @FXML private Label historyPlaceholder;
     @FXML private Button deleteButton;
 
@@ -78,6 +83,8 @@ public final class ScheduleDetailController implements AutoCloseable {
     private Runnable changedAction = () -> { };
     private boolean suppressEvents;
     private boolean draft;
+    private EditableForm savedForm;
+    private Task runtimeTask;
 
     public ScheduleDetailController(ScheduleHistoryCellFactory historyCells) {
         this.historyCells = Objects.requireNonNull(historyCells, "historyCells");
@@ -124,6 +131,10 @@ public final class ScheduleDetailController implements AutoCloseable {
         });
         channelCombo.setValue(TaskNotificationChannel.NONE);
         historyList.setCellFactory(ignored -> historyCells.create());
+        historyList.skinProperty().addListener((ignored, previous, skin) -> alignHistoryHeader());
+        historyHeader.translateXProperty().bind(Bindings.createDoubleBinding(
+                () -> historyList.getInsets().getLeft(), historyList.insetsProperty()));
+        alignHistoryHeader();
         enabledToggle.selectedProperty().addListener((ignored, previous, enabled) -> {
             if (!suppressEvents) toggleAction.accept(enabled);
         });
@@ -132,6 +143,14 @@ public final class ScheduleDetailController implements AutoCloseable {
             if (!suppressEvents) changedAction.run();
         });
         cronField.textProperty().addListener((ignored, previous, value) -> updateCronHint());
+        for (TextField field : java.util.List.of(nameField, onceDateField, onceTimeField,
+                intervalValueField, dailyTimeField, cronField)) {
+            field.textProperty().addListener((ignored, previous, value) -> formChanged());
+        }
+        promptArea.textProperty().addListener((ignored, previous, value) -> formChanged());
+        intervalUnitCombo.valueProperty().addListener((ignored, previous, value) -> formChanged());
+        channelCombo.valueProperty().addListener((ignored, previous, value) -> formChanged());
+        authorizeToggle.selectedProperty().addListener((ignored, previous, value) -> formChanged());
     }
 
     void configure(Consumer<Boolean> onToggle, Runnable onDelete, Runnable onChanged) {
@@ -141,8 +160,19 @@ public final class ScheduleDetailController implements AutoCloseable {
     }
 
     void show(Task task, boolean draft) {
+        show(task, draft, true);
+    }
+
+    void show(Task task, boolean draft, boolean preserveEdits) {
+        Objects.requireNonNull(task, "task");
+        Task previous = viewModel.taskProperty().get();
+        boolean keepForm = preserveEdits && previous != null
+                && previous.id().equals(task.id()) && !task.builtin() && hasUnsavedChanges();
         this.draft = draft;
-        viewModel.taskProperty().set(Objects.requireNonNull(task, "task"));
+        runtimeTask = task;
+        // Keep the original configuration version while editing, so refreshes cannot
+        // silently overwrite concurrent changes when the user eventually saves.
+        if (!keepForm) viewModel.taskProperty().set(task);
         root.setVisible(true);
         root.setManaged(true);
         showNode(builtinPanel, task.builtin());
@@ -154,12 +184,20 @@ public final class ScheduleDetailController implements AutoCloseable {
         historyPlaceholder.setManaged(task.history().isEmpty());
         historyList.setVisible(!task.history().isEmpty());
         historyList.setManaged(!task.history().isEmpty());
-        if (task.builtin()) applyBuiltin(task);
-        else applyEditable(task);
+        if (task.builtin()) {
+            savedForm = null;
+            applyBuiltin(task);
+        } else if (keepForm) applyRuntime(task);
+        else {
+            applyEditable(task);
+            savedForm = editableForm();
+        }
     }
 
     void clear() {
         viewModel.taskProperty().set(null);
+        savedForm = null;
+        runtimeTask = null;
         historyList.getItems().clear();
         root.setVisible(false);
         root.setManaged(false);
@@ -168,8 +206,11 @@ public final class ScheduleDetailController implements AutoCloseable {
     SaveCommand command() {
         Task task = Objects.requireNonNull(viewModel.taskProperty().get(), "没有选中的定时任务");
         String once = (onceDateField.getText().strip() + " " + onceTimeField.getText().strip()).strip();
+        String trigger = viewModel.triggerTypeProperty().get();
+        int interval = "interval".equals(trigger)
+                ? positiveInt(intervalValueField.getText()) : Math.max(1, task.intervalValue());
         return new SaveCommand(task.id(), nameField.getText(), task.description(),
-                viewModel.triggerTypeProperty().get(), positiveInt(intervalValueField.getText()),
+                trigger, interval,
                 intervalUnitCombo.getValue(), dailyTimeField.getText(), cronField.getText(),
                 once, promptArea.getText(), enabledToggle.isSelected(), task.version(),
                 notifyToggle.isSelected(), channelCombo.getValue(),
@@ -180,8 +221,38 @@ public final class ScheduleDetailController implements AutoCloseable {
 
     Task task() { return viewModel.taskProperty().get(); }
 
+    String editedName() { return nameField.getText(); }
+
+    boolean hasUnsavedChanges() {
+        return savedForm != null && !savedForm.equals(editableForm());
+    }
+
+    private void formChanged() {
+        if (!suppressEvents) changedAction.run();
+    }
+
+    private EditableForm editableForm() {
+        return new EditableForm(nameField.getText(), viewModel.triggerTypeProperty().get(),
+                onceDateField.getText(), onceTimeField.getText(), intervalValueField.getText(),
+                intervalUnitCombo.getValue(), dailyTimeField.getText(), cronField.getText(),
+                promptArea.getText(), enabledToggle.isSelected(), executionPolicyCombo.getValue(),
+                notifyToggle.isSelected(), channelCombo.getValue(), authorizeToggle.isSelected());
+    }
+
+    private record EditableForm(String name, String trigger, String onceDate, String onceTime,
+                                String interval, String intervalUnit, String dailyTime, String cron,
+                                String prompt, boolean enabled, ExecutionPolicy policy,
+                                boolean notifyEnabled, String channel, boolean authorized) { }
+
+    void restoreEnabled(boolean enabled) {
+        boolean previous = suppressEvents;
+        suppressEvents = true;
+        try { enabledToggle.setSelected(enabled); }
+        finally { suppressEvents = previous; }
+    }
+
     void refreshClock() {
-        Task task = viewModel.taskProperty().get();
+        Task task = runtimeTask;
         if (task != null && !task.builtin()) applyRuntime(task);
     }
 
@@ -324,8 +395,17 @@ public final class ScheduleDetailController implements AutoCloseable {
     }
 
     private static int positiveInt(String value) {
-        try { return Math.max(1, Integer.parseInt(value.strip())); }
-        catch (RuntimeException ignored) { return 1; }
+        String normalized = value == null ? "" : value.strip();
+        if (!normalized.matches("[0-9]+")) {
+            throw new ValidationException("运行间隔必须是大于 0 的整数");
+        }
+        try {
+            int interval = Integer.parseInt(normalized);
+            if (interval < 1) throw new NumberFormatException();
+            return interval;
+        } catch (NumberFormatException invalid) {
+            throw new ValidationException("运行间隔必须是 1 到 2147483647 的整数");
+        }
     }
 
     private static void showNode(Node node, boolean visible) {
@@ -333,8 +413,21 @@ public final class ScheduleDetailController implements AutoCloseable {
         node.setManaged(visible);
     }
 
+    private void alignHistoryHeader() {
+        historyHeader.maxWidthProperty().unbind();
+        Node viewport = historyList.lookup(".clipped-container");
+        if (viewport instanceof Region region) {
+            // Match the actual flow viewport when its vertical scrollbar appears.
+            historyHeader.maxWidthProperty().bind(region.widthProperty());
+        } else {
+            historyHeader.setMaxWidth(Double.MAX_VALUE);
+        }
+    }
+
     @Override
     public void close() {
+        historyHeader.maxWidthProperty().unbind();
+        historyHeader.translateXProperty().unbind();
         historyList.setCellFactory(null);
         historyList.getItems().clear();
         toggleAction = ignored -> { };

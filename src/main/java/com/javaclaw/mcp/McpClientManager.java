@@ -59,11 +59,8 @@ public class McpClientManager {
      * 启动单个 MCP 服务器
      */
     public boolean startServer(McpServerConfig config) {
-        String denial = transportDenial(config);
-        if (denial != null) {
-            log.warn("严格项目隔离已阻止启动 MCP Server {}: {}",
-                    config == null ? "（空配置）" : config.getName(), denial);
-            if (config != null) stopServer(config.getName());
+        if (config == null) {
+            log.warn("MCP 配置不能为空");
             return false;
         }
         // 如果已有同名客户端在运行，先停止
@@ -78,13 +75,22 @@ public class McpClientManager {
         // 即便启动失败，也保留 client 实例，供 UI 展示 FAILED 状态和错误信息
         clients.put(config.getName(), client);
         try {
+            // The client's transport policy rejects unsafe endpoints before opening
+            // resources, and retains FAILED + startupError for the existing UI/log path.
             client.start();
             log.info("MCP 服务器 {} 已启动，发现 {} 个工具",
                     config.getName(), client.getTools().size());
             notifyStateListeners();
             return true;
         } catch (Exception e) {
-            log.error("启动 MCP 服务器 {} 失败: {}", config.getName(), e.getMessage(), e);
+            if (e instanceof SecurityException) {
+                // Policy causes may contain an untrusted URL; log only the client's
+                // bounded, redacted startup summary, never the exception stack.
+                log.warn("MCP 服务器 {} 启动被安全策略拒绝: {}",
+                        config.getName(), client.getStartupError());
+            } else {
+                log.error("启动 MCP 服务器 {} 失败: {}", config.getName(), e.getMessage(), e);
+            }
             client.stop();
             notifyStateListeners();
             return false;

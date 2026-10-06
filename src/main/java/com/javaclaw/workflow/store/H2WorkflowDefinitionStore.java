@@ -62,54 +62,90 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
     }
 
     @Override
-    public WorkflowDefinitionRecord saveDraft(GraphDefinition definition) {
+    public WorkflowDefinitionRecord createDraft(GraphDefinition definition) {
         if (definition.kind() == GraphKind.SYSTEM) throw new IllegalArgumentException("系统图不可保存为草稿");
         long now = System.currentTimeMillis();
-        WorkflowDefinitionRecord old = get(definition.id());
-        int revision = old == null ? 1 : old.draftRevision() + 1;
         try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
-                     MERGE INTO workflow_definitions(workspace_id,id,name,description,draft_json,published_json,
+                     INSERT INTO workflow_definitions(workspace_id,id,name,description,draft_json,published_json,
                          draft_revision,published_version,archived,created_at,updated_at)
-                     KEY(workspace_id,id) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?)
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, definition.id());
             ps.setString(3, definition.name()); ps.setString(4, definition.description());
             ps.setString(5, json.writeValueAsString(definition));
-            ps.setString(6, old == null || old.published() == null
-                    ? null : json.writeValueAsString(old.published()));
-            ps.setInt(7, revision); ps.setInt(8, old == null ? 0 : old.publishedVersion());
-            ps.setBoolean(9, old != null && old.archived());
-            ps.setLong(10, old == null ? now : old.createdAt()); ps.setLong(11, now);
+            ps.setString(6, null);
+            ps.setInt(7, 1); ps.setInt(8, 0); ps.setBoolean(9, false);
+            ps.setLong(10, now); ps.setLong(11, now);
             ps.executeUpdate();
-            return get(definition.id());
+            return new WorkflowDefinitionRecord(definition.id(), definition.name(),
+                    definition.description(), definition, null, 1, 0, false, now, now);
         } catch (Exception e) {
-            throw new IllegalStateException("保存工作流草稿失败", e);
+            throw new IllegalStateException("创建工作流草稿失败", e);
         }
     }
 
     @Override
+    public WorkflowDefinitionRecord saveDraft(GraphDefinition definition) {
+        if (definition.kind() == GraphKind.SYSTEM) throw new IllegalArgumentException("系统图不可保存为草稿");
+        try (Connection c = database.open()) {
+            c.setAutoCommit(false);
+            try {
+                WorkflowDefinitionRecord old = lockDefinition(c, definition.id());
+                int revision = old.draftRevision() + 1;
+                long now = System.currentTimeMillis();
+                try (PreparedStatement ps = c.prepareStatement("""
+                        UPDATE workflow_definitions SET name=?,description=?,draft_json=?,
+                            draft_revision=?,updated_at=? WHERE workspace_id=? AND id=?
+                        """)) {
+                    ps.setString(1, definition.name()); ps.setString(2, definition.description());
+                    ps.setString(3, json.writeValueAsString(definition)); ps.setInt(4, revision);
+                    ps.setLong(5, now); ps.setString(6, workspaceId); ps.setString(7, definition.id());
+                    if (ps.executeUpdate() != 1) throw new IllegalStateException("工作流已删除，不能保存草稿");
+                }
+                c.commit();
+                return new WorkflowDefinitionRecord(definition.id(), definition.name(),
+                        definition.description(), definition, old.published(), revision,
+                        old.publishedVersion(), old.archived(), old.createdAt(), now);
+            } catch (Exception failure) {
+                rollback(c, failure);
+                throw failure;
+            }
+        } catch (RuntimeException e) { throw e; }
+        catch (Exception e) { throw new IllegalStateException("保存工作流草稿失败", e); }
+    }
+
+    @Override
     public WorkflowDefinitionRecord publish(String id, NodeExecutorRegistry registry) {
-        WorkflowDefinitionRecord record = get(id);
-        if (record == null) throw new IllegalArgumentException("工作流不存在: " + id);
-        GraphValidator.requireValid(record.draft(), registry);
-        int version = record.publishedVersion() + 1;
-        GraphDefinition published = new GraphDefinition(record.draft().schemaVersion(), record.draft().id(),
-                record.draft().name(), record.draft().description(), version, GraphKind.CUSTOM,
-                record.draft().startNodeId(), record.draft().nodes(), record.draft().edges(),
-                record.draft().maxSteps());
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     UPDATE workflow_definitions SET published_json=?,published_version=?,updated_at=?
-                     WHERE workspace_id=? AND id=?
-                     """)) {
-            ps.setString(1, json.writeValueAsString(published)); ps.setInt(2, version);
-            ps.setLong(3, System.currentTimeMillis()); ps.setString(4, workspaceId); ps.setString(5, id);
-            ps.executeUpdate();
-            return get(id);
-        } catch (Exception e) {
-            throw new IllegalStateException("发布工作流失败", e);
-        }
+        try (Connection c = database.open()) {
+            c.setAutoCommit(false);
+            try {
+                WorkflowDefinitionRecord record = lockDefinition(c, id);
+                GraphValidator.requireValid(record.draft(), registry);
+                int version = record.publishedVersion() + 1;
+                GraphDefinition published = new GraphDefinition(record.draft().schemaVersion(), record.draft().id(),
+                        record.draft().name(), record.draft().description(), version, GraphKind.CUSTOM,
+                        record.draft().startNodeId(), record.draft().nodes(), record.draft().edges(),
+                        record.draft().maxSteps());
+                long now = System.currentTimeMillis();
+                try (PreparedStatement ps = c.prepareStatement("""
+                        UPDATE workflow_definitions SET published_json=?,published_version=?,updated_at=?
+                        WHERE workspace_id=? AND id=?
+                        """)) {
+                    ps.setString(1, json.writeValueAsString(published)); ps.setInt(2, version);
+                    ps.setLong(3, now); ps.setString(4, workspaceId); ps.setString(5, id);
+                    if (ps.executeUpdate() != 1) throw new IllegalStateException("工作流已删除，不能发布");
+                }
+                c.commit();
+                return new WorkflowDefinitionRecord(record.id(), record.name(), record.description(),
+                        record.draft(), published, record.draftRevision(), version,
+                        record.archived(), record.createdAt(), now);
+            } catch (Exception failure) {
+                rollback(c, failure);
+                throw failure;
+            }
+        } catch (RuntimeException e) { throw e; }
+        catch (Exception e) { throw new IllegalStateException("发布工作流失败", e); }
     }
 
     @Override
@@ -121,7 +157,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
                 : new GraphDefinition(source.schemaVersion(), id, name,
                 source.description(), 1, GraphKind.CUSTOM, source.startNodeId(),
                 source.nodes(), source.edges(), source.maxSteps());
-        return saveDraft(clone);
+        return createDraft(clone);
     }
 
     /**
@@ -189,20 +225,56 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
 
     @Override
     public boolean delete(String id) {
-        try (Connection c = database.open();
-             PreparedStatement active = c.prepareStatement("""
-                     SELECT 1 FROM workflow_runs WHERE workspace_id=? AND workflow_id=?
-                     AND status IN ('CREATED','RUNNING','WAITING_INPUT','PAUSED','RECOVERY_REQUIRED',
-                                    'RECOVERY_BLOCKED_MISSING_EXTENSION') LIMIT 1
-                     """)) {
-            active.setString(1, workspaceId); active.setString(2, id);
-            try (ResultSet rs = active.executeQuery()) {
-                if (rs.next()) throw new IllegalStateException("工作流仍有未终结运行，不能删除");
-            }
-            try (PreparedStatement ps = c.prepareStatement(
-                    "DELETE FROM workflow_definitions WHERE workspace_id=? AND id=?")) {
-                ps.setString(1, workspaceId); ps.setString(2, id);
-                return ps.executeUpdate() == 1;
+        try (Connection c = database.open()) {
+            c.setAutoCommit(false);
+            try {
+                // 新运行也锁此定义行，避免检查完成后又启动同一工作流。
+                try (PreparedStatement definition = c.prepareStatement("""
+                        SELECT id FROM workflow_definitions WHERE workspace_id=? AND id=? FOR UPDATE
+                        """)) {
+                    definition.setString(1, workspaceId); definition.setString(2, id);
+                    try (ResultSet rs = definition.executeQuery()) {
+                        if (!rs.next()) {
+                            c.rollback();
+                            return false;
+                        }
+                    }
+                }
+                try (PreparedStatement active = c.prepareStatement("""
+                        SELECT 1 FROM workflow_runs WHERE workspace_id=? AND workflow_id=?
+                        AND status NOT IN ('COMPLETED','FAILED','CANCELLED') LIMIT 1
+                        """)) {
+                    active.setString(1, workspaceId); active.setString(2, id);
+                    try (ResultSet rs = active.executeQuery()) {
+                        if (rs.next()) throw new IllegalStateException("工作流仍有未终结运行，请先取消后再删除");
+                    }
+                }
+                try (PreparedStatement checkpoints = c.prepareStatement("""
+                        DELETE FROM workflow_checkpoints WHERE workspace_id=? AND run_id IN
+                        (SELECT id FROM workflow_runs WHERE workspace_id=? AND workflow_id=?)
+                        """)) {
+                    checkpoints.setString(1, workspaceId);
+                    checkpoints.setString(2, workspaceId); checkpoints.setString(3, id);
+                    checkpoints.executeUpdate();
+                }
+                for (String table : List.of("workflow_runs", "workflow_threads")) {
+                    try (PreparedStatement rows = c.prepareStatement(
+                            "DELETE FROM " + table + " WHERE workspace_id=? AND workflow_id=?")) {
+                        rows.setString(1, workspaceId); rows.setString(2, id);
+                        rows.executeUpdate();
+                    }
+                }
+                boolean deleted;
+                try (PreparedStatement definition = c.prepareStatement(
+                        "DELETE FROM workflow_definitions WHERE workspace_id=? AND id=?")) {
+                    definition.setString(1, workspaceId); definition.setString(2, id);
+                    deleted = definition.executeUpdate() == 1;
+                }
+                c.commit();
+                return deleted;
+            } catch (Exception failure) {
+                rollback(c, failure);
+                throw failure;
             }
         } catch (RuntimeException e) { throw e; }
         catch (Exception e) { throw new IllegalStateException("删除工作流失败", e); }
@@ -211,6 +283,23 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
     @Override
     public List<ValidationIssue> validate(GraphDefinition definition, NodeExecutorRegistry registry) {
         return GraphValidator.validate(definition, registry);
+    }
+
+    private WorkflowDefinitionRecord lockDefinition(Connection connection, String id) throws Exception {
+        try (PreparedStatement query = connection.prepareStatement("""
+                SELECT * FROM workflow_definitions WHERE workspace_id=? AND id=? FOR UPDATE
+                """)) {
+            query.setString(1, workspaceId); query.setString(2, id);
+            try (ResultSet row = query.executeQuery()) {
+                if (!row.next()) throw new IllegalArgumentException("工作流不存在或已删除: " + id);
+                return read(row);
+            }
+        }
+    }
+
+    private void rollback(Connection connection, Exception failure) {
+        try { connection.rollback(); }
+        catch (Exception rollbackFailure) { failure.addSuppressed(rollbackFailure); }
     }
 
     private WorkflowDefinitionRecord read(ResultSet rs) throws Exception {

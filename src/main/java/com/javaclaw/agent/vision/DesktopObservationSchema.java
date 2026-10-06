@@ -30,6 +30,28 @@ final class DesktopObservationSchema {
         return schema;
     }
 
+    /** Only a targeted repair requires complete candidates; normal OCR still degrades safely. */
+    static JsonNode confidenceRepair(List<DesktopObservationCondition> eligible) {
+        ObjectNode schema = (ObjectNode) create();
+        ObjectNode candidate = (ObjectNode) schema.path("properties")
+                .path("conditionEvidence").path("items");
+        candidate.withArray("required").add("confidence");
+        ((ObjectNode) candidate.path("properties").path("content"))
+                .withArray("required").add("confidence");
+        var ids = ((ObjectNode) candidate.path("properties").path("criterionId")).putArray("enum");
+        eligible.forEach(condition -> ids.add(condition.criterionId()));
+        return schema;
+    }
+
+    /** A confidence-only repair need not regenerate already-accepted OCR or targets. */
+    static JsonNode focusedConfidenceRepair(List<DesktopObservationCondition> eligible) {
+        ObjectNode schema = objectSchema();
+        schema.putObject("properties").set("conditionEvidence", confidenceRepair(eligible)
+                .path("properties").path("conditionEvidence").deepCopy());
+        schema.putArray("required").add("conditionEvidence");
+        return schema;
+    }
+
     private static ObjectNode targetSchema(boolean evidenceCandidate) {
         ObjectNode target = objectSchema();
         ObjectNode properties = target.putObject("properties");

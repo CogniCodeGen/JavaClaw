@@ -10,8 +10,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * OpenSpec 真相层的读写入口。
@@ -26,6 +30,11 @@ public final class SpecStore {
     private static final String TASKS_STATE = "tasks.json";
     private static final String SPEC_STATE = "specs.json";
     private static final String PROPOSAL_STATE = "proposal.json";
+    private static final String PREPARATION_STATE = "preparation.json";
+    private static final String IMPLEMENTATION_EVIDENCE = "implementation-evidence.json";
+
+    /** Host checkpoints; proposal and plan are written only after their review gate approves. */
+    public enum PreparationStage { PROPOSAL, SPECIFICATIONS, DESIGN, PLAN }
 
     private final String workDir;
     private final JdbcTemplate jdbc;
@@ -61,14 +70,15 @@ public final class SpecStore {
             return false;
         ObjectNode state = json.createObjectNode().put("version", 1);
         state.set("proposal", json.valueToTree(proposal));
-        return write(slug, SpecPaths.PROPOSAL_FILE, SpecRenderer.renderProposal(title, proposal))
-                && write(slug, PROPOSAL_STATE, state.toString());
+        return replacePreparationArtifact(slug, PreparationStage.PROPOSAL,
+                () -> write(slug, SpecPaths.PROPOSAL_FILE, SpecRenderer.renderProposal(title, proposal))
+                        && write(slug, PROPOSAL_STATE, state.toString()));
     }
 
-    /** 写 design.md（markdown 原文；null/空白时跳过）。 */
+    /** 写 design.md；空设计也落盘，避免续跑时沿用先前的设计。 */
     public boolean writeDesign(String slug, String designMd) {
-        if (designMd == null || designMd.isBlank()) return false;
-        return write(slug, SpecPaths.DESIGN_FILE, designMd);
+        return replacePreparationArtifact(slug, PreparationStage.DESIGN,
+                () -> write(slug, SpecPaths.DESIGN_FILE, designMd == null ? "" : designMd));
     }
 
     /** 同写可读 tasks.md 与权威 tasks.json。 */
@@ -81,22 +91,206 @@ public final class SpecStore {
         }
         ObjectNode state = json.createObjectNode().put("version", 1);
         state.set("tasks", json.valueToTree(tasks));
-        return write(slug, SpecPaths.TASKS_FILE, SpecRenderer.renderTasks(tasks))
+        Supplier<Boolean> save = () -> write(slug, SpecPaths.TASKS_FILE, SpecRenderer.renderTasks(tasks))
                 && write(slug, TASKS_STATE, state.toString());
+        // Done-only progress preserves approval. New/split work must be reviewed on the next resume;
+        // the existing in-flight implementation loop still owns its bounded refinement contract.
+        return owner.ifAlive(() -> taskPlan(readTaskState(slug)).equals(taskPlan(tasks))
+                ? save.get() : replacePreparationArtifact(slug, PreparationStage.PLAN, save), false);
     }
 
     /** 同写各能力的可读 spec.md 与权威 specs.json。 */
     public boolean writeCapabilitySpecs(String slug, List<Capability> capabilities) {
         if (capabilities == null || capabilities.isEmpty()
                 || capabilities.stream().anyMatch(cap -> !validCapability(cap))) return false;
-        boolean ok = true;
-        for (Capability cap : capabilities) {
-            ok &= write(slug, changeSpecPath(cap.name()), SpecRenderer.renderCapabilitySpec(cap));
-        }
-        if (!ok) return false;
         ObjectNode state = json.createObjectNode().put("version", 1);
         state.set("capabilities", json.valueToTree(capabilities));
-        return write(slug, SPEC_STATE, state.toString());
+        return replacePreparationArtifact(slug, PreparationStage.SPECIFICATIONS, () -> {
+            boolean ok = true;
+            for (Capability cap : capabilities) {
+                ok &= write(slug, changeSpecPath(cap.name()), SpecRenderer.renderCapabilitySpec(cap));
+            }
+            return ok && write(slug, SPEC_STATE, state.toString());
+        });
+    }
+
+    // ==================== 准备阶段恢复 ====================
+
+    /** A checkpoint matches the exact authoritative artifacts and their upstream dependencies. */
+    public boolean preparationComplete(String slug, PreparationStage stage) {
+        String revision = preparationRevision(slug, stage);
+        return !revision.isBlank() && revision.equals(readPreparation(slug).path(stage.name()).asText());
+    }
+
+    public boolean preparationReady(String slug) {
+        for (PreparationStage stage : PreparationStage.values()) {
+            if (!preparationComplete(slug, stage)) return false;
+        }
+        return true;
+    }
+
+    /** Capture before review so a late approval cannot approve changed artifacts. */
+    public String preparationRevision(String slug, PreparationStage stage) {
+        return preparationRevision(readChange(slug, null, null), stage);
+    }
+
+    /** Fingerprint the same immutable snapshot supplied to the model or human review. */
+    public String preparationRevision(OpenSpecChange change, PreparationStage stage) {
+        if (change.proposal() == null) return "";
+        ObjectNode basis = json.createObjectNode().put("stage", stage.name());
+        basis.set("proposal", json.valueToTree(change.proposal()));
+        if (stage.ordinal() >= PreparationStage.SPECIFICATIONS.ordinal()) {
+            if (change.capabilities().isEmpty()) return "";
+            basis.set("capabilities", json.valueToTree(change.capabilities()));
+        }
+        if (stage.ordinal() >= PreparationStage.DESIGN.ordinal()) {
+            basis.put("design", change.design() == null ? "" : change.design());
+        }
+        if (stage == PreparationStage.PLAN) {
+            if (change.tasks().isEmpty()) return "";
+            basis.set("tasks", taskPlan(change.tasks()));
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(basis.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    public boolean completePreparation(String slug, PreparationStage stage, String reviewedRevision) {
+        if (reviewedRevision == null || reviewedRevision.isBlank()) return false;
+        return owner.ifAlive(() -> {
+            if (!reviewedRevision.equals(preparationRevision(slug, stage))) return false;
+            ObjectNode state = readPreparation(slug);
+            state.put(stage.name(), reviewedRevision);
+            return write(slug, PREPARATION_STATE, state.toString());
+        }, false);
+    }
+
+    /** Approval, original user requirements and work directory bind every implementation receipt. */
+    public String implementationBasis(String slug, String description) {
+        return owner.ifAlive(() -> implementationBasis(slug, description,
+                readChange(slug, null, null)), "");
+    }
+
+    public String implementationBasis(String slug, String description, OpenSpecChange change) {
+        return owner.ifAlive(() -> {
+            if (!preparationReady(slug) || !preparationRevision(change, PreparationStage.PLAN)
+                    .equals(preparationRevision(slug, PreparationStage.PLAN))) return "";
+            return implementationBasisValue(change, description);
+        }, "");
+    }
+
+    private String implementationBasisValue(OpenSpecChange change, String description) {
+        ObjectNode basis = json.createObjectNode()
+                .put("plan", preparationRevision(change, PreparationStage.PLAN))
+                .put("description", description == null ? "" : description)
+                .put("workDir", workDir);
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(basis.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** IDs only: acceptance re-reads canonical Runs and receipts rather than trusting this document. */
+    public ObjectNode implementationEvidence(String slug, String basis) {
+        String stored = read(slug, IMPLEMENTATION_EVIDENCE);
+        if (stored != null && basis != null && !basis.isBlank()) {
+            try {
+                JsonNode state = json.readTree(stored);
+                if (state instanceof ObjectNode object && state.path("version").isIntegralNumber()
+                        && state.path("version").canConvertToInt()
+                        && state.path("version").intValue() == 1
+                        && basis.equals(state.path("basis").asText())
+                        && state.path("items").isObject()) return object;
+            } catch (Exception ignored) { /* Legacy/malformed association cannot grant acceptance. */ }
+        }
+        ObjectNode empty = json.createObjectNode().put("version", 1).put("basis", basis);
+        empty.putObject("items");
+        return empty;
+    }
+
+    public boolean recordImplementationEvidence(String slug, String description, String basis,
+                                                int index, String runId, String parentRunId) {
+        if (basis == null || basis.isBlank() || index < 1 || runId == null || runId.isBlank()
+                || parentRunId == null || parentRunId.isBlank()) return false;
+        return owner.ifAlive(() -> {
+            if (!basis.equals(implementationBasis(slug, description))
+                    || readTaskState(slug).stream().noneMatch(item -> item.index() == index)) return false;
+            ObjectNode state = implementationEvidence(slug, basis);
+            ObjectNode items = (ObjectNode) state.path("items");
+            for (var fields = items.fields(); fields.hasNext();) {
+                var entry = fields.next();
+                if (!entry.getKey().equals(Integer.toString(index))
+                        && runId.equals(entry.getValue().path("runId").asText())) return false;
+            }
+            items.putObject(Integer.toString(index)).put("runId", runId).put("parentRunId", parentRunId);
+            return write(slug, IMPLEMENTATION_EVIDENCE, state.toString());
+        }, false);
+    }
+
+    /** Old valid outputs may be reused, but no legacy review is inferred as approved. */
+    public boolean recoverLegacyPreparation(String slug) {
+        return owner.ifAlive(() -> {
+            if (read(slug, PREPARATION_STATE) != null) return true;
+            OpenSpecChange change = readChange(slug, null, null);
+            if (change.proposal() == null) return true;
+            ObjectNode state = json.createObjectNode().put("version", 1);
+            if (!change.capabilities().isEmpty()) {
+                state.put(PreparationStage.SPECIFICATIONS.name(),
+                        preparationRevision(slug, PreparationStage.SPECIFICATIONS));
+                if (change.design() != null) {
+                    state.put(PreparationStage.DESIGN.name(),
+                            preparationRevision(slug, PreparationStage.DESIGN));
+                }
+            }
+            return write(slug, PREPARATION_STATE, state.toString());
+        }, false);
+    }
+
+    private ObjectNode readPreparation(String slug) {
+        String stored = read(slug, PREPARATION_STATE);
+        if (stored != null) {
+            try {
+                JsonNode state = json.readTree(stored);
+                if (state instanceof ObjectNode object && state.path("version").isIntegralNumber()
+                        && state.path("version").canConvertToInt()
+                        && state.path("version").intValue() == 1
+                        && state.size() <= PreparationStage.values().length + 1) {
+                    boolean valid = true;
+                    for (var fields = state.properties().iterator(); fields.hasNext();) {
+                        var field = fields.next();
+                        if (field.getKey().equals("version")) continue;
+                        PreparationStage.valueOf(field.getKey());
+                        valid &= field.getValue().isTextual()
+                                && field.getValue().asText().matches("[0-9a-f]{64}");
+                    }
+                    if (valid) return object;
+                }
+            } catch (Exception invalid) {
+                log.warn("[Spec] 准备阶段恢复快照无效 slug={}", slug);
+            }
+        }
+        return json.createObjectNode().put("version", 1);
+    }
+
+    private JsonNode taskPlan(List<TaskItem> tasks) {
+        JsonNode plan = json.valueToTree(tasks);
+        plan.forEach(task -> ((ObjectNode) task).remove("done"));
+        return plan;
+    }
+
+    private boolean replacePreparationArtifact(String slug, PreparationStage stage, Supplier<Boolean> save) {
+        return owner.ifAlive(() -> {
+            ObjectNode state = readPreparation(slug);
+            for (PreparationStage affected : PreparationStage.values()) {
+                if (affected.ordinal() >= stage.ordinal()) state.remove(affected.name());
+            }
+            return write(slug, PREPARATION_STATE, state.toString()) && save.get();
+        }, false);
     }
 
     // ==================== 读取（折叠为派生视图） ====================

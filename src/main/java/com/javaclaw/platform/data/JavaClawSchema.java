@@ -187,6 +187,7 @@ final class JavaClawSchema {
                         content CLOB,
                         timestamp VARCHAR(64) NOT NULL,
                         image_paths_json CLOB,
+                        attachment_paths_json CLOB,
                         adopted BOOLEAN NOT NULL,
                         delivery_state VARCHAR(32),
                         input_tokens BIGINT,
@@ -195,6 +196,7 @@ final class JavaClawSchema {
                         PRIMARY KEY (workspace_id, session_id, position)
                     )
                     """);
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment_paths_json CLOB");
             st.execute("""
                     CREATE TABLE IF NOT EXISTS token_usage_daily (
                         workspace_id VARCHAR(128) NOT NULL,

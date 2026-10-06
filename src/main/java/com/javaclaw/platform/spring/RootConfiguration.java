@@ -60,7 +60,7 @@ import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.workspace.WorkspaceManagerAdapter;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.chat.JdbcChatHistoryStore;
-import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
+import com.javaclaw.infrastructure.diagnostics.RunJournalDiagnosticsArchive;
 import com.javaclaw.diagnostics.TraceExporter;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
@@ -630,8 +630,10 @@ public class RootConfiguration {
     }
 
     @Bean
-    DiagnosticsArchivePort diagnosticsArchivePort(TraceExporter exporter) {
-        return new TraceExporterDiagnosticsArchive(exporter);
+    DiagnosticsArchivePort diagnosticsArchivePort(TraceExporter exporter,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            WorkspaceManager workspaces, ObjectMapper json) {
+        return new RunJournalDiagnosticsArchive(runs, runs.threads(), workspaces, json, exporter);
     }
 
     @Bean

@@ -12,9 +12,11 @@ import com.javaclaw.framework.core.OnDemandContextPolicy;
 import com.javaclaw.framework.core.ReasoningRequest;
 import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.ToolInvocationGateway;
+import com.javaclaw.framework.core.TrustedCapabilityRegistry;
 import com.javaclaw.framework.spi.DeferredContextSource;
 import com.javaclaw.framework.spi.DeferredContextUse;
 import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskOutputException;
 import com.javaclaw.framework.spi.RunStore;
 import com.javaclaw.framework.springai.OnDemandContextSelectionInputs.Search;
 import com.javaclaw.framework.springai.OnDemandHistoryCatalog.DesktopObservation;
@@ -59,6 +61,7 @@ final class OnDemandContextSession {
     private final FixedContextSession fixed;
     private final HarnessDecisionToolCallback decisionCallback;
     private final ComputerUseContextSelection computerUse;
+    private final TrustedCapabilityRegistry capabilities;
     private final StepContextAssembler assembler;
     private Selection replay;
 
@@ -79,6 +82,15 @@ final class OnDemandContextSession {
             ModelTaskGateway modelTasks, ToolInvocationGateway tools, RunStore runs,
             ObjectMapper json, List<Message> priorHistory,
             HarnessDecisionToolCallback decisionCallback, List<Message> stableInstructions) {
+        this(request, catalog, modelTasks, tools, runs, json, priorHistory,
+                decisionCallback, stableInstructions, TrustedCapabilityRegistry.builtins());
+    }
+
+    OnDemandContextSession(ReasoningRequest request, ToolCatalogSession catalog,
+            ModelTaskGateway modelTasks, ToolInvocationGateway tools, RunStore runs,
+            ObjectMapper json, List<Message> priorHistory,
+            HarnessDecisionToolCallback decisionCallback, List<Message> stableInstructions,
+            TrustedCapabilityRegistry capabilities) {
         this.request = Objects.requireNonNull(request);
         this.policy = Objects.requireNonNull(request.plan().descriptor().onDemandContextPolicy());
         this.projector = new StepContextProjector(
@@ -86,6 +98,7 @@ final class OnDemandContextSession {
         this.assembler = new StepContextAssembler(request.runId().value(), projector, stableInstructions);
         this.catalog = catalog;
         this.decisionCallback = decisionCallback;
+        this.capabilities = Objects.requireNonNull(capabilities);
         this.runs = Objects.requireNonNull(runs);
         this.steps = new RunStepQuery(runs);
         this.json = Objects.requireNonNull(json);
@@ -100,23 +113,56 @@ final class OnDemandContextSession {
                 runs, steps, json, sources);
         this.selectionInputs = new OnDemandContextSelectionInputs(policy, planner, sources);
         this.computerUse = new ComputerUseContextSelection(request, catalog, planner, runs,
-                steps, historyCatalog, fixed, projector, assembler);
+                steps, historyCatalog, fixed, projector, assembler, json, capabilities);
     }
 
     Selection select(List<Message> incoming) {
         // An in-flight provider call owns its exact frozen prompt and tool set.
         // Re-evaluate native liveness only after that journaled call is settled.
-        if (replay != null || request.control().remainingToolCalls() == 0) {
+        if (replay != null) {
+            return selectOptional(incoming);
+        }
+        List<Message> current = incoming.stream()
+                .filter(message -> !TaskRepairContext.isProgress(message, request.runId().value())).toList();
+        Selection selected = selectCurrent(current);
+        List<Message> clean = selected.messages().stream()
+                .filter(message -> !TaskRepairContext.isProgress(message, request.runId().value())).toList();
+        if (!clean.equals(selected.messages())) {
+            selected = new Selection(clean, selected.callbacks(), selected.toolCandidateStepId());
+        }
+        Message progress = TaskRepairContext.currentProgress(request, runs, json, capabilities);
+        if (progress == null) return selected;
+        List<Message> messages = new ArrayList<>(selected.messages());
+        long characters = messages.stream().mapToLong(StepContextProjector::characters).sum();
+        var contextPolicy = request.plan().descriptor().stepContextPolicy();
+        if (contextPolicy == null || characters + StepContextProjector.characters(progress)
+                > contextPolicy.maxMessageCharacters()) return selected;
+        messages.add(progress);
+        return new Selection(List.copyOf(messages), selected.callbacks(), selected.toolCandidateStepId());
+    }
+
+    private Selection selectCurrent(List<Message> incoming) {
+        if (request.control().remainingToolCalls() == 0) {
+            // An unresolved natural identity cannot be prepared without a real read budget.
+            computerUse.forApplicationIdentity(incoming, computerUse.cursor(incoming));
             return selectOptional(incoming);
         }
         ComputerUseSessionCursor cursor = computerUse.cursor(incoming);
         if (cursor.requiresTool() || cursor.phase() == ComputerUseSessionCursor.Phase.RECONCILE) {
             return computerUse.select(incoming, cursor, false);
         }
+        var identity = computerUse.forApplicationIdentity(incoming, cursor);
+        if (identity != null) return identity;
+        var requiredRead = computerUse.forRequiredRead(incoming, cursor);
+        if (requiredRead != null) return requiredRead;
+        var requiredInput = computerUse.forRequiredInput(incoming, cursor);
+        if (requiredInput != null) return requiredInput;
         if (catalog != null) {
             var beforeLaunch = computerUse.beforeLaunch(incoming, catalog.activeNames(), List.of());
             if (beforeLaunch != null) return beforeLaunch;
         }
+        var taskRepair = computerUse.forTaskRepair(incoming, cursor);
+        if (taskRepair != null) return taskRepair;
         try {
             return selectOptional(incoming);
         } catch (ContextPlanningRequiredException failure) {
@@ -178,6 +224,13 @@ final class OnDemandContextSession {
         DesktopObservation desktopObservation = historyCatalog
                 .latestDesktopObservation(planningIncoming).orElse(null);
         ComputerUseSessionCursor selectionDesktop = computerUse.cursor(planningIncoming);
+        var requiredRead = noBusinessBudget ? null : computerUse.requiredRead(selectionDesktop);
+        if (requiredRead != null && requiredRead.tool() != null) {
+            // A required read does not bypass native-session or control recovery.
+            var preflight = computerUse.beforeLaunch(planningIncoming,
+                    List.of(requiredRead.tool()), List.of());
+            if (preflight != null) return preflight;
+        }
         OnDemandDesktopTargetHints desktopTargets = OnDemandDesktopTargetHints.from(desktopObservation);
         OnDemandToolSelection toolSelection = new OnDemandToolSelection(
                 request, policy, catalog, runs, steps, planner::stage);
@@ -187,8 +240,14 @@ final class OnDemandContextSession {
         List<JsonNode> runtimeContext = catalog == null ? List.of() : catalog.currentRuntimeContext();
         ObjectNode firstInput = planner.firstInput(planningIncoming, history,
                 desktopTargets.summary(), runtimeContext);
-        JsonNode first = planner.stage("select_v2", key, firstInput,
-                OnDemandContextPlanner.STAGE_ONE_V2_SCHEMA);
+        // Empty authorized directories have no optional choice to delegate.
+        // Keep the normal journal and assembly path without asking LIGHT to invent one.
+        boolean noOptionalCandidates = sources.isEmpty() && history.isEmpty()
+                && (catalog == null || catalog.summaries().isEmpty())
+                && activatedTools.isEmpty();
+        JsonNode first = noOptionalCandidates ? planner.emptySelection(key, firstInput)
+                : planner.stage("select_v2", key, firstInput,
+                        OnDemandContextPlanner.STAGE_ONE_V2_SCHEMA);
         first = selectionInputs.repairSearchesIfNeeded(first, firstInput, key);
         // The LIGHT planner can return more history IDs than the per-step
         // selection budget. Keep the newest advertised units deterministically
@@ -200,7 +259,10 @@ final class OnDemandContextSession {
         // optional tool choice only when a slot remains beside those targets.
         int providerToolLimit = Math.min(policy.selectedTools(),
                 request.plan().descriptor().stepContextPolicy().maxTools());
-        boolean toolSelectionSlotsRemain = activatedTools.size() < providerToolLimit;
+        // An absent catalog is a host capability boundary, not a request to discover tools.
+        // Keep context selection and its validation active for generation-only child Runs.
+        boolean toolSelectionSlotsRemain = catalog != null && !catalog.summaries().isEmpty()
+                && activatedTools.size() < providerToolLimit;
         OnDemandToolSelection.Intent toolIntent = toolSelectionSlotsRemain
                 ? toolSelection.intent(first, firstInput, key)
                 : new OnDemandToolSelection.Intent("", List.of());
@@ -226,6 +288,7 @@ final class OnDemandContextSession {
                 : toolIntentPresent && toolCandidates.candidates().isEmpty() ? 2
                 : toolIntentPresent
                     || (catalog != null && !catalog.activeNames().isEmpty()) ? 1 : 0;
+        if (requiredRead != null) initialReserve = Math.max(initialReserve, requiredRead.reserve());
         reads.ensureReadBudget(searchInvocations, initialReserve + fixedPending);
         List<SourceCandidate> found = new ArrayList<>();
         Map<String, String> candidateVersions = new HashMap<>();
@@ -459,6 +522,36 @@ final class OnDemandContextSession {
             toolNames = new ArrayList<>(fit.names());
             toolCandidates = fit.snapshot();
         }
+        if (requiredRead != null) {
+            // A LIGHT choice is optional. It cannot erase the next frozen host
+            // read, nor replace a previously promised activation to make room.
+            if (requiredRead.tool() == null) {
+                catalogMode = ToolCatalogSession.CatalogMode.REQUIRED;
+            } else {
+                if (!catalog.trustedReadOnlyTool(requiredRead.tool())) {
+                    throw pause("required task read is no longer authorized for this Run");
+                }
+                if (!activatedTools.contains(requiredRead.tool())
+                        && !toolNames.contains(requiredRead.tool())) toolNames.add(requiredRead.tool());
+            }
+            nextTools = new LinkedHashSet<>(activatedTools);
+            nextTools.addAll(toolNames);
+            if (nextTools.size() > providerToolLimit || toolNames.size() > policy.candidates()) {
+                throw pause("required task read cannot fit beside the planned and activated tools");
+            }
+            try {
+                var projection = catalog.projectPlannedDesktop(toolNames, policy.selectedTools(),
+                        catalogMode, selectionDesktop.inputAllowed());
+                if (requiredRead.tool() != null && projection.callbacks().stream().noneMatch(callback ->
+                        callback.getToolDefinition().name().equals(requiredRead.tool()))) {
+                    throw pause("required task read is absent from the current provider projection");
+                }
+            } catch (IllegalStateException invalid) {
+                throw pause("required task read or authorized directory cannot fit this Run's provider budget",
+                        invalid);
+            }
+            if (!toolNames.isEmpty()) toolCandidates = toolSelection.retrieveExact(key, toolNames);
+        }
         if (!authorizedTools.containsAll(toolNames)) {
             throw pause("planner selected a tool outside the authorized Run catalog");
         }
@@ -543,8 +636,11 @@ final class OnDemandContextSession {
         assembled.addAll(assembler.selected(chosen));
         computerUse.appendRecoveryContext(assembled, planningIncoming);
         ComputerUseSessionCursor currentDesktop = computerUse.cursor(planningIncoming);
-        if (currentDesktop.engaged()) assembled.add(assembler.dynamic(HostContextBlock.Kind.CONTROL,
-                ComputerUseContextSelection.message(currentDesktop, false), true, currentDesktop.evidenceRefs()));
+        SystemMessage control = currentDesktop.engaged()
+                ? ComputerUseContextSelection.message(currentDesktop, false) : null;
+        if (requiredRead != null) control = ComputerUseContextSelection.withRequirement(control, requiredRead);
+        if (control != null) assembled.add(assembler.dynamic(HostContextBlock.Kind.CONTROL,
+                control, true, currentDesktop.evidenceRefs()));
         if (desktopObservation != null && !currentDesktop.sessionExpired()) {
             assembled.addAll(assembler.exchange(desktopObservation.exchange().messages(),
                     HostContextBlock.Kind.OBSERVATION, true, currentDesktop.evidenceRefs()));
@@ -572,10 +668,11 @@ final class OnDemandContextSession {
             if (catalog == null && discoveryRequired) {
                 throw new IllegalStateException("planner requested discovery but no authorized tool catalog exists");
             }
-            // An empty LIGHT selection is not proof that the task has no usable tools.
-            // Optional discovery retains every policy, budget and schema gate in the catalog.
-            if (catalog != null && !noBusinessBudget && toolNames.isEmpty()
-                    && activatedTools.isEmpty() && catalogMode == ToolCatalogSession.CatalogMode.NONE) {
+            // An optional selection is not proof that the task needs no other authorized tools.
+            // Keep discovery available beside selected or activated tools when the existing
+            // catalog policy, remaining calls, tool slots and schema budget allow it.
+            if (catalog != null && !noBusinessBudget
+                    && catalogMode == ToolCatalogSession.CatalogMode.NONE) {
                 catalogMode = ToolCatalogSession.CatalogMode.OPTIONAL;
             }
             callbacks = catalog == null || noBusinessBudget ? controlOnly()

@@ -18,9 +18,11 @@ import java.util.Set;
 final class DesktopApplicationIdentityBindings {
     private static final String TOOL = "desktop_session_applications";
     private final List<Snapshot> snapshots;
+    private final List<Page> provenPages;
 
-    private DesktopApplicationIdentityBindings(List<Snapshot> snapshots) {
+    private DesktopApplicationIdentityBindings(List<Snapshot> snapshots, List<Page> provenPages) {
         this.snapshots = List.copyOf(snapshots);
+        this.provenPages = List.copyOf(provenPages);
     }
 
     static DesktopApplicationIdentityBindings fromEvents(List<RunEventEnvelope> events) {
@@ -102,7 +104,9 @@ final class DesktopApplicationIdentityBindings {
                     + "/" + query + "/" + total + "/" + catalogTotal;
             pages.computeIfAbsent(key, ignored -> new ArrayList<>()).add(new Page(
                     completed.runId(), query, offset, count, total, catalogTotal,
-                    receipt.sequence(), output.path("truncated").asBoolean(), aliases));
+                    receipt.sequence(), output.path("truncated").asBoolean(), aliases,
+                    output.path("catalogId").asText(), started.sequence(), invocation,
+                    receipt.payload().path("evidenceRef").asText(), arguments.path("query").asText("")));
         }
         List<Snapshot> snapshots = new ArrayList<>();
         for (List<Page> group : pages.values()) {
@@ -124,12 +128,123 @@ final class DesktopApplicationIdentityBindings {
             }
             Page first = ordered.getFirst();
             boolean complete = cursor == first.total() && ordered.stream().noneMatch(Page::truncated);
+            int contiguousCursor = cursor;
             snapshots.add(new Snapshot(first.runId(), first.query(),
                     first.total() == first.catalogTotal(),
                     complete ? sequence : group.stream().mapToLong(Page::sequence).max().orElse(sequence),
-                    complete, aliases));
+                    complete, aliases, first.catalogId(), cursor, first.total(), first.catalogTotal(),
+                    ordered.stream().anyMatch(Page::truncated), ordered.stream()
+                            .filter(page -> page.offset() < contiguousCursor || page.total() == 0)
+                            .map(Page::evidenceRef).toList(), first.requestedQuery()));
         }
-        return new DesktopApplicationIdentityBindings(snapshots);
+        return new DesktopApplicationIdentityBindings(snapshots,
+                pages.values().stream().flatMap(List::stream).toList());
+    }
+
+    /** Read-only preparation uses the same proven pages as matches, never a second alias parser. */
+    TaskResultEvaluator.DesktopApplicationIdentityState preparationState(List<RunEventEnvelope> events,
+            String runId, String requested, long beforeSequence) {
+        String wanted = normalize(requested);
+        var latest = events.stream().filter(event -> host(event, "core.tool.started", 1)
+                        && event.runId().equals(runId) && event.sequence() < beforeSequence
+                        && event.payload().path("tool").asText().equals(TOOL)
+                        && (normalize(event.payload().path("arguments").path("query").asText(""))
+                                .equals(wanted)
+                            || event.payload().path("arguments").path("query").asText("").isBlank()
+                            || provenPages.stream().anyMatch(page -> page.startedSequence() == event.sequence()
+                                && page.total() == page.catalogTotal())))
+                .max(Comparator.comparingLong(RunEventEnvelope::sequence)).orElse(null);
+        if (latest == null) return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.ABSENT,
+                requested, 0, "", "", List.of());
+        var matchingPages = provenPages.stream().filter(value -> value.runId().equals(runId)
+                        && value.startedSequence() == latest.sequence()
+                        && value.invocationId().equals(latest.payload().path("invocationId").asText()))
+                .toList();
+        var page = matchingPages.size() == 1 ? matchingPages.getFirst() : null;
+        // A failed, pending or malformed latest attempt cannot fall back to an older successful read.
+        if (page == null) return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                requested, 0, "", "", List.of());
+        Snapshot snapshot = snapshots.stream().filter(value -> value.runId().equals(runId)
+                        && value.catalogId().equals(page.catalogId()) && value.query().equals(page.query())
+                        && value.total() == page.total() && value.catalogTotal() == page.catalogTotal())
+                .findFirst().orElse(null);
+        if (snapshot == null || snapshot.requestedQuery().length() > 512
+                || provenPages.stream().filter(value -> value.runId().equals(runId)
+                    && value.catalogId().equals(page.catalogId()) && value.query().equals(page.query())
+                    && value.total() == page.total() && value.catalogTotal() == page.catalogTotal())
+                    .anyMatch(value -> !value.requestedQuery().equals(snapshot.requestedQuery())
+                        || !boundOnce(value, events))
+                || snapshot.evidenceRefs().size() > 16
+                || snapshot.evidenceRefs().stream().anyMatch(ref -> ref.isBlank() || ref.length() > 256)) {
+            return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                    requested, 0, "", "", List.of());
+        }
+        var group = provenPages.stream().filter(value -> value.runId().equals(runId)
+                && value.catalogId().equals(page.catalogId()) && value.query().equals(page.query())
+                && value.total() == page.total() && value.catalogTotal() == page.catalogTotal())
+                .sorted(Comparator.comparingLong(Page::startedSequence)).toList();
+        int expectedOffset = 0;
+        Map<Integer, Page> visitedOffsets = new LinkedHashMap<>();
+        for (Page proven : group) {
+            Page prior = visitedOffsets.putIfAbsent(proven.offset(), proven);
+            if (snapshot.complete() && prior != null && prior.count() == proven.count()
+                    && prior.aliases().equals(proven.aliases())) continue;
+            if (proven.offset() != expectedOffset || proven.count() == 0 && proven.total() != 0) {
+                return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                        snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+            }
+            expectedOffset += proven.count();
+        }
+        if (snapshot.truncated()) return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.TRUNCATED,
+                snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+        if (!snapshot.complete()) {
+            if (provenPages.stream().filter(value -> value.runId().equals(runId)
+                    && value.query().equals(page.query())).map(Page::catalogId).distinct().count() > 1) {
+                return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                        snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+            }
+            long repeats = provenPages.stream().filter(value -> value.runId().equals(runId)
+                    && value.catalogId().equals(page.catalogId()) && value.query().equals(page.query())
+                    && value.total() == page.total() && value.catalogTotal() == page.catalogTotal()
+                    && value.offset() == page.offset()).count();
+            if (snapshot.nextOffset() <= 0 || snapshot.nextOffset() >= snapshot.total()
+                    || repeats > 1 || page.count() == 0) {
+                return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                        snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+            }
+            return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INCOMPLETE,
+                    snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+        }
+        Set<String> identities = snapshot.aliases().getOrDefault(wanted, Set.of());
+        if (identities.isEmpty()) return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.EMPTY,
+                snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+        if (identities.size() != 1) return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.AMBIGUOUS,
+                snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+        String canonical = canonicalIdentity(requested, runId, beforeSequence);
+        if (canonical.length() > 256 || !canonical.equals(identities.iterator().next())) {
+            return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.INVALID,
+                    snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), "", snapshot.evidenceRefs());
+        }
+        return state(TaskResultEvaluator.DesktopApplicationIdentityStatus.COMPLETE,
+                snapshot.requestedQuery(), snapshot.nextOffset(), snapshot.catalogId(), canonical, snapshot.evidenceRefs());
+    }
+
+    private static TaskResultEvaluator.DesktopApplicationIdentityState state(
+            TaskResultEvaluator.DesktopApplicationIdentityStatus status, String query, int offset,
+            String catalogId, String identity, List<String> refs) {
+        return new TaskResultEvaluator.DesktopApplicationIdentityState(status, query, offset,
+                catalogId, identity, refs);
+    }
+
+    private static boolean boundOnce(Page page, List<RunEventEnvelope> events) {
+        for (String type : List.of("core.tool.started", "core.tool.completed", "core.tool.receipt")) {
+            int version = type.equals("core.tool.completed") ? 2 : 1;
+            long count = events.stream().filter(event -> host(event, type, version)
+                    && event.runId().equals(page.runId()) && event.payload().path("tool").asText().equals(TOOL)
+                    && event.payload().path("invocationId").asText().equals(page.invocationId())).count();
+            if (count != 1) return false;
+        }
+        return true;
     }
 
     boolean matches(String expected, String target, String applicationId,
@@ -189,8 +304,10 @@ final class DesktopApplicationIdentityBindings {
     }
 
     private record Page(String runId, String query, int offset, int count, int total,
-            int catalogTotal, long sequence, boolean truncated, Map<String, Set<String>> aliases) { }
+            int catalogTotal, long sequence, boolean truncated, Map<String, Set<String>> aliases,
+            String catalogId, long startedSequence, String invocationId, String evidenceRef, String requestedQuery) { }
     private record Snapshot(String runId, String query, boolean fullCatalog, long sequence,
-            boolean complete, Map<String, Set<String>> aliases) { }
+            boolean complete, Map<String, Set<String>> aliases, String catalogId, int nextOffset,
+            int total, int catalogTotal, boolean truncated, List<String> evidenceRefs, String requestedQuery) { }
     private record Resolution(String applicationId, boolean ambiguous) { }
 }

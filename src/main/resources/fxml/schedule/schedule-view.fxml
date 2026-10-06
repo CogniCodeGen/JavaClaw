@@ -7,7 +7,6 @@
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.layout.HBox?>
-<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
@@ -34,7 +33,7 @@
                           styleClass="schedule-task-list" accessibleText="定时任务列表"/>
             </children>
         </VBox>
-        <VBox HBox.hgrow="ALWAYS">
+        <VBox minWidth="0.0" HBox.hgrow="ALWAYS">
             <children>
                 <StackPane VBox.vgrow="ALWAYS" styleClass="modal-content-area">
                     <padding><Insets top="20.0" right="24.0" bottom="12.0" left="24.0"/></padding>
@@ -63,14 +62,14 @@
                 </StackPane>
                 <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="modal-foot">
                     <children>
-                        <Button fx:id="runButton" text="▶ 立即运行一次" onAction="#runRequested"
+                        <Button fx:id="runButton" text="▶ 立即运行一次" minWidth="-Infinity" onAction="#runRequested"
                                 styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"/>
-                        <Label fx:id="statusLabel" maxWidth="360.0" wrapText="true"
-                               styleClass="sec-hint"/>
-                        <Region HBox.hgrow="ALWAYS"/>
-                        <Button text="关闭" onAction="#requestClose"
+                        <Label fx:id="statusLabel" minWidth="0.0" prefWidth="0.0" maxWidth="Infinity"
+                               HBox.hgrow="ALWAYS" wrapText="false" textOverrun="ELLIPSIS"
+                               style="-fx-wrap-text: false;" styleClass="sec-hint"/>
+                        <Button text="关闭" minWidth="-Infinity" onAction="#requestClose"
                                 styleClass="button, jc-btn, jc-btn-ghost"/>
-                        <Button fx:id="saveButton" text="保存" onAction="#saveRequested"
+                        <Button fx:id="saveButton" text="保存" minWidth="-Infinity" onAction="#saveRequested"
                                 styleClass="button, jc-btn, jc-btn-save"/>
                     </children>
                 </HBox>

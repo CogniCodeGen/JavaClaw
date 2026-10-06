@@ -56,7 +56,7 @@ final class PersistedProviderTools {
             throw recoveryRequired(model, "persisted provider tool definitions are unavailable");
         }
         Set<String> candidates = candidateNamesFor(model, catalog);
-        Set<String> activated = activatedBefore(model);
+        Set<String> activated = activatedBefore(model, catalog);
         Set<String> seen = new HashSet<>();
         JsonNode fingerprints = input.path("toolFingerprints");
         for (JsonNode value : input.path("toolNames")) {
@@ -132,16 +132,46 @@ final class PersistedProviderTools {
         return names;
     }
 
-    /** Catalog activation is consumed by the next completed MODEL, including a catalog listing. */
-    private Set<String> activatedBefore(AgentStep model) {
+    /** A completed MODEL consumes only activations exposed by its trusted frozen directory. */
+    private Set<String> activatedBefore(AgentStep model, ToolCatalogSession catalog) {
         Set<String> active = Set.of();
+        var events = runs.eventsAfter(request.runId(), 0);
         List<AgentStep> earlier = steps.steps(request.runId()).stream()
                 .filter(step -> step.state() == AgentStep.State.COMPLETED
                         && step.lastSequence() < model.startSequence())
                 .sorted(Comparator.comparingLong(AgentStep::lastSequence)).toList();
         for (AgentStep step : earlier) {
             if (step.kind() == AgentStep.Kind.MODEL) {
-                active = Set.of();
+                if (!active.isEmpty()) {
+                    if (catalog == null || !step.turnId().equals(request.runId())) {
+                        throw recoveryRequired(model, "activated provider history is unavailable");
+                    }
+                    var starts = events.stream().filter(event ->
+                            event.runId().equals(request.runId().value())
+                                && event.type().equals("core.step.started") && event.schemaVersion() == 1
+                                && event.producer().equals("framework.core")
+                                && event.sequence() == step.startSequence()
+                                && event.payload().path("stepId").asText().equals(step.id().value())
+                                && event.payload().path("kind").asText().equals("MODEL")
+                                && event.payload().path("input").equals(step.input())).toList();
+                    if (starts.size() != 1) {
+                        throw recoveryRequired(model, "activated provider history lacks a trusted frozen directory");
+                    }
+                    var completions = events.stream().filter(event ->
+                            event.runId().equals(request.runId().value())
+                                && event.type().equals("core.step.completed") && event.schemaVersion() == 1
+                                && event.producer().equals("framework.core")
+                                && event.sequence() == step.lastSequence()
+                                && event.payload().path("stepId").asText().equals(step.id().value())
+                                && event.payload().path("output").equals(step.output())).toList();
+                    if (completions.size() != 1) {
+                        throw recoveryRequired(model, "activated provider history lacks a trusted completion");
+                    }
+                    Set<String> consumed = catalog.exposedActivationNames(step.input(), active, step.id().value());
+                    Set<String> remaining = new HashSet<>(active);
+                    remaining.removeAll(consumed);
+                    active = Set.copyOf(remaining);
+                }
             } else if (step.kind() == AgentStep.Kind.TOOL
                     && step.input().path("tool").asText().equals(ToolCatalogSession.NAME)
                     && step.input().path("arguments").path("action").asText().equals("activate")) {

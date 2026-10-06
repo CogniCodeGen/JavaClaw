@@ -73,7 +73,16 @@ final class ChatTurnEventRouter {
     }
 
     private void routeCustom(ConversationEvent.Custom event) {
-        if ("plan_final".equals(event.kind()) && event.payload().isTextual()) {
+        if ("reply_stream".equals(event.kind())) {
+            JsonNode payload = event.payload();
+            if (!payload.isObject()) return;
+            JsonNode action = payload.path("action");
+            JsonNode segmentId = payload.path("segmentId");
+            if (!action.isTextual() || !segmentId.isTextual()) return;
+            JsonNode text = payload.path("text");
+            renderer.updateReplyStream(action.asText(), segmentId.asText(),
+                    text.isTextual() ? text.asText() : null);
+        } else if ("plan_final".equals(event.kind()) && event.payload().isTextual()) {
             renderer.setFinalPlanDraft(event.payload().asText());
         } else if ("clarify_request".equals(event.kind())) {
             ClarifyPayload.fromJson(event.payload()).ifPresent(clarification);

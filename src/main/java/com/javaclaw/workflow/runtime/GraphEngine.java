@@ -230,7 +230,24 @@ public final class GraphEngine {
     }
 
     private void emit(GraphListener listener, GraphEvent event) {
+        if (event instanceof GraphEvent.RunFinished) {
+            try {
+                if (owner != null) owner.onEvent(event);
+            } catch (RuntimeException | Error projectionFailure) {
+                log.error("工作流终态投影失败 run={}", event.runId(), projectionFailure);
+                throw projectionFailure;
+            } finally {
+                // The graph checkpoint is already persisted. Its caller must
+                // observe driver completion even if the Agent projection fails.
+                notifyListener(listener, event);
+            }
+            return;
+        }
         if (owner != null) owner.onEvent(event);
+        notifyListener(listener, event);
+    }
+
+    private void notifyListener(GraphListener listener, GraphEvent event) {
         try {
             listener.onEvent(event);
         } catch (Throwable listenerFailure) {

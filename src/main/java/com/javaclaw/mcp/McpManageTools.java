@@ -201,7 +201,17 @@ public final class McpManageTools {
                 16 * 1024));
         if (secret == null || secret.length == 0) {
             if (secret != null) Arrays.fill(secret, '\0');
-            return ToolResponse.error("mcp_server_set_header_secure", "用户取消了安全输入或 Header 值为空。");
+            // Handling a local cancellation succeeded, but no Header write occurred.
+            // Keep that distinction machine-readable without exposing any secret.
+            var cancelled = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                    .put("schemaVersion", 1).put("kind", "mcp.header.input_cancelled")
+                    .put("serverName", serverName).put("headerName", safeHeaderName)
+                    .put("saved", false).put("reconnected", false).put("retryAllowed", false);
+            com.javaclaw.framework.spi.ToolEffectCapture.noteData(
+                    "mcp_server_set_header_secure", cancelled);
+            return ToolResponse.success("mcp_server_set_header_secure",
+                    "安全输入已取消或未提供有效值，未修改 Header、未保存配置、未重新连接。"
+                            + "本次操作已结束，不要自动重试；仅在用户再次明确要求时发起新操作。");
         }
 
         try {

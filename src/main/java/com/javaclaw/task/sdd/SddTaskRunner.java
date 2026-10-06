@@ -37,6 +37,8 @@ public final class SddTaskRunner implements AutoCloseable {
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
     private final SpecStore store;
     private final FrameworkSddAgents agents;
+    private final JsonCodec json;
+    private final String workspaceId;
     /** 验证层子件引用：用于把核验超时与实现/结构化阶段超时对齐（避免默认 120s 误杀慢构建/慢 critic）。 */
     private final ProcessCommandRunner commandRunner;
     private final FrameworkCriticJudge critic;
@@ -59,6 +61,8 @@ public final class SddTaskRunner implements AutoCloseable {
                          com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
                          com.javaclaw.runtime.WorkspaceContext workspace) {
         this.context = ctx;
+        this.json = json;
+        this.workspaceId = workspaceId;
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId,
@@ -80,6 +84,14 @@ public final class SddTaskRunner implements AutoCloseable {
     /** 注入 token 预算闸门：返回 true 表示预算耗尽，编排器在阶段/循环边界停为待人工。 */
     public SddTaskRunner budgetGuard(BooleanSupplier guard) {
         orchestrator.budgetGuard(guard);
+        agents.budgetGuard(guard);
+        return this;
+    }
+
+    /** Assembly-only dependency; no product UI or model can supply receipt data. */
+    public SddTaskRunner evidenceStore(com.javaclaw.framework.spi.RunStore runs) {
+        if (runs != null) orchestrator.acceptanceEvidence(new SddAcceptanceEvidence(
+                context, store, runs, json.mapper(), workspaceId));
         return this;
     }
 
@@ -147,15 +159,31 @@ public final class SddTaskRunner implements AutoCloseable {
     }
 
     public void cancel() {
-        if (workflowService != null) workflowService.cancelSystem(SYSTEM_GRAPH.id(), context.id());
         orchestrator.cancel();
+        if (workflowService != null) workflowService.cancelSystem(SYSTEM_GRAPH.id(), context.id());
     }
 
     /** 关闭本任务私有能力资源（当前主要是隔离浏览器）；可重复调用。 */
     @Override
     public void close() {
-        agents.close();
-        agents.closeCoordinator();
+        // Paused/cancelled drivers still have to persist child and coordinator termination.
+        // Clear only the inherited interrupt during cleanup, then preserve it for the caller.
+        boolean interrupted = Thread.interrupted();
+        try {
+            try {
+                agents.close();
+            } catch (RuntimeException | Error failure) {
+                try {
+                    agents.closeCoordinator();
+                } catch (RuntimeException | Error coordinatorFailure) {
+                    if (coordinatorFailure != failure) failure.addSuppressed(coordinatorFailure);
+                }
+                throw failure;
+            }
+            agents.closeCoordinator();
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     private SddOutcome runViaGraph(boolean resume) {
@@ -181,7 +209,9 @@ public final class SddTaskRunner implements AutoCloseable {
                                     String message = saved.state().get("sdd.message").asText();
                                     if (!result.isBlank()) {
                                         outcome.compareAndSet(null, new SddOutcome(
-                                                SddOutcome.Result.valueOf(result), message));
+                                                SddOutcome.Result.valueOf(result), message,
+                                                com.javaclaw.framework.api.TaskResultJson.decode(
+                                                        saved.state().get("sdd.taskResult"))));
                                     }
                                 }
                             }
@@ -213,7 +243,8 @@ public final class SddTaskRunner implements AutoCloseable {
                             .set("sdd.proceed", stop == null);
                     if (stop != null) {
                         patch.set("sdd.result", stop.result().name())
-                                .set("sdd.message", stop.message());
+                                .set("sdd.message", stop.message())
+                                .set("sdd.taskResult", com.javaclaw.framework.api.TaskResultJson.encode(stop.taskResult()));
                     }
                     return com.javaclaw.workflow.runtime.NodeResult.next(patch.build());
                 }
@@ -225,14 +256,21 @@ public final class SddTaskRunner implements AutoCloseable {
                 return com.javaclaw.workflow.runtime.NodeResult.output(
                         com.javaclaw.workflow.model.StatePatch.builder()
                                 .set("sdd.result", value.result().name())
-                                .set("sdd.message", value.message()).build(), value.message());
+                                .set("sdd.message", value.message())
+                                .set("sdd.taskResult", com.javaclaw.framework.api.TaskResultJson.encode(value.taskResult()))
+                                .build(), value.message());
             }
         }, com.javaclaw.workflow.service.SystemRecoveryPolicy.RESUME_ONLY);
         try {
             while (!done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)) { /* 后台管理线程等待图终态 */ }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            cancel();
+            // Graph cancellation can persist checkpoints; restore interruption afterwards.
+            Thread.interrupted();
+            try {
+                cancel();
+            } finally {
+                Thread.currentThread().interrupt();
+            }
             return SddOutcome.cancelled();
         }
         if (error.get() instanceof com.javaclaw.framework.api.TurnPausedException)
@@ -242,7 +280,8 @@ public final class SddTaskRunner implements AutoCloseable {
     }
 
     static boolean requiresPreparation(boolean resume, OpenSpecChange existing) {
-        return !resume || existing == null || existing.tasks().isEmpty();
+        // Artifact presence cannot prove review approval. prepare() resumes trusted phase checkpoints.
+        return true;
     }
 
     /** 暴露真相层，供调用方读取 change 状态（进度、tasks 勾选、归档等）用于 UI 渲染/恢复。 */

@@ -42,7 +42,11 @@ public final class NodeExecutionContext {
     public CancellationToken cancellation() { return cancellation; }
     public GraphListener listener() { return listener; }
     public String invocationId() { return runId + ":node:" + node.id() + ":visit:" + visit; }
-    public String orchestrationStepId() { return "graph:" + runId + ":visit:" + (visit + 1); }
+    public String orchestrationStepId() {
+        String attempt = state.get(GraphAgentTurn.ATTEMPT_KEY).asText("");
+        return "graph:" + runId + (attempt.isBlank() ? "" : ":attempt:" + attempt)
+                + ":visit:" + (visit + 1);
+    }
 
     /** Persisted owner shared by direct tools and child Agent turns. */
     public com.javaclaw.framework.api.RunId ownerRunId() {

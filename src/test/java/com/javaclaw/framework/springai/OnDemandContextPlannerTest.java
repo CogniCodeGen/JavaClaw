@@ -32,6 +32,7 @@ import com.javaclaw.framework.spi.CreateRunResult;
 import com.javaclaw.framework.spi.DeferredContextCandidate;
 import com.javaclaw.framework.spi.DeferredContextSource;
 import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskOutputException;
 import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.framework.spi.RunEventDraft;
 import com.javaclaw.framework.spi.RunStore;

@@ -288,8 +288,14 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
     @Tool(name = "desktop_session_snapshot", description = "取得当前实时窗口帧并保存到应用内截图目录供用户查看；模型读取画面请用 desktop_session_observe。")
     public String snapshot(@ToolParam(description = "会话 ID") String sessionId) {
         try {
+            DesktopSessionInfo before = sessions.info(owner, sessionId);
+            if (!sessionId.equals(before.sessionId()))
+                throw new IllegalStateException("截图会话身份不一致，请重新打开目标会话");
             Optional<DesktopFrame> frame = await(sessions.snapshot(owner, sessionId), 10);
             if (frame.isEmpty()) return noFrame("desktop_session_snapshot", sessionId);
+            DesktopFrame captured = frame.get();
+            if (!before.target().id().equals(captured.targetId()))
+                throw new IllegalStateException("实时帧与会话目标不一致，请重新打开目标会话");
             if (managedData == null) Files.createDirectories(screenshots);
             else managedData.requireDirectory(screenshots);
             Path file = screenshots.resolve("desktop-session-"
@@ -297,15 +303,28 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
             if (managedData != null) managedData.requireManaged(file);
             try (var output = Files.newOutputStream(file,
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-                if (!ImageIO.write(image(frame.get()), "png", output)) {
+                if (!ImageIO.write(image(captured), "png", output)) {
                     throw new IOException("PNG 编码器不可用");
                 }
             }
+            DesktopSessionInfo after = sessions.info(owner, sessionId);
+            DesktopTarget original = before.target();
+            DesktopTarget current = after.target();
+            if (!before.sessionId().equals(after.sessionId())
+                    || !captured.targetId().equals(current.id())
+                    || !original.providerId().equals(current.providerId())
+                    || !original.id().equals(current.id())
+                    || original.processId() != current.processId()
+                    || !original.application().equals(current.application())
+                    || !original.applicationId().equals(current.applicationId()))
+                throw new IllegalStateException("保存截图期间目标身份已变化，请重新发现并打开目标会话");
+            // This identifies the saved capture; it is not a committed observation or input baseline.
+            String captureId = java.util.UUID.randomUUID().toString();
             ToolEffectCapture.noteData("desktop_session_snapshot",
-                    DesktopToolPayloads.snapshot(sessionId, frame.get(), file.toString()));
+                    DesktopToolPayloads.snapshot(sessionId, captured, file.toString(), after, captureId));
             return ToolResponse.success("desktop_session_snapshot", "截图: " + file
-                    + "；窗口代次=" + frame.get().windowGeneration()
-                    + "；尺寸=" + frame.get().width() + "x" + frame.get().height());
+                    + "；窗口代次=" + captured.windowGeneration()
+                    + "；尺寸=" + captured.width() + "x" + captured.height());
         } catch (Exception failure) { return failed("desktop_session_snapshot", sessionId, failure); }
     }
 
@@ -442,14 +461,14 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
 
     @ToolContract(group = "desktop-session", permissions = {"tool.execute"},
             idempotent = false, effectPolicy = ToolEffectPolicy.OBSERVATION_GATED)
-    @Tool(name = "desktop_session_type", description = "向观察到的输入目标写入文本。后台语义写入可能替换控件的全部原值；授权前台后会定位目标再输入。")
+    @Tool(name = "desktop_session_type", description = "向最新观察中的合法输入目标写入用户指定的完整文本。AX目标必须具有WRITE能力（actions含2）；PRESS=1或actions=0的只读容器不支持写入。后台语义写入可能替换控件全部原值；已授权前台时可使用合法视觉目标或观察内坐标，但会先定位点击，不得选择数字/动作按钮或危险控件。保持完整文本，不缩短为试字符或改成KEY串；无合适目标时报告或澄清，不自行扩展权限。")
     public String type(@ToolParam(description = "会话 ID") String sessionId,
                        @ToolParam(description = "最新观察返回的 observationId") String observationId,
                        @ToolParam(description = "当前窗口代次") long generation,
-                       @ToolParam(required = false, description = "观察目标 ID（可写辅助功能元素或视觉目标）；没有目标时留空并使用 x/y") String elementId,
-                       @ToolParam(description = "帧内 X 坐标") int x,
-                       @ToolParam(description = "帧内 Y 坐标") int y,
-                       @ToolParam(description = "输入文本") String text) {
+                       @ToolParam(required = false, description = "最新观察中的完整目标ID。AX目标actions必须含WRITE=2，只有PRESS=1或actions=0不支持写入；已授权前台可选合法视觉输入目标，或留空使用当前观察内x/y，不会把不可写AX目标自动变可写") String elementId,
+                       @ToolParam(description = "当前观察帧内安全输入点的X坐标；TYPE先定位点击，不选数字/动作按钮或危险控件") int x,
+                       @ToolParam(description = "同一安全输入点的帧内Y坐标，必须来自当前观察") int y,
+                       @ToolParam(description = "按用户任务要求原样保留的完整文本；不得缩短为试字符或用多次KEY调用替代。发送后先新观察确认效果，结果未知时不得盲重试") String text) {
         return action("desktop_session_type", sessionId, observationId, generation,
                 () -> new DesktopAction(DesktopAction.Kind.TYPE, x, y, 0, 0, 0, text,
                         generation, observationId, elementId, 0));
@@ -769,7 +788,13 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
                         : ToolResponse.error(tool, "本次输入未执行。" + result.detail());
                 case STALE_FRAME -> ToolResponse.reobserve(tool,
                         "本次输入未执行；观察或窗口已变化，请重新观察。" + result.detail());
-                case DENIED, FAILED -> ToolResponse.error(tool, result.detail());
+                case FAILED -> result.reason() == DesktopActionResult.Reason.INVALID_TARGET
+                        && result.nextStep() == DesktopActionResult.NextStep.OBSERVE
+                        ? ToolResponse.reobserve(tool,
+                                "本次输入未执行；所选目标不支持此动作，请重新观察后选择具备该能力的目标；不会自动变可写。"
+                                        + result.detail())
+                        : ToolResponse.error(tool, result.detail());
+                case DENIED -> ToolResponse.error(tool, result.detail());
             };
         } catch (Exception uncertain) {
             if (uncertain instanceof InterruptedException) Thread.currentThread().interrupt();

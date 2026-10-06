@@ -238,7 +238,7 @@
         <Label text="运行历史" styleClass="grp-title"/>
         <VBox styleClass="jc-card, schedule-history-card">
             <children>
-                <GridPane styleClass="jc-table-head">
+                <GridPane fx:id="historyHeader" minWidth="0.0" styleClass="jc-table-head">
                     <columnConstraints>
                         <ColumnConstraints percentWidth="38.0"/><ColumnConstraints percentWidth="18.0"/>
                         <ColumnConstraints percentWidth="18.0"/><ColumnConstraints percentWidth="26.0"/>

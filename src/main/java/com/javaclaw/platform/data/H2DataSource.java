@@ -18,6 +18,11 @@ import java.sql.SQLException;
  * <p>实例线程安全。每次调用仍返回独立连接，由调用方或 Spring JDBC 关闭。本类另持有
  * 一个不参与业务操作的连接，避免短连接之间触发 H2 关库和压缩；Spring 根上下文关闭时
  * 才释放它。诊断工具必须在 JavaClaw 停止后访问数据库文件。</p>
+ *
+ * <p>任务暂停、取消和超时会中断业务线程。H2 的默认 {@code file:} 通道可能因此关闭
+ * 整个数据库共享的文件句柄，所以使用 H2 自带的 {@code async:} 文件系统：文件读写由
+ * 异步通道完成，等待它的线程被中断时不会关闭共享句柄。它仍访问同一个本地
+ * {@code javaclaw.mv.db}，不改变事务、凭据或单实例边界。</p>
  */
 public final class H2DataSource extends AbstractDataSource implements AutoCloseable {
 
@@ -64,7 +69,7 @@ public final class H2DataSource extends AbstractDataSource implements AutoClosea
 
     private String jdbcUrl() {
         String path = databaseBase.toString().replace('\\', '/');
-        return "jdbc:h2:file:" + path
+        return "jdbc:h2:async:" + path
                 + ";DATABASE_TO_UPPER=false"
                 + ";LOCK_TIMEOUT=10000"
                 + ";TRACE_LEVEL_FILE=0";

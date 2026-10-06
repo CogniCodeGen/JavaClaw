@@ -3,6 +3,7 @@ package com.javaclaw.workflow.store;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.workflow.model.GraphDefinition;
+import com.javaclaw.workflow.model.GraphKind;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.RunStatus;
 import com.javaclaw.workflow.runtime.CheckpointPhase;
@@ -12,6 +13,7 @@ import com.javaclaw.workflow.runtime.NodeResult;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +45,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      """)) {
             c.setAutoCommit(false);
+            requireDefinition(c, run.definition());
             GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             bindRun(ps, run);
             if (ps.executeUpdate() != 1) {
@@ -62,6 +65,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         }
         try (Connection c = database.open()) {
             c.setAutoCommit(false);
+            requireDefinition(c, run.definition());
             GraphThreadFence.requireLive(c, workspaceId, run.threadId());
             try {
                 try (PreparedStatement ps = c.prepareStatement("""
@@ -87,6 +91,19 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
             logPersistenceFailure("create-running", run, e);
             if (e instanceof WorkflowRunMissingException missing) throw missing;
             throw new IllegalStateException("创建工作流运行记录失败", e);
+        }
+    }
+
+    private void requireDefinition(Connection connection, GraphDefinition definition) throws SQLException {
+        if (definition.kind() != GraphKind.CUSTOM) return;
+        try (PreparedStatement query = connection.prepareStatement("""
+                SELECT archived FROM workflow_definitions WHERE workspace_id=? AND id=? FOR UPDATE
+                """)) {
+            query.setString(1, workspaceId); query.setString(2, definition.id());
+            try (ResultSet row = query.executeQuery()) {
+                if (!row.next()) throw new WorkflowRunMissingException("工作流已删除，不能启动运行");
+                if (row.getBoolean("archived")) throw new IllegalStateException("工作流已归档，不能启动运行");
+            }
         }
     }
 

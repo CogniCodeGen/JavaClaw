@@ -49,6 +49,8 @@ final class ThinkingContentRenderer {
     private VBox activityBox;
     private DetailBlock thinkingDetail;
     private DetailBlock planDetail;
+    private Label planStatus;
+    private String finalPlanStatus;
 
     ThinkingContentRenderer(VBox sections) {
         this.sections = Objects.requireNonNull(sections, "sections");
@@ -66,6 +68,8 @@ final class ThinkingContentRenderer {
         activityBox = null;
         thinkingDetail = null;
         planDetail = null;
+        planStatus = null;
+        finalPlanStatus = null;
     }
 
     enum StreamEnd { COMPLETED, CANCELLED, FAILED }
@@ -74,16 +78,31 @@ final class ThinkingContentRenderer {
     enum StageState { RUNNING, DONE, SKIPPED, STOPPED, ERROR }
 
     void finish(StreamEnd end) {
+        finish(end, null);
+    }
+
+    void finish(StreamEnd end, String taskStatus) {
+        finalPlanStatus = taskStatus != null ? taskStatus : switch (end) {
+            case COMPLETED -> "本轮处理已完成";
+            case CANCELLED -> "本轮处理已取消";
+            case FAILED -> "本轮处理失败";
+        };
+        if (planStatus != null) {
+            planStatus.setText(finalPlanStatus);
+        }
+        if (planDetail != null) planDetail.markHistorical(finalPlanStatus);
+        boolean acceptancePending = end == StreamEnd.COMPLETED && taskStatus != null;
         AgentState agentState = switch (end) {
-            case COMPLETED -> AgentState.COMPLETED;
+            case COMPLETED -> acceptancePending ? AgentState.STOPPED : AgentState.COMPLETED;
             case CANCELLED -> AgentState.STOPPED;
             case FAILED -> AgentState.FAILED;
         };
         for (AgentRow row : agentRows.values()) {
-            if (row.running()) row.setStatus(agentState, agentStatusText(agentState));
+            if (row.running()) row.setStatus(agentState, acceptancePending
+                    ? "轮次已结束 · 待处理" : agentStatusText(agentState));
         }
         StageState stageState = switch (end) {
-            case COMPLETED -> StageState.DONE;
+            case COMPLETED -> acceptancePending ? StageState.STOPPED : StageState.DONE;
             case CANCELLED -> StageState.STOPPED;
             case FAILED -> StageState.ERROR;
         };
@@ -91,7 +110,7 @@ final class ThinkingContentRenderer {
             if (row.running()) row.update(stageState, null);
         }
         ToolState toolState = switch (end) {
-            case COMPLETED -> ToolState.SUCCEEDED;
+            case COMPLETED -> acceptancePending ? ToolState.UNKNOWN : ToolState.SUCCEEDED;
             case CANCELLED -> ToolState.STOPPED;
             case FAILED -> ToolState.FAILED;
         };
@@ -134,9 +153,23 @@ final class ThinkingContentRenderer {
     void updatePlan(String hint) {
         if (hint == null || hint.isBlank()) return;
         if (planDetail == null) {
-            planDetail = detailSection("执行规划", "tp-plan-section");
+            planDetail = new DetailBlock(true);
+            planStatus = styledLabel("", "tp-detail-text");
+            planStatus.setWrapText(true);
+            planStatus.setMinWidth(0);
+            planStatus.setMaxWidth(Double.MAX_VALUE);
+            VBox section = new VBox(6, styledLabel("执行规划", "tp-section-header"),
+                    planStatus, planDetail.root());
+            section.getStyleClass().add("tp-plan-section");
+            section.setPadding(new Insets(10));
+            sections.getChildren().add(section);
         }
+        String current = hint.length() <= MAX_DETAIL_LENGTH ? hint
+                : "… " + hint.substring(hint.length() - MAX_DETAIL_LENGTH);
+        planStatus.setText(finalPlanStatus == null ? SensitiveDataRedactor.redactText(current)
+                : finalPlanStatus);
         planDetail.appendLine(hint);
+        if (finalPlanStatus != null) planDetail.markHistorical(finalPlanStatus);
     }
 
     void appendSubAgentThinking(String agentName, String thinking) {
@@ -491,6 +524,7 @@ final class ThinkingContentRenderer {
         private final boolean collapsedByDefault;
         private boolean omittedPrefix;
         private String lastLine;
+        private String historicalStatus;
 
         private DetailBlock() {
             this(false);
@@ -514,6 +548,11 @@ final class ThinkingContentRenderer {
         }
 
         VBox root() { return root; }
+
+        void markHistorical(String status) {
+            historicalStatus = status;
+            refresh();
+        }
 
         void displayImages(ChatInlineImageRenderer inlineImages, String original) {
             inlineImages.displayInDetail(original, root, displayedImagePaths);
@@ -561,7 +600,9 @@ final class ThinkingContentRenderer {
 
         private void refresh() {
             String body = SensitiveDataRedactor.redactText(
-                    (omittedPrefix ? "… 前文已省略\n" : "") + content);
+                    (historicalStatus == null ? "" : historicalStatus
+                            + "。以下为运行期间的历史记录：\n")
+                    + (omittedPrefix ? "… 前文已省略\n" : "") + content);
             boolean longBody = body.length() > DETAIL_PREVIEW_LENGTH;
             text.setText(expanded || !longBody ? body
                     : "…" + body.substring(body.length() - DETAIL_PREVIEW_LENGTH));

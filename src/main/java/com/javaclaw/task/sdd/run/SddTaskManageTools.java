@@ -50,12 +50,18 @@ public final class SddTaskManageTools {
         if (desc.isEmpty()) {
             return ToolResponse.error("task_create", "任务描述不能为空");
         }
+        long budget = 0L;
+        try {
+            if (tokenBudget != null && !tokenBudget.isBlank()) budget = Long.parseLong(tokenBudget.trim());
+        } catch (NumberFormatException invalid) {
+            return ToolResponse.error("task_create", "Token 预算必须是非负整数（0 表示不限）");
+        }
+        if (budget < 0) {
+            return ToolResponse.error("task_create", "Token 预算必须是非负整数（0 表示不限）");
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "task_create", "创建长任务：" + desc)) {
             return ToolResponse.error("task_create", "用户取消了创建");
         }
-        long budget = 0L;
-        try { if (tokenBudget != null && !tokenBudget.isBlank()) budget = Math.max(0, Long.parseLong(tokenBudget.trim())); }
-        catch (NumberFormatException ignore) { /* 非法预算视为不限 */ }
         try {
             String resolvedTitle = (title == null || title.isBlank()) ? tasks.generateTitle(desc) : title.trim();
             String stamp = LocalDateTime.now().format(TS);

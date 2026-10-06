@@ -12,12 +12,14 @@ import com.javaclaw.framework.api.TaskCriterionV3;
 import com.javaclaw.framework.api.TaskOutcome;
 import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.framework.spi.FileContentProof;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.net.URI;
@@ -27,6 +29,43 @@ import com.javaclaw.util.ProjectAccessPolicy;
 /** Accepts only trusted tool-boundary receipts that match each contract condition. */
 public final class TaskResultEvaluator {
     private TaskResultEvaluator() { }
+
+    /** Internal cross-package preparation state; never changes receipt identity verification. */
+    public enum DesktopApplicationIdentityStatus {
+        ABSENT, COMPLETE, INCOMPLETE, INVALID, EMPTY, AMBIGUOUS, TRUNCATED
+    }
+
+    public record DesktopApplicationIdentityState(DesktopApplicationIdentityStatus status,
+            String query, int nextOffset, String catalogId, String applicationId,
+            List<String> evidenceRefs) {
+        public DesktopApplicationIdentityState {
+            java.util.Objects.requireNonNull(status);
+            java.util.Objects.requireNonNull(query);
+            java.util.Objects.requireNonNull(catalogId);
+            java.util.Objects.requireNonNull(applicationId);
+            evidenceRefs = List.copyOf(evidenceRefs);
+            if (nextOffset < 0 || query.length() > 512 || applicationId.length() > 256
+                    || !catalogId.isEmpty() && !catalogId.matches("[0-9a-f]{64}")
+                    || evidenceRefs.size() > 16 || evidenceRefs.stream().anyMatch(ref ->
+                        ref.isBlank() || ref.length() > 256)) {
+                throw new IllegalArgumentException("invalid application identity preparation state");
+            }
+        }
+    }
+
+    /** Only the evaluator's own native catalog parser may supply fresh provider preparation. */
+    public static DesktopApplicationIdentityState desktopApplicationIdentityState(
+            List<RunEventEnvelope> events, String runId, String requested, long beforeSequence) {
+        if (events == null || runId == null || runId.isBlank() || requested == null || requested.isBlank()
+                || requested.length() > 512 || beforeSequence <= 0
+                || events.stream().anyMatch(event -> !event.runId().equals(runId))) {
+            return new DesktopApplicationIdentityState(DesktopApplicationIdentityStatus.INVALID,
+                    "", 0, "", "", List.of());
+        }
+        var earlier = events.stream().filter(event -> event.sequence() < beforeSequence).toList();
+        return DesktopApplicationIdentityBindings.fromEvents(earlier)
+                .preparationState(earlier, runId, requested, beforeSequence);
+    }
 
     /** V3 accepts only capabilities registered by the host and exact typed receipts. */
     public static TaskResult evaluateV3(TaskContractV3 contract,
@@ -67,12 +106,12 @@ public final class TaskResultEvaluator {
                                 .isPresent())
                 .toList();
         TaskContractV2 viewContract = desktop.isEmpty() ? null : desktopContract(contract, capabilities);
-        TaskResult view = viewContract == null ? null
-                : evaluateV2(viewContract, desktopEvents, stopReason, capabilities);
-        List<String> reconciledClicks = view == null
+        Set<String> historicalViewIds = historicalDesktopViewIds(contract, capabilities);
+        List<String> reconciledClicks = viewContract == null
                 ? List.of() : verifiedActionEvidence(viewContract, desktopEvents).stream()
                         .map(VerifiedActionEvidence::invocationId).toList();
-        Set<String> linkedEvidence = view == null ? Set.of() : Set.copyOf(view.evidenceRefs());
+        Map<String, String> desktopEvidenceBindings = new LinkedHashMap<>();
+        Map<String, RunEventEnvelope> selectedDesktopReceipts = new LinkedHashMap<>();
         List<String> unmet = new ArrayList<>();
         List<TaskCriterionV3> satisfied = new ArrayList<>();
         LinkedHashMap<String, String> evidenceByCriterion = new LinkedHashMap<>();
@@ -92,15 +131,14 @@ public final class TaskResultEvaluator {
                             payload.path("evidenceRef").asText(""),
                             payload.path("subject").asText(""));
                 }
-                if (receipt != null && matchesV3(criterion, receipt, event, capabilities, identities)) {
-                    if (matched < 0) matched = index;
-                    // A later valid frame must win over an earlier matching receipt
-                    // invalidated by a dispatched action on the same window.
-                    if (!desktop.contains(criterion)
-                            || linkedEvidence.contains(event.payload().path("evidenceRef").asText())) {
-                        matched = index;
-                        break;
-                    }
+                if (receipt != null && matchesV3(criterion, receipt, event, capabilities, identities, events)) {
+                    // Validate this exact ordered candidate against the previously chosen
+                    // desktop receipts, not an independent earlier matching view chain.
+                    if (desktop.contains(criterion) && !linkedDesktopCandidate(
+                            viewContract, criterion, event, desktopEvidenceBindings,
+                            desktopEvents, stopReason, capabilities, historicalViewIds)) continue;
+                    matched = index;
+                    break;
                 }
             }
             if (matched < 0) {
@@ -111,14 +149,26 @@ public final class TaskResultEvaluator {
                 satisfied.add(criterion);
                 evidenceByCriterion.put(criterion.id(),
                         receipts.get(matched).payload().path("evidenceRef").asText());
+                if (desktop.contains(criterion)) {
+                    desktopEvidenceBindings.put(criterion.id(),
+                            receipts.get(matched).payload().path("evidenceRef").asText());
+                    selectedDesktopReceipts.put(criterion.id(), receipts.get(matched));
+                }
             }
         }
-        // Desktop proof has stronger session, frame and post-action conditions than an
-        // individual receipt. Preserve each condition proven by the linked-frame verifier.
-        if (!desktop.isEmpty()) {
+        // An uncertain click also needs the stronger demonstrated-transition proof
+        // from this same selected chain, not a different unbound view chain.
+        if (selectedDesktopReceipts.values().stream().anyMatch(event ->
+                event.payload().path("operation").asText("").equals("click")
+                        && event.payload().path("status").asText("").equals("UNKNOWN"))) {
+            Set<String> boundClicks = verifiedActionEvidence(viewContract, desktopEvents,
+                    desktopEvidenceBindings).stream().map(VerifiedActionEvidence::invocationId)
+                    .collect(java.util.stream.Collectors.toSet());
             for (TaskCriterionV3 criterion : desktop) {
-                String evidenceRef = evidenceByCriterion.get(criterion.id());
-                if (evidenceRef != null && !linkedEvidence.contains(evidenceRef)) {
+                RunEventEnvelope selected = selectedDesktopReceipts.get(criterion.id());
+                if (selected == null || !selected.payload().path("operation").asText("").equals("click")
+                        || !selected.payload().path("status").asText("").equals("UNKNOWN")) continue;
+                if (!boundClicks.contains(selected.payload().path("invocationId").asText(""))) {
                     unmet.add(criterion.description() + " [DESKTOP_POST_ACTION_PROOF]");
                     satisfied.removeIf(value -> value.id().equals(criterion.id()));
                     evidenceByCriterion.remove(criterion.id());
@@ -133,6 +183,66 @@ public final class TaskResultEvaluator {
                 ? "MISSING_TRUSTED_RECEIPT" : stopReason.strip();
         return new TaskResult(completed.isEmpty() ? TaskOutcome.UNVERIFIED : TaskOutcome.PARTIAL,
                 unmet, reason, List.copyOf(evidence), completed);
+    }
+
+    private static boolean linkedDesktopCandidate(TaskContractV2 viewContract,
+            TaskCriterionV3 criterion, RunEventEnvelope candidate,
+            Map<String, String> previousBindings, List<RunEventEnvelope> events,
+            String stopReason, TrustedCapabilityRegistry capabilities,
+            Set<String> historicalViewIds) {
+        String evidenceRef = candidate.payload().path("evidenceRef").asText("");
+        if (viewContract == null || evidenceRef.isBlank()) return false;
+        Map<String, String> bindings = new LinkedHashMap<>(previousBindings);
+        bindings.put(criterion.id(), evidenceRef);
+        // Keep all real events: dispatched inputs and failed/uncertain actions must
+        // continue to invalidate stale frames even when they are not criteria. Keep
+        // future view conditions too, for the existing uncertain-click proof gate.
+        return evaluateV2(viewContract, events, stopReason, capabilities, bindings, historicalViewIds)
+                .evidenceRefs().contains(evidenceRef);
+    }
+
+    /** Only an explicitly ordered V3 input chain can request an earlier view as historical evidence. */
+    private static Set<String> historicalDesktopViewIds(TaskContractV3 contract,
+            TrustedCapabilityRegistry capabilities) {
+        Set<String> historical = new LinkedHashSet<>();
+        List<TaskCriterionV3> criteria = contract.criteria();
+        for (int index = 0; index < criteria.size(); index++) {
+            TaskCriterionV3 view = criteria.get(index);
+            if (!isDesktopView(desktopOperation(view, capabilities))) continue;
+            int lastAction = -1;
+            for (int later = index + 1; later < criteria.size(); later++) {
+                TaskCriterionV3 next = criteria.get(later);
+                if (sameDeclaredDesktopTarget(view, next)
+                        && isDesktopAction(desktopOperation(next, capabilities))) lastAction = later;
+            }
+            if (lastAction < 0) continue;
+            for (int later = lastAction + 1; later < criteria.size(); later++) {
+                TaskCriterionV3 finalView = criteria.get(later);
+                if (sameDeclaredDesktopTarget(view, finalView)
+                        && isDesktopView(desktopOperation(finalView, capabilities))) {
+                    historical.add(view.id());
+                    break;
+                }
+            }
+        }
+        return Set.copyOf(historical);
+    }
+
+    private static String desktopOperation(TaskCriterionV3 criterion,
+            TrustedCapabilityRegistry capabilities) {
+        return capabilities.find(criterion.capabilityId())
+                .filter(descriptor -> descriptor.verifierPolicy()
+                        == TrustedCapabilityRegistry.VerifierPolicy.DESKTOP_LINKED_FRAME)
+                .map(descriptor -> normalized(descriptor.operation())).orElse("");
+    }
+
+    private static boolean sameDeclaredDesktopTarget(TaskCriterionV3 first, TaskCriterionV3 second) {
+        return first.targetType() == second.targetType()
+                && normalized(first.target()).equals(normalized(second.target()));
+    }
+
+    private static boolean isDesktopView(String operation) {
+        return operation.equals("observe") || operation.equals("snapshot");
     }
 
     public static TaskContractV2 desktopContract(TaskContractV3 contract,
@@ -153,7 +263,7 @@ public final class TaskResultEvaluator {
 
     private static boolean matchesV3(TaskCriterionV3 criterion, Receipt receipt,
             RunEventEnvelope event, TrustedCapabilityRegistry capabilities,
-            DesktopApplicationIdentityBindings identities) {
+            DesktopApplicationIdentityBindings identities, List<RunEventEnvelope> events) {
         var descriptor = capabilities.find(criterion.capabilityId()).orElse(null);
         var actual = capabilities.forReceipt(event.payload().path("tool").asText(""),
                 event.payload().path("operation").asText("")).orElse(null);
@@ -162,11 +272,9 @@ public final class TaskResultEvaluator {
                         descriptor.targetKind().name())
                 || !CapabilityTargetMatcher.matches(capabilities, descriptor,
                         criterion.target(), event, identities)
-                || (!criterion.requiredSubject().isBlank()
-                        && !criterion.requiredSubject().equalsIgnoreCase(receipt.subject())
-                        && !(criterion.capabilityId().equals("desktop.observe")
-                                && DesktopConditionProof.matches(criterion.id(),
-                                        criterion.requiredSubject(), receipt.metadata())))) return false;
+                || (DesktopDiscoveryEvidence.supports(criterion.capabilityId())
+                        ? !DesktopDiscoveryEvidence.matches(criterion, event, events)
+                        : !subjectMatchesV3(criterion, receipt))) return false;
         try {
             EffectReceiptV1.Status status = EffectReceiptV1.Status.valueOf(receipt.status());
             return TrustedCapabilityRegistry.rank(status)
@@ -174,6 +282,23 @@ public final class TaskResultEvaluator {
                     && TrustedCapabilityRegistry.rank(descriptor.evidenceCeiling())
                     >= TrustedCapabilityRegistry.rank(criterion.requiredEvidence());
         } catch (IllegalArgumentException invalid) { return false; }
+    }
+
+    private static boolean subjectMatchesV3(TaskCriterionV3 criterion, Receipt receipt) {
+        if (criterion.capabilityId().equals("mcp.secure_input.cancel")) {
+            return !criterion.requiredSubject().isBlank()
+                    && criterion.requiredSubject().equals(receipt.subject());
+        }
+        if (criterion.requiredSubject().isBlank()) return true;
+        if (criterion.capabilityId().equals("file.write")
+                || criterion.capabilityId().equals("file.read")) {
+            // File content is case-sensitive and must come from the host's actual observation.
+            return FileContentProof.matches(criterion.requiredSubject(), receipt.metadata());
+        }
+        return criterion.requiredSubject().equalsIgnoreCase(receipt.subject())
+                || (criterion.capabilityId().equals("desktop.observe")
+                        && DesktopConditionProof.matches(criterion.id(),
+                                criterion.requiredSubject(), receipt.metadata()));
     }
 
     /** A model proposal can gate completion, but cannot create evidence. */
@@ -256,6 +381,19 @@ public final class TaskResultEvaluator {
     private static TaskResult evaluateV2(TaskContractV2 contract,
             List<RunEventEnvelope> events, String stopReason,
             TrustedCapabilityRegistry capabilities) {
+        return evaluateV2(contract, events, stopReason, capabilities, null);
+    }
+
+    private static TaskResult evaluateV2(TaskContractV2 contract,
+            List<RunEventEnvelope> events, String stopReason,
+            TrustedCapabilityRegistry capabilities, Map<String, String> evidenceBindings) {
+        return evaluateV2(contract, events, stopReason, capabilities, evidenceBindings, Set.of());
+    }
+
+    private static TaskResult evaluateV2(TaskContractV2 contract,
+            List<RunEventEnvelope> events, String stopReason,
+            TrustedCapabilityRegistry capabilities, Map<String, String> evidenceBindings,
+            Set<String> historicalViewIds) {
         if (contract == null) return TaskResult.unverified("TASK_CONTRACT_MISSING");
         if (!contract.applicable()) {
             if (events.stream().anyMatch(event -> isBusinessToolStart(
@@ -305,6 +443,8 @@ public final class TaskResultEvaluator {
             int foundBaseline = -1;
             for (int index = matched + 1; index < receipts.size(); index++) {
                 RunEventEnvelope event = receipts.get(index);
+                if (evidenceBindings != null && !event.payload().path("evidenceRef").asText("")
+                        .equals(evidenceBindings.get(criterion.id()))) continue;
                 Receipt current = receipt(event).orElse(null);
                 if (current == null && criterion.requiredOperation().equalsIgnoreCase("click")
                         && criterion.requiredEvidence().equals("ACCEPTED")
@@ -351,8 +491,9 @@ public final class TaskResultEvaluator {
                                 || !freshAfterActions(receipts, openedAt, index, session, targetId,
                                         metadata, !criterion.requiredSubject().isBlank())) continue;
                     }
-                    // A later action on this exact window invalidates a prior view result.
-                    if (laterDesktopAction(receipts, index,
+                    // Final views remain current; an explicitly earlier V3 view records
+                    // its own frame, while later criteria still require their real receipts.
+                    if (!historicalViewIds.contains(criterion.id()) && laterDesktopAction(receipts, index,
                             metadata.path("sessionId").asText(""),
                             metadata.path("targetId").asText(""))) continue;
                 } else if (isDesktopAction(operation)) {
@@ -571,8 +712,15 @@ public final class TaskResultEvaluator {
      */
     public static List<VerifiedActionEvidence> verifiedActionEvidence(
             TaskContractV2 contract, List<RunEventEnvelope> events) {
+        return verifiedActionEvidence(contract, events, null);
+    }
+
+    private static List<VerifiedActionEvidence> verifiedActionEvidence(
+            TaskContractV2 contract, List<RunEventEnvelope> events,
+            Map<String, String> evidenceBindings) {
         if (contract == null) return List.of();
-        TaskResult result = evaluateV2(contract, events, "");
+        TaskResult result = evaluateV2(contract, events, "",
+                TrustedCapabilityRegistry.builtins(), evidenceBindings);
         if (result.outcome() != TaskOutcome.VERIFIED_COMPLETE) {
             return List.of();
         }
@@ -769,7 +917,22 @@ public final class TaskResultEvaluator {
                                        com.fasterxml.jackson.databind.JsonNode payload) {
         if (!"core.tool.started".equals(type) || !"framework.core".equals(producer)) return false;
         return payload == null || (!payload.path("trustedContextRead").asBoolean(false)
-                && !payload.path("trustedToolCatalog").asBoolean(false));
+                && !payload.path("trustedToolCatalog").asBoolean(false)
+                && !isKnowledgeAnswerRead(payload));
+    }
+
+    /** Exact host KB reads supply answer material, without relaxing declared host criteria. */
+    private static boolean isKnowledgeAnswerRead(com.fasterxml.jackson.databind.JsonNode payload) {
+        if (!payload.path("trustedDesktopTool").isBoolean()
+                || !payload.path("trustedDesktopTool").booleanValue()
+                || !payload.path("idempotent").isBoolean()
+                || !payload.path("idempotent").booleanValue()
+                || !com.javaclaw.framework.spi.ToolEffectPolicy.LEGACY.name().equals(
+                        payload.path("effectPolicy").asText(""))) return false;
+        String name = payload.path("tool").asText("");
+        return com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
+                name, com.javaclaw.agent.expert.KnowledgeExpert.class)
+                && com.javaclaw.agent.ToolRiskRegistry.isKnownHostReadOnly(name);
     }
 
     /** Uses the durable contract, including revisions explicitly triggered by human clarification. */

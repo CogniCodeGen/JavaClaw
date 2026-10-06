@@ -4,15 +4,19 @@ import com.javaclaw.framework.core.RunUsageLedger;
 import com.javaclaw.framework.core.ReasoningRequest;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.MessageAggregator;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.Objects;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -121,8 +125,92 @@ final class SpringAiMeteredChatModel implements ChatModel {
 
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
-        validate(prompt);
-        return delegate.stream(prompt);
+        return Flux.create(sink -> {
+            com.javaclaw.framework.api.StepId step = null;
+            DecisionReplyStream reply = null;
+            boolean settled = false;
+            Throwable streamFailure = null;
+            CompletableFuture<Void> stopped = new CompletableFuture<>();
+            AtomicReference<DecisionReplyStream> displayRef = new AtomicReference<>();
+            var registration = request.control().onCancel(() -> stopped.complete(null));
+            sink.onCancel(() -> {
+                stopped.complete(null);
+                DecisionReplyStream display = displayRef.get();
+                if (display != null) display.close();
+            });
+            // ModelCall owns a ReentrantLock: acquisition, budget check, settlement and release
+            // stay on this subscription's carrier. Raw SDK draft events still arrive immediately.
+            try (var admitted = admission.get()) {
+                try {
+                    cancelled.run();
+                    validate(prompt);
+                    admitted.requireInputCapacity(ModelInputBudgetPreflight.approximatePromptFloor(prompt));
+                    step = journal.started(prompt, attempt.get(), boundary.toolCandidateStepId());
+                    if (DecisionReplyStream.eligible(request, delegate)) {
+                        reply = new DecisionReplyStream(request, step, journal.json());
+                        displayRef.set(reply);
+                    }
+                    Flux<ChatResponse> source = reply == null ? delegate.stream(prompt)
+                            : ((ReplyStreamingChatModel) delegate).stream(prompt, reply);
+                    AtomicReference<ChatResponse> aggregate = new AtomicReference<>();
+                    new MessageAggregator().aggregate(source.takeUntilOther(Mono.fromFuture(stopped)), aggregate::set)
+                            .doOnNext(value -> { cancelled.run(); if (!sink.isCancelled()) sink.next(value); })
+                            .blockLast();
+                    cancelled.run();
+                    if (sink.isCancelled()) throw new java.util.concurrent.CancellationException(
+                            "model stream subscription cancelled");
+                    ChatResponse response = aggregate.get();
+                    if (response == null) throw new IllegalStateException("model returned no response");
+                    RuntimeException journalFailure = completeJournal(step, response);
+                    settled = true;
+                    try {
+                        meter.accept(response);
+                    } catch (RuntimeException failure) {
+                        if (journalFailure != null) failure.addSuppressed(journalFailure);
+                        throw failure;
+                    }
+                    if (journalFailure != null) throw journalFailure;
+                    if (reply != null) reply.complete(response);
+                } catch (Throwable failure) {
+                    streamFailure = failStreamingCall(step, reply, settled, failure);
+                }
+            } catch (Throwable failure) {
+                if (streamFailure != null && failure != streamFailure) failure.addSuppressed(streamFailure);
+                streamFailure = failure;
+            } finally {
+                try {
+                    if (reply != null) reply.close();
+                } catch (Throwable closeFailure) {
+                    if (streamFailure != null) streamFailure.addSuppressed(closeFailure);
+                    else streamFailure = closeFailure;
+                } finally {
+                    registration.close();
+                }
+            }
+            // Completion, hence downstream guarded tool execution, follows durable settlement.
+            if (streamFailure != null) sink.error(streamFailure);
+            else sink.complete();
+        });
+    }
+
+    private Throwable failStreamingCall(com.javaclaw.framework.api.StepId step,
+                                       DecisionReplyStream reply, boolean settled, Throwable failure) {
+        if (reply != null) {
+            try { reply.invalidate(); }
+            catch (RuntimeException displayFailure) { failure.addSuppressed(displayFailure); }
+        }
+        if (step == null || settled) return failure;
+        RuntimeException runtime = failure instanceof RuntimeException value ? value
+                : new IllegalStateException("model stream failed", failure);
+        failJournal(step, runtime);
+        if (failure instanceof ManagedInferenceChatModel.ManagedInferenceModelException managed) {
+            try { failureMeter.accept(managed); }
+            catch (RuntimeException meteringFailure) {
+                meteringFailure.addSuppressed(failure);
+                return meteringFailure;
+            }
+        }
+        return failure;
     }
 
     private void validate(Prompt prompt) {

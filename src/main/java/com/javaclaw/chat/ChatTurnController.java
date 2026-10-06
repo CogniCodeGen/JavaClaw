@@ -78,6 +78,7 @@ final class ChatTurnController {
     private int generation;
     private boolean streamingActive;
     private ChatSession streamingSession;
+    private String streamingWorkspaceId;
     private ChatActiveTurn activeTurn;
 
     ChatTurnController(
@@ -206,6 +207,8 @@ final class ChatTurnController {
         composer.clearAttachments();
         setInputEnabled(false);
         streamingSession = session;
+        streamingWorkspaceId = status.workspaceId();
+        status.beginTurn(streamingWorkspaceId, session);
         composer.setThinkingVisible(false);
         int turnGeneration = ++generation;
         ChatActiveTurn turn = new ChatActiveTurn(turnGeneration, targetModeId);
@@ -283,7 +286,7 @@ final class ChatTurnController {
                     plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
             case ConversationOutcome.Completed completed -> outcomes.complete(
                     plan, target, metrics, completed.taskResult(),
-                    () -> finishUi(turn, CompletionKind.SUCCEEDED));
+                    () -> finishUi(turn, CompletionKind.SUCCEEDED, completed.taskResult()));
             case ConversationOutcome.Cancelled value -> {
                 if (turn != null) turn.deliveryState = DeliveryState.CANCELLED;
                 outcomes.cancel(value, plan, target, metrics,
@@ -298,11 +301,16 @@ final class ChatTurnController {
     }
 
     private void finishUi(ChatActiveTurn turn, CompletionKind kind) {
+        finishUi(turn, kind, null);
+    }
+
+    private void finishUi(ChatActiveTurn turn, CompletionKind kind,
+            com.javaclaw.framework.api.TaskResult taskResult) {
         generation++;
         DeliveryState state = turn == null ? DeliveryState.COMPLETE : turn.deliveryState;
         renderer.clear(turn == null ? TurnMetrics.ZERO : turn.metrics(), state);
         switch (kind) {
-            case SUCCEEDED -> thinking.endStream();
+            case SUCCEEDED -> thinking.endStream(taskResult);
             case FAILED -> { }
             case CANCELLED -> thinking.endStreamCancelled();
         }
@@ -310,7 +318,9 @@ final class ChatTurnController {
         composer.setThinkingText("助手正在思考中...");
         setInputEnabled(true);
         ChatSession finished = streamingSession;
+        status.finishTurn(streamingWorkspaceId, finished);
         streamingSession = null;
+        streamingWorkspaceId = null;
         activeTurn = null;
         host.finishBackgroundStream(finished);
         composer.focusInput();
@@ -322,7 +332,9 @@ final class ChatTurnController {
             generation++;
             ChatActiveTurn turn = activeTurn;
             activeTurn = null;
+            status.finishTurn(streamingWorkspaceId, streamingSession);
             streamingSession = null;
+            streamingWorkspaceId = null;
             AssistantMessageView abandoned = renderer.abandon(
                     turn == null ? TurnMetrics.ZERO : turn.metrics(), DeliveryState.CANCELLED);
             host.disposeSuspendedStreamNodes();
@@ -365,6 +377,9 @@ final class ChatTurnController {
         if (turn == null) return;
         turn.inputTokens += Math.max(0, usage.inputTokens());
         turn.outputTokens += Math.max(0, usage.outputTokens());
+        // The runner emits deduplicated primary/auxiliary deltas; never re-add final TurnMetrics.
+        status.recordUsage(streamingWorkspaceId, streamingSession,
+                usage.inputTokens(), usage.outputTokens());
         double cost = PricingTable.estimateCostCny(
                 status.modelName(), turn.inputTokens, turn.outputTokens);
         thinking.updateMetrics(turn.inputTokens, turn.outputTokens,

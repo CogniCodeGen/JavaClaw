@@ -1,6 +1,7 @@
 package com.javaclaw.infrastructure.knowledge;
 
 import com.javaclaw.agent.expert.KnowledgeExpert;
+import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.Document;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.Health;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.HealthListener;
@@ -9,6 +10,7 @@ import com.javaclaw.application.knowledge.KnowledgeApplicationService.Scope;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.SearchHit;
 import com.javaclaw.application.knowledge.KnowledgePort;
 import com.javaclaw.memory.embed.EmbeddingHealthSnapshot;
+import com.javaclaw.util.ProjectAccessPolicy;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -55,6 +57,12 @@ public final class KnowledgeExpertAdapter implements KnowledgePort {
 
     @Override
     public boolean importFile(Path file, Scope scope) {
+        try {
+            ProjectAccessPolicy.resolveProjectPath(file.toString());
+        } catch (SecurityException denied) {
+            throw new ValidationException(
+                    "文件访问被当前项目安全策略拒绝，请将文件放入当前项目目录后重新选择");
+        }
         try (var capture = com.javaclaw.framework.spi.ToolEffectCapture.begin(
                 "knowledge_import_file")) {
             expert.importFile(file.toString(), expertScope(scope));

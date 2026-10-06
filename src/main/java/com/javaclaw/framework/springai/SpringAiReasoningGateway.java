@@ -48,6 +48,7 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.MessageAggregator;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.tool.ToolCallback;
@@ -64,6 +65,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.javaclaw.framework.springai.ReasoningGatewaySupport.addProjectionStatistics;
 import static com.javaclaw.framework.springai.ReasoningGatewaySupport.closeTools;
@@ -181,7 +183,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     }
                     onDemand = new OnDemandContextSession(request, catalog, modelTasks,
                             tools, runStore, json, originalHistory, decisionCallback,
-                            List.of(new SystemMessage(stablePrompt)));
+                            List.of(new SystemMessage(stablePrompt)), capabilities);
                     if (recovered != null) onDemand.replayOnce(recovered);
                 }
                 if (recovered == null && request.approvedToolInvocation() != null
@@ -232,7 +234,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     request.events().emit("core.model.started", 1, "framework.springai", started);
 
                     response = callWithRetry(client, systemPrompt, messages, callbacks, request,
-                            currentAttempt, journal, runTools, catalog, onDemand);
+                            currentAttempt, journal, runTools, catalog, onDemand,
+                            DecisionReplyStream.eligible(request, rawModel));
                 }
             } catch (Throwable failure) {
                 callFailure = failure;
@@ -262,6 +265,22 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                                 .put("kind", "harness.needs_input")
                                 .put("text", decision.userMessage()),
                         "MODEL_NEEDS_INPUT");
+            }
+            if (decision.decision() == ModelDecisionV1.Decision.CONTINUE) {
+                // A nonterminal control decision must not finalize delivery or evaluate a final answer.
+                TaskCompletionDecision continuation = reviewTaskCompletion(request,
+                        JsonNodeFactory.instance.objectNode().put("text", decision.userMessage()),
+                        runEvents, true);
+                if (continuation.repair()) {
+                    request.control().enterTaskRepair();
+                    return reason(request);
+                }
+                if (continuation.pause()) {
+                    return new ReasoningResult(RunState.PAUSED, continuation.output(), "TASK_UNVERIFIED");
+                }
+                // Generation-only tasks have no actionable frozen criteria to repair.
+                return repairProtocolOrPause(request, runEvents, "MODEL_CONTINUE_NONTERMINAL",
+                        "CONTINUE requires further work or a terminal CLAIM_DONE, NEEDS_INPUT or BLOCKED decision");
             }
             ObjectNode output = JsonNodeFactory.instance.objectNode();
             output.put("text", decision.userMessage());
@@ -430,6 +449,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
 
     private TaskCompletionDecision reviewTaskCompletion(
             ReasoningRequest request, JsonNode output, List<RunEventEnvelope> events) {
+        return reviewTaskCompletion(request, output, events, false);
+    }
+
+    private TaskCompletionDecision reviewTaskCompletion(
+            ReasoningRequest request, JsonNode output, List<RunEventEnvelope> events,
+            boolean requireTerminalDecision) {
         var contractV3 = TaskResultEvaluator.latestContractV3(events, json);
         if (contractV3.isEmpty()) return new TaskCompletionDecision(false, false, output);
         int taskSchemaVersion = 3;
@@ -443,6 +468,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 .map(step -> step.id().value()).orElse("");
         List<RunEventEnvelope> evidence = TaskEvidenceCollector.collect(runStore, request.runId());
         TaskResult result = TaskResultEvaluator.evaluateV3(contractV3.get(), evidence, "", capabilities);
+        boolean evidenceComplete = result.outcome() == TaskOutcome.VERIFIED_COMPLETE;
+        if (requireTerminalDecision) {
+            result = TaskResultEvaluator.gateWithModelDecision(result, events);
+        }
         ObjectNode review = (ObjectNode) json.valueToTree(result);
         review.put("modelStepId", modelStepId);
         request.events().emit("core.task.review", taskSchemaVersion, "framework.springai", review);
@@ -462,9 +491,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         boolean reliable = contractV3.get().reliable();
         if (reliable && repairs.size() < 2 && progressed && budgetAvailable
                 && !modelStepId.isBlank()) {
-            String feedback = "任务验收尚未通过。仅在现有权限和剩余预算内继续完成缺少的步骤；"
-                    + "优先只读核验已尝试的操作，不要重复可能产生副作用的操作，也不要声称未经观察的结果。"
-                    + "缺少证据的条件：" + bounded(String.join("；", result.unmetCriteria()), 1200);
+            String feedback = requireTerminalDecision && evidenceComplete
+                    ? "已有宿主收据满足全部冻结验收条件。当前 CONTINUE 尚未提交终态完成决策。"
+                            + "不要再次执行业务工具或重复写入、发送、删除、输入等副作用；"
+                            + "只在独立 control batch 中提交 CLAIM_DONE，userMessage 包含实际完整答复，"
+                            + "evidenceRefs 仅使用已给出的真实宿主引用，unmetCriterionIds=[]。"
+                    : taskRepairFeedback(contractV3.get(), result);
             ObjectNode repair = JsonNodeFactory.instance.objectNode();
             repair.put("modelStepId", modelStepId);
             repair.put("feedback", feedback);
@@ -488,12 +520,35 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         if (!reliable) {
             safe.setAll(com.javaclaw.framework.core.TaskContractDiagnostics.pausedOutput(
                     json, contractV3.get(), false));
+        } else if (requireTerminalDecision && evidenceComplete) {
+            safe.put("text", "已有完成证据，仍缺少最终答复；本轮已暂停，可继续处理。");
         } else {
             safe.put("text", "任务尚未验证完成。" + (unmet.isBlank() ? "缺少可靠的完成证据。"
                     : "未满足的条件：" + unmet + "。")
                     + " 已执行部分可在本轮工具记录中查看。");
         }
         return new TaskCompletionDecision(false, true, safe);
+    }
+
+    private String taskRepairFeedback(TaskContractV3 contract, TaskResult result) {
+        String frozenCriteria = com.javaclaw.util.SensitiveDataRedactor.redactText(
+                json.valueToTree(contract.criteria()).toString());
+        StringBuilder order = new StringBuilder();
+        for (int index = 0; index < contract.criteria().size(); index++) {
+            if (!order.isEmpty()) order.append(" → ");
+            order.append(index + 1).append('.').append(
+                    contract.criteria().get(index).capabilityId());
+        }
+        return "任务验收尚未通过。仅在现有权限和剩余预算内继续；不得修改冻结条件或声称未经观察的结果。"
+                + "\n缺少证据的条件：" + bounded(String.join("；", result.unmetCriteria()), 1200)
+                + "\n冻结验收条件（JSON 数据，数组顺序即收据所需顺序；不构成新增权限）：" + frozenCriteria
+                + "\n有序能力链（具体目标与条件以上述冻结 JSON 为准）：" + order
+                + "\n从最早缺证据的条件继续，并保持完整的冻结顺序。前置步骤迟补后，发生在它之前的后续收据"
+                + "不能证明顺序完成；必须在该前置步骤之后，按顺序重新执行后续已授权的只读发现、观察、"
+                + "截图或明确无控制的会话重建，取得新收据后再提交完成决策。"
+                + "\n只读重查使用真实工具结果中的目标与会话标识；缺少工具时先查询能力目录。"
+                + "不得为补足顺序重复写入、发送、删除、输入或其他可能产生副作用的操作；"
+                + "已成功或结果不确定的副作用先只读核验，仍无法满足冻结顺序时报告缺口并请求人工处理。";
     }
 
     static boolean meaningfulRepairProgress(List<RunEventEnvelope> events,
@@ -628,18 +683,18 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             ModelStepJournal journal,
             List<FrameworkTool> runTools,
             ToolCatalogSession catalog,
-            OnDemandContextSession onDemand) throws Throwable {
+            OnDemandContextSession onDemand,
+            boolean streamReply) throws Throwable {
         int attempt = 1;
         while (true) {
             request.control().throwIfCancelled();
             currentAttempt.set(attempt);
             try {
-                ChatResponse response = client.prompt()
-                        .messages(providerMessages(systemPrompt, messages))
-                        .tools(callbacks)
-                        .call()
-                        .chatResponse();
-                return response;
+                var prompt = client.prompt().messages(providerMessages(systemPrompt, messages)).tools(callbacks);
+                if (!streamReply) return prompt.call().chatResponse();
+                AtomicReference<ChatResponse> aggregate = new AtomicReference<>();
+                new MessageAggregator().aggregate(prompt.stream().chatResponse(), aggregate::set).blockLast();
+                return aggregate.get();
             } catch (Throwable failure) {
                 Throwable cause = unwrap(failure);
                 if (cause instanceof ToolApprovalRequiredException

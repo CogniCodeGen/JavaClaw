@@ -3,6 +3,7 @@ package com.javaclaw.framework.core;
 import com.javaclaw.framework.spi.CancellableTask;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
 import com.javaclaw.framework.spi.CancellationToken;
+import com.javaclaw.framework.spi.ReadOnlyTaskTimeoutException;
 
 import java.time.Duration;
 import java.util.Objects;
@@ -10,7 +11,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Converts the cancellable-task port into stages that settle only after real termination. */
@@ -52,7 +52,7 @@ public final class CancellableTaskStages {
         deadline.orTimeout(Math.max(1, timeout.toNanos()), TimeUnit.NANOSECONDS)
                 .whenComplete((ignored, failure) -> {
                     if (failure != null) Thread.startVirtualThread(() -> result.fail(
-                            new TimeoutException("只读任务超时: " + name + " (" + timeout + ")")));
+                            new ReadOnlyTaskTimeoutException("只读任务超时: " + name + " (" + timeout + ")")));
                 });
         CancellationToken.CancellationRegistration registration = cancellation.onCancel(() ->
                 result.fail(new com.javaclaw.framework.spi.RunCancelledException()));

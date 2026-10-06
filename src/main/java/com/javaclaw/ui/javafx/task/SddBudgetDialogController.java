@@ -18,6 +18,7 @@ public final class SddBudgetDialogController {
 
     public void configure(Task task, Runnable close) {
         this.close = close == null ? () -> { } : close;
+        result = OptionalLong.empty();
         usageLabel.setText("已用 " + task.totalTokens() + "（⬆ " + task.totalInputTokens()
                 + " + ⬇ " + task.totalOutputTokens() + "）。填 0 表示不限制。");
         budgetField.setText(String.valueOf(task.tokenBudget()));
@@ -29,7 +30,9 @@ public final class SddBudgetDialogController {
     @FXML
     private void saveRequested() {
         try {
-            result = OptionalLong.of(Math.max(0, Long.parseLong(budgetField.getText().strip())));
+            long budget = Long.parseLong(budgetField.getText().strip());
+            if (budget < 0) throw new IllegalArgumentException("negative token budget");
+            result = OptionalLong.of(budget);
             close.run();
         } catch (RuntimeException failure) {
             errorLabel.setText("请输入非负整数");

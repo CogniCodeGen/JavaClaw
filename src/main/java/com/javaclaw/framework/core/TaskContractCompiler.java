@@ -17,6 +17,7 @@ import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.framework.spi.RunCancelledException;
 import com.javaclaw.util.ProjectAccessPolicy;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,17 +29,46 @@ public final class TaskContractCompiler {
     public static final String ATTRIBUTE = "framework.taskContract";
     public static final String ORIGINAL_REQUEST_ATTRIBUTE = "framework.taskOriginalRequest";
     public static final String RESOLVED_REQUEST_ATTRIBUTE = "framework.taskResolvedRequest";
-    // Give both bounded attempts a useful response window. The shared ceiling and
-    // the owner's deadline still apply, so repair cannot restart the turn budget.
-    private static final Duration MAX_PLANNING_TIME = Duration.ofSeconds(30);
+    // Keep the LIGHT first attempt short, while allowing the sole NORMAL repair
+    // its own reasoning window. Both consume one shared ceiling and the owner's
+    // remaining deadline; a repair never restarts the turn budget.
+    private static final Duration MAX_PLANNING_TIME = Duration.ofSeconds(75);
     private static final Duration MAX_PLANNING_ATTEMPT_TIME = Duration.ofSeconds(15);
+    private static final Duration MAX_PLANNING_REPAIR_TIME = Duration.ofSeconds(60);
     private static final int MAX_HISTORY_MESSAGES = 8;
     private static final int MAX_HISTORY_MESSAGE_CHARACTERS = 2_000;
     private static final String DESKTOP_SUBJECT_INSTRUCTION =
             "desktop.launch and desktop.open prove only launch admission or session establishment; "
-                    + "their requiredSubject must be an empty string. Put requested window content "
+                    + "desktop.snapshot proves only this owned frame was captured and saved, never "
+                    + "its logical window content. All three capabilities require an empty "
+                    + "requiredSubject. Put requested window content "
                     + "in a separate desktop.observe criterion for the same application with a "
                     + "nonblank requiredSubject. ";
+    private static final String FILE_TARGET_INSTRUCTION =
+            "For FILE criteria, filePaths is the trusted host path context. Relative targets "
+                    + "resolve against filePaths.workingDirectory, not projectRoot. Prefer the "
+                    + "exact requested filename relative to that directory or its correctly "
+                    + "resolved absolute path. Copy every directory, date digit and filename "
+                    + "without rewriting or guessing. A target outside an explicit workingDirectory "
+                    + "must be an exact file path supplied by human input; projectRoot containment "
+                    + "alone does not ground it in the requested task. Copy requested content in "
+                    + "requiredSubject with its actual characters and line breaks; JSON-escape once, "
+                    + "so parsing restores real line breaks rather than literal backslash+n, unless "
+                    + "the human explicitly requested those literal characters. ";
+    private static final String KNOWLEDGE_ANSWER_INSTRUCTION =
+            "The acceptance capability catalog lists receipt-verifiable outcomes, not every executable tool. "
+                    + "The exact host knowledge_search and knowledge_list identities declare idempotent "
+                    + "tool.read contracts for answer material. If the goal is only to read existing knowledge "
+                    + "and return an answer, including explicitly choosing either tool, return applicable=false, "
+                    + "intentStatus=RESOLVED, criteria=[], reasonCodes=[], and unresolvedInputs=[]. Their names "
+                    + "are not capability IDs. Do not invent a knowledge receipt criterion or a missing-capability "
+                    + "diagnostic merely because those names are absent from this acceptance catalog. Current "
+                    + "Run authorization, tool availability, document scope and retrieved facts remain unobserved; "
+                    + "runtime tool discovery and execution must check them and report actual failures. This "
+                    + "rule does not cover knowledge import, modification, deletion or clearing, real file "
+                    + "operations, external actions or live application observations. Those requested outcomes "
+                    + "still require applicable=true and the supplied supported acceptance criteria, even when "
+                    + "combined with a knowledge question. Answer prose cannot prove those outcomes. ";
     private final ModelTaskGateway models;
     private final ObjectMapper json;
     private final TrustedCapabilityRegistry capabilities;
@@ -79,7 +109,7 @@ public final class TaskContractCompiler {
         if (models == null) return TaskContractV3.unknown(original, "MODEL_GATEWAY_UNAVAILABLE");
         if (managedCoordinator(request)) return TaskContractV3.unknown(original, "MANAGED_COORDINATOR");
         long started = System.nanoTime();
-        Duration timeout = remainingPlanningTime(started, cancellation);
+        Duration timeout = remainingPlanningTime(started, cancellation, MAX_PLANNING_ATTEMPT_TIME);
         if (timeout.isZero() || timeout.isNegative())
             return TaskContractV3.unknown(original, "PLANNING_BUDGET_EXHAUSTED");
         ObjectNode input = planningInput(request, original);
@@ -102,7 +132,7 @@ public final class TaskContractCompiler {
                     planningFailureCode(failure, false));
         }
         if (contract.reliable() || needsHuman(contract)) return contract;
-        timeout = remainingPlanningTime(started, cancellation);
+        timeout = remainingPlanningTime(started, cancellation, MAX_PLANNING_REPAIR_TIME);
         if (timeout.isZero() || timeout.isNegative())
             return diagnostic(contract, "PLANNING_BUDGET_EXHAUSTED");
         ObjectNode repair = input.deepCopy();
@@ -112,7 +142,13 @@ public final class TaskContractCompiler {
         repair.put("repairInstruction", "This is the single read-only contract repair attempt. "
                 + "Replan from the human request and supplied host catalog, correcting the previous "
                 + "plan's validation failures. No tool has run and no effect or application state "
-                + "has been observed. Do not invent authorization, targets, or success. If the "
+                + "has been observed. Do not invent authorization, targets, or success. For pure "
+                + "response generation, return applicable=false, intentStatus=RESOLVED, criteria=[], "
+                + "reasonCodes=[], and unresolvedInputs=[]. " + knowledgeAnswerInstruction()
+                + "A filename or path requested as quoted "
+                + "answer content or an example is not a real file target. Non-error explanations "
+                + "such as NO_ACTION_REQUIRED must not appear in reasonCodes. If actual host actions "
+                + "or live observations are requested, preserve their capability/evidence criteria. If the "
                 + "human request has enough information to define observable acceptance criteria, "
                 + "return intentStatus=RESOLVED; discovery can resolve an explicitly named application's "
                 + "identity later. Reclassify login status, the existing session, the current account "
@@ -123,7 +159,7 @@ public final class TaskContractCompiler {
                 + "user asks for a particular account but does not identify it, or a needed decision "
                 + "or authorization is actually absent, preserve that ambiguity. Every desktop.observe "
                 + "criterion must specify the requested logical content in requiredSubject. "
-                + DESKTOP_SUBJECT_INSTRUCTION + "If human "
+                + DESKTOP_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "If human "
                 + "information is still missing, return intentStatus=NEEDS_HUMAN with specific "
                 + "reasonCodes and unresolvedInputs. Write each unresolvedInputs item as a specific "
                 + "clarification question in the human request's language. If required capabilities are absent, return "
@@ -148,6 +184,15 @@ public final class TaskContractCompiler {
         }
     }
 
+    /** Describes registered host identities only; never asserts current Run availability. */
+    private static String knowledgeAnswerInstruction() {
+        boolean declaredReads = List.of("knowledge_search", "knowledge_list").stream()
+                .allMatch(name -> com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
+                        name, com.javaclaw.agent.expert.KnowledgeExpert.class)
+                        && com.javaclaw.agent.ToolRiskRegistry.isKnownHostReadOnly(name));
+        return declaredReads ? KNOWLEDGE_ANSWER_INSTRUCTION : "";
+    }
+
     private ObjectNode planningInput(RunRequest request, String original) {
         ObjectNode input = json.createObjectNode();
         input.put("request", original);
@@ -156,6 +201,17 @@ public final class TaskContractCompiler {
         humanHistory(request).forEach(history::add);
         input.put("originalRequestExplicit", hasExplicitOriginalRequest(request));
         input.set("capabilities", capabilities.planningCatalog());
+        ObjectNode filePaths = input.putObject("filePaths");
+        String directory = workDirectory(request);
+        filePaths.put("projectRoot", ProjectAccessPolicy.projectRoot().toString());
+        filePaths.put("workingDirectoryExplicit", !directory.isBlank());
+        try {
+            filePaths.put("workingDirectory", ProjectAccessPolicy.withWorkingDirectory(directory,
+                    () -> ProjectAccessPolicy.workingDirectory().toString()));
+            filePaths.put("status", "VALID");
+        } catch (Exception invalidDirectory) {
+            filePaths.put("status", "INVALID_WORKING_DIRECTORY");
+        }
         ObjectNode policy = input.putObject("planningPolicy");
         policy.putArray("humanClarificationRequired")
                 .add("An unspecified application, requested content, or requested outcome")
@@ -173,8 +229,10 @@ public final class TaskContractCompiler {
         policy.put("unresolvedInputsMeaning", "Human information needed to define the task; "
                 + "never a fact that the supplied host observation capability can discover");
         ObjectNode statuses = policy.putObject("intentStatusMeaning");
-        statuses.put("RESOLVED", "The human goal has verifiable conditions supported by host capabilities; "
-                + "initial runtime state may still be unknown");
+        statuses.put("RESOLVED", "The human goal is defined. Requested actions or live observations "
+                + "have verifiable conditions supported by host capabilities; initial runtime state "
+                + "may still be unknown. Pure response generation is also RESOLVED with applicable=false, "
+                + "criteria=[], reasonCodes=[], and unresolvedInputs=[]");
         statuses.put("NEEDS_HUMAN", "An actual human choice, target, requested account identity, "
                 + "or authorization is needed to define the task");
         statuses.put("UNSUPPORTED", "The goal is understood but a required capability is absent "
@@ -192,11 +250,33 @@ public final class TaskContractCompiler {
                     + "permissions or current application state. Return the resolved originalRequest "
                     + "when possible, and plan criteria for that request. "
                     + "Use only capability IDs from the supplied host catalog. A capability's "
-                    + "evidenceCeiling is the strongest claim its trusted tool can prove. "
+                    + "trustedTools names identify its exact host implementation, not additional "
+                    + "capability IDs. " + knowledgeAnswerInstruction()
+                    + "Internal framework_tool_catalog discovery/activation is a "
+                    + "preparatory control step, not a business acceptance criterion. Optional "
+                    + "preparation and implementation choices must not be added as mandatory "
+                    + "acceptance criteria unless the human explicitly requests that step or its "
+                    + "observable result. Preserve the order of explicitly requested steps. "
+                    + "Desktop probe, application catalog and target listing use their separate discovery capabilities, "
+                    + "never desktop.observe or a guessed window. For desktop.applications, copy the "
+                    + "exact requested query to requiredSubject and use target=desktop; this criterion "
+                    + "asks for the actual returned page, not proof an application exists, is absent, "
+                    + "has a unique identity or is controllable. Preserve requested paging arguments "
+                    + "for execution and report hasMore/truncated rather than inventing completeness. "
+                    + "For desktop.probe and desktop.targets, target=desktop and requiredSubject is "
+                    + "empty; these only read the actual capability state or target list. "
+                    + "A capability's evidenceCeiling is the strongest claim its trusted tool can prove. "
                     + "Each criterion's targetType must equal its catalog capability's targetKind. "
                     + "If the request needs an external action or live observation, set applicable=true "
-                    + "and list its observable conditions in order. Pure conceptual answers may set "
-                    + "applicable=false. If the target or observable condition is ambiguous, set "
+                    + "and list its observable conditions in order. For pure response generation "
+                    + "such as explanations, fictional writing or quoted examples, return "
+                    + "applicable=false, intentStatus=RESOLVED, criteria=[], reasonCodes=[], and "
+                    + "unresolvedInputs=[]. A filename or path used only as requested answer content "
+                    + "or a quoted example does not request a real file operation or observation. "
+                    + "Do not invent a FILE criterion for such text. Non-error explanations such as "
+                    + "NO_ACTION_REQUIRED are not reasonCodes. Explicitly requested real file, application "
+                    + "or other host operations still need their supported observable criteria. "
+                    + "If the target or observable condition is ambiguous, set "
                     + "intentStatus=NEEDS_HUMAN; do not guess. For an action whose requested outcome must be "
                     + "seen later, include a separate observation capability. Copy target and any "
                     + "view subject from the request in the user's language, without translating it "
@@ -206,12 +286,12 @@ public final class TaskContractCompiler {
                     + "does not by itself make the goal ambiguous. Every desktop.observe criterion "
                     + "must include a nonblank requiredSubject for the logical requested content; "
                     + "for a window inspection, name the requested window content. "
-                    + DESKTOP_SUBJECT_INSTRUCTION + "Use planningPolicy "
+                    + DESKTOP_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "Use planningPolicy "
                     + "to distinguish missing human intent or authorization from runtime state that "
                     + "the host observation capability can discover. Unknown login status, an existing "
                     + "session, the current displayed account, or window availability does not by "
-                    + "itself require human clarification. intentStatus=RESOLVED means "
-                    + "whether the human goal has verifiable conditions supported by host capabilities; "
+                    + "itself require human clarification. For applicable host tasks, intentStatus=RESOLVED "
+                    + "means the human goal has verifiable conditions supported by host capabilities; "
                     + "it does not require the initial runtime state to be known. Define the desired "
                     + "observable outcome without assuming those states are already satisfied. Do "
                     + "not ask for credentials or account context just because no observation has "
@@ -235,13 +315,13 @@ public final class TaskContractCompiler {
         return input;
     }
 
-    private static Duration remainingPlanningTime(long started, CancellationToken cancellation) {
+    private static Duration remainingPlanningTime(long started, CancellationToken cancellation,
+            Duration attemptCeiling) {
         cancellation.throwIfCancelled();
         Duration local = MAX_PLANNING_TIME.minusNanos(Math.max(0, System.nanoTime() - started));
         Duration owner = cancellation.remaining();
         Duration remaining = local.compareTo(owner) < 0 ? local : owner;
-        return remaining.compareTo(MAX_PLANNING_ATTEMPT_TIME) < 0
-                ? remaining : MAX_PLANNING_ATTEMPT_TIME;
+        return remaining.compareTo(attemptCeiling) < 0 ? remaining : attemptCeiling;
     }
 
     private static String planningFailureCode(RuntimeException failure, boolean repair) {
@@ -388,8 +468,7 @@ public final class TaskContractCompiler {
         if (!contract.unresolvedInputs().isEmpty()) reasons.add("UNRESOLVED_INPUTS");
         if (!contract.desktopObservationSubjectsValid()) invalid.add("MISSING_OBSERVABLE_SUBJECT");
         if (contract.applicable() && contract.criteria().isEmpty() && !clarification) invalid.add("EMPTY_CRITERIA");
-        String directory = request.attributes().getOrDefault("workDir",
-                com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText("");
+        String directory = workDirectory(request);
         List<TaskCriterionV3> normalized = new ArrayList<>();
         for (TaskCriterionV3 criterion : contract.criteria()) {
             String target = criterion.target();
@@ -410,7 +489,18 @@ public final class TaskContractCompiler {
                 try {
                     String rawTarget = target;
                     target = ProjectAccessPolicy.withWorkingDirectory(directory,
-                            () -> ProjectAccessPolicy.resolveProjectPath(rawTarget).toString());
+                            () -> {
+                                Path resolved = ProjectAccessPolicy.resolveProjectPath(rawTarget);
+                                // The working directory is a path base, not a permission boundary.
+                                // A model may target another project directory only when that exact
+                                // path is grounded in human input, never its own rewritten request.
+                                if (contract.source().startsWith("model") && !directory.isBlank()
+                                        && !resolved.startsWith(ProjectAccessPolicy.workingDirectory())
+                                        && !hasHumanFileTarget(request, resolved)) {
+                                    invalid.add("UNGROUNDED_FILE_TARGET");
+                                }
+                                return resolved.toString();
+                            });
                 } catch (Exception invalidTarget) {
                     invalid.add("INVALID_FILE_TARGET");
                 }
@@ -427,9 +517,58 @@ public final class TaskContractCompiler {
                 invalid.isEmpty() ? contract.intentStatus() : TaskContractV3.IntentStatus.UNKNOWN);
     }
 
+    private static String workDirectory(RunRequest request) {
+        return request.attributes().getOrDefault("workDir",
+                com.fasterxml.jackson.databind.node.TextNode.valueOf("")).asText("");
+    }
+
+    private static boolean hasHumanFileTarget(RunRequest request, Path target) {
+        String absolute = target.toString();
+        String fromProjectRoot = ProjectAccessPolicy.projectRoot().relativize(target).toString();
+        List<String> humanInputs = new ArrayList<>(humanHistory(request));
+        humanInputs.add(originalRequest(request));
+        humanInputs.add(currentUserInput(request));
+        return humanInputs.stream().anyMatch(text -> containsFileLiteral(text, absolute)
+                || containsFileLiteral(text, fromProjectRoot));
+    }
+
+    private static boolean containsFileLiteral(String text, String path) {
+        if (path.isBlank()) return false;
+        for (int offset = text.indexOf(path); offset >= 0; offset = text.indexOf(path, offset + 1)) {
+            int end = offset + path.length();
+            boolean starts = offset == 0 || fileLiteralBoundary(text.charAt(offset - 1));
+            boolean ends = end == text.length() || fileLiteralBoundary(text.charAt(end));
+            if (starts && ends) return true;
+        }
+        return false;
+    }
+
+    private static boolean fileLiteralBoundary(char value) {
+        return Character.isWhitespace(value) || "`\"'“”‘’：:，,；;。！？!?（）()[]{}<>、".indexOf(value) >= 0;
+    }
+
     private String receiptSubject(TaskCriterionV3 criterion, TaskContractV3 contract,
             LinkedHashSet<String> reasons) {
         String subject = criterion.requiredSubject();
+        if (criterion.capabilityId().equals("mcp.secure_input.cancel")
+                && !subject.matches("[A-Za-z0-9][A-Za-z0-9-]{0,127}")) {
+            // A cancellation for another Header cannot establish this interaction.
+            reasons.add("INVALID_SECURE_INPUT_SUBJECT");
+            return subject;
+        }
+        if (!subject.isBlank() && (criterion.capabilityId().equals("desktop.click")
+                || criterion.capabilityId().equals("desktop.type")
+                || criterion.capabilityId().equals("desktop.key")
+                || criterion.capabilityId().equals("desktop.scroll"))) {
+            // Input receipts prove admission, not a logical control or content subject.
+            reasons.add("UNSUPPORTED_RECEIPT_SUBJECT");
+            return subject;
+        }
+        if (!subject.isBlank() && criterion.capabilityId().equals("desktop.snapshot")) {
+            // A screenshot cannot establish logical content; do not silently drop a frozen condition.
+            reasons.add("UNSUPPORTED_RECEIPT_SUBJECT");
+            return subject;
+        }
         if (subject.isBlank() || !(criterion.capabilityId().equals("desktop.launch")
                 || criterion.capabilityId().equals("desktop.open"))) return subject;
         // 启动和建立会话不证明界面内容；模型标签只能由同一应用的独立观察条件承接。

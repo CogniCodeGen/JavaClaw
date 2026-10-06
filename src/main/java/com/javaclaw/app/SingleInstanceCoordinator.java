@@ -184,8 +184,9 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
 
     /** Notify a primary process after a preflight lock finds an already-running instance. */
     public static void notifyRunning(Path dataDirectory, String buildFingerprint) {
-        notifyExisting(dataDirectory.toAbsolutePath().normalize().resolve(ENDPOINT_FILE),
+        NotifyResult result = notifyExisting(dataDirectory.toAbsolutePath().normalize().resolve(ENDPOINT_FILE),
                 requireFingerprint(buildFingerprint));
+        log.info("单实例窗口通知结果（协议应答）: {}", result);
     }
 
     public static Optional<SingleInstanceCoordinator> current() {
@@ -222,6 +223,7 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
                 String suppliedToken = reader.readLine();
                 String command = reader.readLine();
                 if (token.equals(suppliedToken) && SHOW_COMMAND.equals(command)) {
+                    log.info("收到单实例主窗口显示请求 SHOW");
                     dispatchShow();
                     writer.write(OK_RESPONSE + "\n");
                 } else if (token.equals(suppliedToken)

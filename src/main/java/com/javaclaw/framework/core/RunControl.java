@@ -39,7 +39,7 @@ public final class RunControl implements CancellationToken {
     private final java.util.concurrent.CopyOnWriteArrayList<Runnable> cancellationListeners =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Clock clock;
-    private final Instant deadline;
+    private volatile Instant deadline;
     private final RunBudget budget;
 
     RunControl(RunBudget budget, Clock clock) {
@@ -95,6 +95,11 @@ public final class RunControl implements CancellationToken {
     }
 
     public Instant deadline() { return deadline; }
+
+    /** Restore remaining execution time after a managed checkpoint; usage and effects stay intact. */
+    void restoreDeadline(Instant restored) {
+        deadline = Objects.requireNonNull(restored, "restored");
+    }
 
     @Override
     public Duration remaining() {

@@ -269,7 +269,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             name = "site_login_now",
             description =
                     "在当前页面用「站点管理」中已登记的凭据自动填充并提交登录表单。"
-                            + "无需指定用户名/密码：工具内部根据当前页面 URL 匹配到站点条目后直接填入。"
+                            + "工具内部根据当前页面 URL 匹配站点条目并填入已登记凭据，无需在参数中提供账号或密码。"
                             + "支持可选选择器覆盖默认表单语义定位（用户名/密码/提交按钮）。验证登录后会询问是否保存会话。")
     public String siteLoginNow(
             @ToolParam( description = "用户名输入框的 CSS 选择器；留空则按 autocomplete、类型及表单结构定位")
@@ -426,7 +426,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             name = "site_fill_password",
             description =
                     "把已登记的密码填入指定输入框。用于 site_login_now 启发式无法覆盖的非常规登录表单。"
-                            + "本工具不向 LLM 暴露密码，密码由站点管理器内部读取。")
+                            + "站点管理器在内部读取已登记凭据，本工具不向 LLM 暴露密码。")
     public String siteFillPassword(
             @ToolParam(description = BrowserTargetResolver.TOOL_FORMAT)
                     String targetSelector) {

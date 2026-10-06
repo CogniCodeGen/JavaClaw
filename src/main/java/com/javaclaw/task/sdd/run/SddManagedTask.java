@@ -31,6 +31,8 @@ public class SddManagedTask {
 
     public long totalInputTokens;
     public long totalOutputTokens;
+    /** 已投影到累计账目的子轮次；恢复重放不得再次计入同一笔用量。 */
+    public java.util.Set<String> recordedRunIds = new java.util.LinkedHashSet<>();
 
     /** 按阶段分桶的 token 用量（phase → input / output），用于定位"钱花在哪"并验证优化。 */
     public java.util.Map<String, Long> phaseInputTokens = new java.util.LinkedHashMap<>();

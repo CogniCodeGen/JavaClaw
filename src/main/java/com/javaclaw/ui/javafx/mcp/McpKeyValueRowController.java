@@ -21,6 +21,17 @@ public final class McpKeyValueRowController implements AutoCloseable {
         plainValueField.textProperty().bindBidirectional(viewModel.valueProperty());
         secretValueField.textProperty().bindBidirectional(viewModel.valueProperty());
         viewModel.secretProperty().addListener((ignored, previous, secret) -> applySecret(secret));
+        viewModel.keyProperty().addListener((ignored, previous, key) -> {
+            // 新增或修改敏感字段名后先遮罩；用户之后仍可显式切换为明文。
+            if (isLikelySecret(key)) viewModel.secretProperty().set(true);
+        });
+    }
+
+    static boolean isLikelySecret(String key) {
+        String upper = key == null ? "" : key.strip().toUpperCase(java.util.Locale.ROOT);
+        // MCP HTTP 的 Authorization 携带访问令牌，应与环境密钥使用相同的默认遮罩。
+        return upper.equals("AUTHORIZATION") || upper.contains("KEY") || upper.contains("TOKEN")
+                || upper.contains("SECRET") || upper.contains("PASSWORD") || upper.contains("PASSWD");
     }
 
     void configure(String key, String value, boolean secret, Runnable removeAction) {

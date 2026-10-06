@@ -5,7 +5,6 @@
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.HBox?>
-<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.VBox?>
 
 <HBox fx:id="root" alignment="CENTER_LEFT" spacing="12.0" styleClass="chat-top-bar"
@@ -15,32 +14,41 @@
     <children>
         <Button fx:id="sidebarToggleButton" text="☰" visible="false" managed="false"
                 onAction="#toggleSidebarRequested" styleClass="sidebar-toggle-btn"/>
-        <VBox alignment="CENTER_LEFT" spacing="2.0">
+        <VBox alignment="CENTER_LEFT" spacing="2.0" minWidth="0.0" maxWidth="Infinity"
+              HBox.hgrow="ALWAYS">
             <children>
-                <HBox alignment="CENTER_LEFT" spacing="8.0">
+                <HBox alignment="CENTER_LEFT" spacing="8.0" minWidth="0.0">
                     <children>
                         <Label fx:id="statusDot" text="●"
-                               styleClass="chat-top-status-dot, status-idle"/>
-                        <Label fx:id="titleLabel" text="JavaClaw 工作区" styleClass="chat-top-title"/>
+                               minWidth="-Infinity" styleClass="chat-top-status-dot, status-idle"/>
+                        <Label fx:id="titleLabel" text="JavaClaw 工作区" styleClass="chat-top-title"
+                               minWidth="0.0" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                               wrapText="false" textOverrun="ELLIPSIS">
+                            <tooltip><Tooltip fx:id="titleTooltip" wrapText="true" maxWidth="560.0"/></tooltip>
+                        </Label>
                     </children>
                 </HBox>
-                <Label fx:id="metadataLabel" text="—" styleClass="chat-top-meta"/>
+                <Label fx:id="metadataLabel" text="—" styleClass="chat-top-meta"
+                       minWidth="0.0" maxWidth="Infinity" wrapText="false" textOverrun="ELLIPSIS"/>
             </children>
         </VBox>
-        <Label fx:id="localModeBadge" text="本地模式" visible="false" managed="false"
-               styleClass="local-mode-badge">
-            <tooltip><Tooltip text="当前使用本地 Ollama 模型，对话数据不出本机"/></tooltip>
-        </Label>
-        <Label fx:id="embeddingHealthBadge" text="嵌入：检查中"
-               accessibleText="嵌入服务健康状态" styleClass="local-mode-badge"/>
-        <Region HBox.hgrow="ALWAYS"/>
-        <fx:include fx:id="knowledgeMenu" source="knowledge-menu.fxml"/>
-        <fx:include fx:id="themeMenu" source="theme-menu.fxml"/>
-        <Button text="▦" onAction="#openTasksRequested" styleClass="top-icon-btn">
-            <tooltip><Tooltip text="托管任务"/></tooltip>
-        </Button>
-        <Button fx:id="settingsButton" text="⚙" onAction="#openSettingsRequested"
-                styleClass="top-icon-btn"/>
-        <Button text="🗑 清空" onAction="#clearHistoryRequested" styleClass="clear-button"/>
+        <HBox alignment="CENTER_LEFT" spacing="12.0" minWidth="-Infinity">
+            <children>
+                <Label fx:id="localModeBadge" text="本地模式" visible="false" managed="false"
+                       styleClass="local-mode-badge">
+                    <tooltip><Tooltip text="当前使用本地 Ollama 模型，对话数据不出本机"/></tooltip>
+                </Label>
+                <Label fx:id="embeddingHealthBadge" text="嵌入：检查中"
+                       accessibleText="嵌入服务健康状态" styleClass="local-mode-badge"/>
+                <fx:include fx:id="knowledgeMenu" source="knowledge-menu.fxml"/>
+                <fx:include fx:id="themeMenu" source="theme-menu.fxml"/>
+                <Button text="▦" onAction="#openTasksRequested" styleClass="top-icon-btn">
+                    <tooltip><Tooltip text="托管任务"/></tooltip>
+                </Button>
+                <Button fx:id="settingsButton" text="⚙" onAction="#openSettingsRequested"
+                        styleClass="top-icon-btn"/>
+                <Button text="🗑 清空" onAction="#clearHistoryRequested" styleClass="clear-button"/>
+            </children>
+        </HBox>
     </children>
 </HBox>

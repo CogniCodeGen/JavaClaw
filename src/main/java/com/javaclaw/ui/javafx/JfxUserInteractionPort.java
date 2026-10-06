@@ -16,6 +16,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -63,13 +66,20 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
 
     @Override
     public ConfirmDecision confirmEx(ConfirmRequest request) {
+        return confirmEx(request, () -> false);
+    }
+
+    @Override
+    public ConfirmDecision confirmEx(ConfirmRequest request, BooleanSupplier cancelled) {
+        java.util.Objects.requireNonNull(cancelled, "cancelled");
+        if (cancelled.getAsBoolean()) return ConfirmDecision.DENY;
         ConfirmKind kind = request.kind();
         return switch (kind) {
             case NOTIFY -> {
                 notify(new ToastRequest(request.toolName(), request.description()));
                 yield ConfirmDecision.ALLOW_ONCE;
             }
-            case CONFIRM, DOUBLE_CONFIRM -> showConfirmDialog(request);
+            case CONFIRM, DOUBLE_CONFIRM -> showConfirmDialog(request, cancelled);
         };
     }
 
@@ -156,27 +166,62 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         }
     }
 
-    private ConfirmDecision showConfirmDialog(ConfirmRequest req) {
+    private ConfirmDecision showConfirmDialog(ConfirmRequest req, BooleanSupplier cancelled) {
         CompletableFuture<ConfirmDecision> future = new CompletableFuture<>();
+        AtomicReference<Runnable> closeDialog = new AtomicReference<>();
+        int effective = req.timeoutSeconds() > 0 ? req.timeoutSeconds() : FALLBACK_TIMEOUT_SEC;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(effective);
+        BooleanSupplier inactive = () -> future.isDone() || cancelled.getAsBoolean()
+                || deadline - System.nanoTime() <= 0;
         fx.dispatch(() -> {
+            if (inactive.getAsBoolean()) {
+                future.complete(ConfirmDecision.DENY);
+                return;
+            }
             try {
-                future.complete(dialogs.confirm(req));
+                future.complete(dialogs.confirm(req, close -> {
+                    closeDialog.set(close);
+                    if (future.isDone()) close.run();
+                }, inactive));
             } catch (Exception e) {
                 log.error("确认对话框异常", e);
                 future.complete(ConfirmDecision.DENY);
             }
         });
-        return awaitDecision(future, req.toolName(), req.timeoutSeconds());
+        try {
+            return awaitDecision(future, req.toolName(), effective, deadline, cancelled);
+        } finally {
+            // Each request owns its closing action, so an expired approval cannot close a newer one.
+            future.complete(ConfirmDecision.DENY);
+            fx.dispatch(() -> {
+                Runnable close = closeDialog.getAndSet(null);
+                if (close != null) close.run();
+            });
+        }
     }
 
     /** 配置为 0/负数时的兜底超时：与托管场景上限一致，避免 UI 线程卡死时调用线程永久阻塞 */
     private static final int FALLBACK_TIMEOUT_SEC = 600;
 
     private ConfirmDecision awaitDecision(CompletableFuture<ConfirmDecision> future,
-                                          String toolName, int timeoutSec) {
-        int effective = timeoutSec > 0 ? timeoutSec : FALLBACK_TIMEOUT_SEC;
+                                          String toolName, int effective, long deadline, BooleanSupplier cancelled) {
         try {
-            return future.get(effective, TimeUnit.SECONDS);
+            while (!cancelled.getAsBoolean()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new TimeoutException();
+                try {
+                    ConfirmDecision decision = future.get(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(100)),
+                            TimeUnit.NANOSECONDS);
+                    return cancelled.getAsBoolean() || deadline - System.nanoTime() <= 0
+                            ? ConfirmDecision.DENY : decision;
+                } catch (TimeoutException elapsed) {
+                    if (deadline - System.nanoTime() <= 0) throw elapsed;
+                }
+            }
+            return ConfirmDecision.DENY;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return ConfirmDecision.DENY;
         } catch (Exception e) {
             log.warn("等待用户交互超时或异常 [{}]（{}s）", toolName, effective);
             return ConfirmDecision.DENY;

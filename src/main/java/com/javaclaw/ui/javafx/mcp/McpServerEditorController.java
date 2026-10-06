@@ -193,7 +193,8 @@ public final class McpServerEditorController implements AutoCloseable {
     private void addRow(List<McpKeyValueRowFactory.Row> target, VBox container,
                         String key, String value) {
         McpKeyValueRowFactory.Row[] holder = new McpKeyValueRowFactory.Row[1];
-        McpKeyValueRowFactory.Row row = rows.create(key, value, isLikelySecret(key), () -> {
+        McpKeyValueRowFactory.Row row = rows.create(key, value,
+                McpKeyValueRowController.isLikelySecret(key), () -> {
             target.remove(holder[0]);
             container.getChildren().remove(holder[0].root());
             holder[0].close();
@@ -256,12 +257,6 @@ public final class McpServerEditorController implements AutoCloseable {
         for (int index = source.size() - 1; index >= 0; index--) source.get(index).close();
         source.clear();
         if (container != null) container.getChildren().clear();
-    }
-
-    private static boolean isLikelySecret(String key) {
-        String upper = key == null ? "" : key.toUpperCase(java.util.Locale.ROOT);
-        return upper.contains("KEY") || upper.contains("TOKEN") || upper.contains("SECRET")
-                || upper.contains("PASSWORD") || upper.contains("PASSWD");
     }
 
     private static String text(String value) { return value == null ? "" : value.strip(); }

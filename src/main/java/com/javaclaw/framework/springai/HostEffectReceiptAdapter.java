@@ -5,12 +5,15 @@ import com.javaclaw.desktop.agent.DesktopSessionTools;
 import com.javaclaw.desktop.api.DesktopActionResult;
 import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.framework.spi.EffectTargetProvider;
+import com.javaclaw.framework.spi.FileContentProof;
 import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.framework.spi.ToolExecutionContext;
 import com.javaclaw.schedule.ScheduleTools;
 import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -41,6 +44,7 @@ final class HostEffectReceiptAdapter {
                 || type == com.javaclaw.email.EmailTools.class
                 || type == com.javaclaw.notification.NotificationTools.class
                 || type == ScheduleTools.class
+                || type == com.javaclaw.mcp.McpManageTools.class
                 || type == com.javaclaw.system.CommandLineTools.class;
     }
 
@@ -52,6 +56,12 @@ final class HostEffectReceiptAdapter {
     static EffectReceiptV1 receipt(Object source, String tool, JsonNode arguments,
             ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at,
             String establishedTarget) {
+        return receipt(source, tool, arguments, signal, context, at, establishedTarget, null);
+    }
+
+    static EffectReceiptV1 receipt(Object source, String tool, JsonNode arguments,
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at,
+            String establishedTarget, JsonNode rawOutput) {
         String evidence = "core.tool.completed:" + context.runId().value()
                 + ":" + context.invocationId();
         if (source == null || signal == null) {
@@ -59,6 +69,13 @@ final class HostEffectReceiptAdapter {
         }
         String type = source.getClass().getName();
         if (source.getClass() == DesktopSessionTools.class) {
+            if (Set.of("desktop_session_probe", "desktop_session_applications", "desktop_session_targets")
+                    .contains(tool)) {
+                return desktopDiscovery(tool, arguments, rawOutput, signal, context, at, evidence);
+            }
+            if (tool.equals("desktop_session_snapshot")) {
+                return desktopSnapshot(tool, arguments, rawOutput, signal, context, at, evidence);
+            }
             return desktop((DesktopSessionTools) source, tool, arguments, signal, context, at, evidence);
         }
         if (source.getClass().getClassLoader() == HostEffectReceiptAdapter.class.getClassLoader()
@@ -80,7 +97,167 @@ final class HostEffectReceiptAdapter {
         if (source.getClass() == com.javaclaw.system.CommandLineTools.class) {
             return command(tool, arguments, signal, context, at, evidence);
         }
+        if (source.getClass() == com.javaclaw.mcp.McpManageTools.class) {
+            return mcpSecureInputCancellation(tool, arguments, rawOutput, signal, context, at, evidence);
+        }
         return EffectReceiptV1.unknown(context.invocationId(), tool, at, evidence);
+    }
+
+    /** Only the exact host's pre-save cancellation branch can establish no MCP write. */
+    private static EffectReceiptV1 mcpSecureInputCancellation(String tool, JsonNode args, JsonNode output,
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence) {
+        if (!tool.equals("mcp_server_set_header_secure") || signal != ToolEffectCapture.Signal.SUCCESS
+                || args == null || !args.isObject() || output == null || !output.isObject()
+                || output.size() != 7
+                || !output.path("schemaVersion").isIntegralNumber()
+                || !output.path("schemaVersion").canConvertToInt()
+                || output.path("schemaVersion").intValue() != 1
+                || !output.path("kind").isTextual()
+                || !output.path("kind").textValue().equals("mcp.header.input_cancelled")
+                || !args.path("name").isTextual() || !args.path("headerName").isTextual()
+                || !output.path("serverName").isTextual() || !output.path("headerName").isTextual()
+                || output.path("serverName").textValue().isBlank()
+                || output.path("serverName").textValue().length() > 512
+                || !output.path("serverName").textValue().equals(args.path("name").textValue().strip())
+                || !output.path("headerName").textValue().equals(args.path("headerName").textValue().strip())
+                || !output.path("headerName").textValue().matches("[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+                || !output.path("saved").isBoolean() || output.path("saved").booleanValue()
+                || !output.path("reconnected").isBoolean() || output.path("reconnected").booleanValue()
+                || !output.path("retryAllowed").isBoolean() || output.path("retryAllowed").booleanValue()) {
+            return EffectReceiptV1.unknown(context.invocationId(), tool, at, evidence);
+        }
+        // OBSERVED applies only to this local interaction, never to a Header write.
+        return new EffectReceiptV1(context.invocationId(), tool, "input_cancelled",
+                output.path("serverName").textValue(), EffectReceiptV1.Status.OBSERVED,
+                at, evidence, "local secure input supplied no value; no save or reconnect was attempted",
+                output.path("headerName").textValue(), java.util.Map.of("delivery", "NOT_SENT", "effect", "NONE",
+                        "reasonCode", "SECURE_INPUT_CANCELLED", "retryAllowed", "false",
+                        "headerName", output.path("headerName").textValue()));
+    }
+
+    /** A successful native discovery page proves only its exact typed data, never a live window. */
+    private static EffectReceiptV1 desktopDiscovery(String tool, JsonNode args, JsonNode output,
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence) {
+        String operation = switch (tool) {
+            case "desktop_session_probe" -> "probe";
+            case "desktop_session_applications" -> "applications";
+            case "desktop_session_targets" -> "targets";
+            default -> throw new IllegalArgumentException("not a desktop discovery tool");
+        };
+        if (signal != ToolEffectCapture.Signal.SUCCESS) {
+            return new EffectReceiptV1(context.invocationId(), tool, operation, "desktop",
+                    signal == ToolEffectCapture.Signal.ERROR || signal == ToolEffectCapture.Signal.REOBSERVE
+                            ? EffectReceiptV1.Status.FAILED
+                            : EffectReceiptV1.Status.UNKNOWN,
+                    at, evidence, "desktop discovery did not return a successful native result");
+        }
+        if (output == null || !output.isObject()
+                || !output.path("protocol").asText().equals("computer-use")
+                || !output.path("schemaVersion").isIntegralNumber()
+                || !output.path("schemaVersion").canConvertToInt()
+                || output.path("schemaVersion").intValue() != 1
+                || !output.path("kind").asText().equals("desktop." + operation)) {
+            return new EffectReceiptV1(context.invocationId(), tool, operation, "desktop",
+                    EffectReceiptV1.Status.UNKNOWN, at, evidence,
+                    "desktop discovery returned no complete typed native data");
+        }
+        java.util.Map<String, String> metadata = new java.util.LinkedHashMap<>();
+        try {
+            metadata.put("discoveryDigest", java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(output.toString().getBytes(StandardCharsets.UTF_8))));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+        if (operation.equals("applications")) {
+            metadata.put("query", args.path("query").asText("").strip());
+            metadata.put("offset", Integer.toString(args.path("offset").asInt(0)));
+            metadata.put("limit", Integer.toString(args.path("limit").asInt(64)));
+            metadata.put("catalogId", output.path("catalogId").asText(""));
+        }
+        return new EffectReceiptV1(context.invocationId(), tool, operation, "desktop",
+                EffectReceiptV1.Status.OBSERVED, at, evidence,
+                "native desktop discovery data returned; application state and control remain unproved",
+                "", metadata);
+    }
+
+    /** Only the exact host snapshot operation supplies this capture and owner data after PNG success. */
+    private static EffectReceiptV1 desktopSnapshot(String tool, JsonNode args, JsonNode output,
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence) {
+        if (signal != ToolEffectCapture.Signal.SUCCESS) {
+            return new EffectReceiptV1(context.invocationId(), tool, "snapshot", "",
+                    signal == ToolEffectCapture.Signal.ERROR || signal == ToolEffectCapture.Signal.REOBSERVE
+                            ? EffectReceiptV1.Status.FAILED : EffectReceiptV1.Status.UNKNOWN,
+                    at, evidence, "owned desktop PNG snapshot was not captured successfully");
+        }
+        try {
+            if (output == null || !output.isObject()
+                    || !snapshotText(output, "protocol").equals("computer-use")
+                    || snapshotLong(output, "schemaVersion") != 1
+                    || !snapshotText(output, "kind").equals("desktop.snapshot"))
+                throw new IllegalArgumentException("invalid snapshot data");
+            String session = snapshotText(output, "sessionId");
+            String capture = snapshotText(output, "captureId");
+            if (session.isBlank() || !session.equals(snapshotText(args, "sessionId"))
+                    || !java.util.UUID.fromString(capture).toString().equals(capture)
+                    || snapshotText(output, "imagePath").isBlank())
+                throw new IllegalArgumentException("invalid snapshot identity");
+            JsonNode target = output.path("target");
+            JsonNode frame = output.path("frame");
+            String targetId = snapshotText(target, "targetId");
+            String provider = snapshotText(target, "providerId");
+            String application = snapshotText(target, "application");
+            String applicationId = target.has("applicationId")
+                    ? snapshotText(target, "applicationId") : "";
+            long processId = snapshotLong(target, "processId");
+            long generation = snapshotLong(frame, "windowGeneration");
+            long revision = snapshotLong(frame, "contentRevision");
+            long capturedAt = snapshotLong(frame, "capturedAtMillis");
+            long width = snapshotLong(frame, "width");
+            long height = snapshotLong(frame, "height");
+            if (targetId.isBlank() || provider.isBlank() || processId < 0
+                    || !targetId.equals(snapshotText(frame, "targetId"))
+                    || generation < 0 || revision < 1 || capturedAt < 1 || width < 1 || height < 1
+                    || width > Integer.MAX_VALUE || height > Integer.MAX_VALUE
+                    || !snapshotText(frame, "coordinateSpace").equals("WINDOW_FRAME_PIXELS"))
+                throw new IllegalArgumentException("invalid snapshot frame");
+            String identity = application.isBlank() ? applicationId : application;
+            if (identity.isBlank()) throw new IllegalArgumentException("missing snapshot application");
+            java.util.Map<String, String> metadata = new java.util.LinkedHashMap<>();
+            metadata.put("sessionId", session);
+            metadata.put("targetId", targetId);
+            // Compatibility frame identifier only. Snapshot does not commit an observe/input baseline.
+            metadata.put("observationId", capture);
+            metadata.put("windowGeneration", Long.toString(generation));
+            metadata.put("contentRevision", Long.toString(revision));
+            metadata.put("capturedAtMillis", Long.toString(capturedAt));
+            metadata.put("providerId", provider);
+            metadata.put("processId", Long.toString(processId));
+            metadata.put("frameWidth", Long.toString(width));
+            metadata.put("frameHeight", Long.toString(height));
+            if (!applicationId.isBlank()) metadata.put("applicationId", applicationId);
+            return new EffectReceiptV1(context.invocationId(), tool, "snapshot", bounded(identity),
+                    EffectReceiptV1.Status.OBSERVED, at, evidence,
+                    "owned desktop PNG snapshot captured and saved; logical window content remains unproved",
+                    "", metadata);
+        } catch (RuntimeException invalidSnapshot) {
+            return new EffectReceiptV1(context.invocationId(), tool, "snapshot", "",
+                    EffectReceiptV1.Status.UNKNOWN, at, evidence,
+                    "snapshot returned no complete trusted owner and capture data");
+        }
+    }
+
+    private static String snapshotText(JsonNode value, String field) {
+        JsonNode node = value.path(field);
+        if (!node.isTextual()) throw new IllegalArgumentException("invalid snapshot text");
+        return node.textValue();
+    }
+
+    private static long snapshotLong(JsonNode value, String field) {
+        JsonNode node = value.path(field);
+        if (!node.isIntegralNumber() || !node.canConvertToLong())
+            throw new IllegalArgumentException("invalid snapshot integer");
+        return node.longValue();
     }
 
     private static EffectReceiptV1 desktop(DesktopSessionTools source, String tool, JsonNode args,
@@ -347,14 +524,20 @@ final class HostEffectReceiptAdapter {
                 ? field(args, "target") : field(args, "path");
         String target = requestedTarget;
         EffectReceiptV1.Status status = signalStatus(signal);
+        String observedContent = null;
         if (status == EffectReceiptV1.Status.ACCEPTED) {
             try {
                 Path path = ProjectAccessPolicy.resolveProjectPath(requestedTarget);
                 target = path.toAbsolutePath().normalize().toString();
                 status = switch (operation) {
-                    case "write" -> Files.isRegularFile(path)
-                            && Files.readString(path).equals(args.path("content").asText())
-                            ? EffectReceiptV1.Status.VERIFIED : EffectReceiptV1.Status.UNKNOWN;
+                    case "write" -> {
+                        if (!Files.isRegularFile(path)) yield EffectReceiptV1.Status.UNKNOWN;
+                        String content = Files.readString(path);
+                        if (!content.equals(args.path("content").asText()))
+                            yield EffectReceiptV1.Status.UNKNOWN;
+                        observedContent = content;
+                        yield EffectReceiptV1.Status.VERIFIED;
+                    }
                     case "delete" -> !Files.exists(path)
                             ? EffectReceiptV1.Status.VERIFIED : EffectReceiptV1.Status.UNKNOWN;
                     case "mkdir" -> Files.isDirectory(path)
@@ -363,12 +546,30 @@ final class HostEffectReceiptAdapter {
                             ? EffectReceiptV1.Status.VERIFIED : EffectReceiptV1.Status.UNKNOWN;
                     case "move" -> moved(args, path)
                             ? EffectReceiptV1.Status.VERIFIED : EffectReceiptV1.Status.UNKNOWN;
-                    case "read", "list" -> EffectReceiptV1.Status.OBSERVED;
+                    case "read" -> {
+                        // Reobserve the real file under the same bounds and credential policy as the tool.
+                        if (!Files.isRegularFile(path) || Files.size(path) > 1024 * 1024)
+                            yield EffectReceiptV1.Status.UNKNOWN;
+                        String content = Files.readString(path);
+                        if (content.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024
+                                || SensitiveDataRedactor.containsLikelyCredential(content))
+                            yield EffectReceiptV1.Status.UNKNOWN;
+                        observedContent = content;
+                        yield EffectReceiptV1.Status.OBSERVED;
+                    }
+                    case "list" -> EffectReceiptV1.Status.OBSERVED;
                     default -> EffectReceiptV1.Status.UNKNOWN;
                 };
             } catch (Exception ignored) {
                 status = EffectReceiptV1.Status.UNKNOWN;
             }
+        }
+        if (observedContent != null) {
+            return new EffectReceiptV1(context.invocationId(), tool, operation,
+                    bounded(target), status, at, evidence,
+                    operation.equals("write") ? "filesystem content postcondition checked"
+                            : "filesystem content independently observed",
+                    "", FileContentProof.metadata(observedContent));
         }
         return of(context, tool, operation, target, status, at, evidence,
                 status == EffectReceiptV1.Status.VERIFIED ? "filesystem postcondition checked"

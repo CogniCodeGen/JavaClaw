@@ -55,7 +55,7 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
 
     @Override
     public SaveResult saveEmbedding(EmbeddingSettings value) {
-        EmbeddingSettings validated = validateEmbedding(value);
+        EmbeddingSettings validated = validateEmbedding(value, false);
         settings.saveEmbedding(validated);
         return saved("✓ 已保存，下一轮对话生效", true);
     }
@@ -67,7 +67,7 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
 
     @Override
     public ProbeResult probeEmbedding(EmbeddingSettings value) throws Exception {
-        return probes.probeEmbedding(validateEmbedding(value), snapshot().embedding());
+        return probes.probeEmbedding(validateEmbedding(value, true), snapshot().embedding());
     }
 
     private SaveResult saved(String message, boolean refresh) {
@@ -111,13 +111,16 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
         return value;
     }
 
-    private static EmbeddingSettings validateEmbedding(EmbeddingSettings value) {
+    private static EmbeddingSettings validateEmbedding(EmbeddingSettings value, boolean probing) {
         Objects.requireNonNull(value, "settings");
         ModelProviderCatalog.Provider provider = provider(value.provider(), "嵌入模型提供商");
-        if (provider.localManaged()) required(value.managedProfileId(), "本地嵌入档案");
-        else {
-            httpUri(value.baseUrl(), "嵌入 API 地址");
-            required(value.modelName(), "嵌入模型名称");
+        // 关闭 RAG 时允许保留未配置的模型；实际连接测试仍要求完整配置。
+        if (value.enabled() || probing) {
+            if (provider.localManaged()) required(value.managedProfileId(), "本地嵌入档案");
+            else {
+                httpUri(value.baseUrl(), "嵌入 API 地址");
+                required(value.modelName(), "嵌入模型名称");
+            }
         }
         range(value.dimensions(), 1, Integer.MAX_VALUE, "向量维度");
         range(value.retrieveLimit(), 1, Integer.MAX_VALUE, "检索返回数量");

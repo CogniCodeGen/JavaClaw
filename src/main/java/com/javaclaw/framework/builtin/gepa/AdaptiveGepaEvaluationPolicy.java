@@ -35,11 +35,7 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
             List<RunEventEnvelope> events, JsonNode output, ModelTaskGateway models) {
         JsonNode answer = finalAnswer(output);
         if (answer.toString().length() > MAX_EVALUATION_INPUT_CHARACTERS) {
-            ObjectNode assessment = JsonNodeFactory.instance.objectNode();
-            assessment.put("mode", "unavailable");
-            assessment.put("reason", "answer_too_large");
-            assessment.put("summary", "最终答复超过辅助模型评估输入上限；评估未执行");
-            return assessment;
+            return unavailable("answer_too_large", "最终答复超过辅助模型评估输入上限；评估未执行");
         }
         boolean hasTools = events.stream().anyMatch(event -> TOOL_EVENTS.contains(event.type()));
         boolean abnormal = events.stream().anyMatch(event -> FAILURE_EVENTS.contains(event.type()));
@@ -60,12 +56,37 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
         properties.putObject("summary").put("type", "string").put("maxLength", 500);
         schema.putArray("required").add("score").add("needsRevision").add("summary");
         RunId owner = new RunId(events.getFirst().runId());
-        ModelTaskResult result = models.executeInline(new ModelTaskRequest(
-                "gepa.evaluate", ModelTier.LIGHT,
-                evaluationInput(events, output, answer), List.of(), schema,
-                owner, "gepa", Duration.ofSeconds(30), 1, () -> false, false));
+        ModelTaskResult result;
+        try {
+            result = models.executeInline(new ModelTaskRequest(
+                    "gepa.evaluate", ModelTier.LIGHT,
+                    evaluationInput(events, output, answer), List.of(), schema,
+                    owner, "gepa", Duration.ofSeconds(30), 1, () -> false, false));
+        } catch (ModelTaskTimeoutException failure) {
+            if (failure.getSuppressed().length != 0
+                    || failure.getCause().getSuppressed().length != 0
+                    || Thread.currentThread().isInterrupted()) throw failure;
+            return unavailable("evaluation_timeout",
+                    "辅助模型评估达到本次独立时限，结果不可用；本轮未评分");
+        } catch (ModelTaskOutputException failure) {
+            // Audit failures are attached as suppressed exceptions by the gateway.
+            // Preserve those and interruption; only an invalid evaluator result is unavailable.
+            if (failure.getSuppressed().length != 0 || Thread.currentThread().isInterrupted()) {
+                throw failure;
+            }
+            return unavailable("structured_output_invalid",
+                    "辅助模型评估结果不符合结构化要求，重试后仍未通过校验；本轮评估不可用");
+        }
         ObjectNode assessment = result.output().deepCopy();
         assessment.put("mode", "model");
+        return assessment;
+    }
+
+    private static ObjectNode unavailable(String reason, String summary) {
+        ObjectNode assessment = JsonNodeFactory.instance.objectNode();
+        assessment.put("mode", "unavailable");
+        assessment.put("reason", reason);
+        assessment.put("summary", summary);
         return assessment;
     }
 

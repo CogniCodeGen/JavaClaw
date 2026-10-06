@@ -48,7 +48,10 @@ final class HarnessProtocolFeedback {
         String feedback = "Submit exactly one harness_submit_decision control call "
                 + "in its own tool-call batch. The decision must be CLAIM_DONE, "
                 + "NEEDS_INPUT, or BLOCKED when ending the turn. Put ordinary "
-                + "user-facing text only in userMessage. Do not infer completion "
+                + "user-facing text only in userMessage. Earlier prose was not delivered. "
+                + "Include the actual full answer there in its required format/schema, "
+                + "not a completion summary (full schema-matching JSON for JSON tasks). "
+                + "Do not infer completion "
                 + "from final prose; continue tool work first if necessary. "
                 + "evidenceRefs is optional: copy only exact host-issued IDs from tool "
                 + "response evidenceRefs, or use []. Never use descriptions as IDs. "
@@ -62,6 +65,7 @@ final class HarnessProtocolFeedback {
         correction.putArray("availableEvidenceRefs");
         correction.putArray("availableCriterionIds");
         int budget = 1_950 - prefix.length();
+        fitDiagnostics(correction, budget);
         if ("UNKNOWN_CRITERION_ID".equals(rejection.path("reasonCode").asText(""))) {
             appendCompleteIds(correction, rejection, "availableCriterionIds", budget);
             appendCompleteIds(correction, rejection, "availableEvidenceRefs", budget);
@@ -71,6 +75,21 @@ final class HarnessProtocolFeedback {
         }
         // Bound the list as whole IDs, so the correction remains parseable after recovery.
         return prefix + correction;
+    }
+
+    private static void fitDiagnostics(ObjectNode correction, int characterBudget) {
+        // JSON escaping can expand bounded diagnostic text. Fit serialized fields before adding
+        // whole IDs; never truncate the final JSON or a recovery evidence identifier.
+        for (String field : List.of("message", "reasonCode")) {
+            String value = correction.path(field).asText("");
+            while (!value.isEmpty() && correction.toString().length() > characterBudget) {
+                value = value.substring(0, value.offsetByCodePoints(value.length(), -1));
+                correction.put(field, value);
+            }
+        }
+        if (correction.toString().length() > characterBudget) {
+            throw new IllegalStateException("protocol repair feedback exceeds its bounded envelope");
+        }
     }
 
     private static void appendCompleteIds(ObjectNode target, JsonNode source,

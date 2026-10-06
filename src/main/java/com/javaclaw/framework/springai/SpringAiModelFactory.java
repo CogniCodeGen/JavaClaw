@@ -23,7 +23,6 @@ import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
-import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
@@ -225,8 +224,7 @@ public final class SpringAiModelFactory implements AutoCloseable {
         } else if (isDashScope(spec)) {
             builder.extraBody(java.util.Map.of("enable_thinking", false));
         }
-        return OpenAiChatModel.builder().options(builder.build())
-                .observationRegistry(observations).build();
+        return new OpenAiReplyStreamingChatModel(builder.build(), observations, resources);
     }
 
     private ChatModel anthropic(TierSpec spec) {

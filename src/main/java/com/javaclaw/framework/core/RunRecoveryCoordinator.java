@@ -158,10 +158,10 @@ final class RunRecoveryCoordinator {
         return json.treeToValue(persisted, ExecutionPlanDescriptor.class);
     }
 
-    /** 旧日志与直接工具调用使用相同的原始截止时间规则。 */
+    /** 恢复与直接工具调用使用相同的冻结执行预算和等待规则。 */
     private Instant persistedDeadline(StoredRun stored, ExecutionPlanDescriptor descriptor) {
         return PersistedRunDeadline.resolve(stored, descriptor.budget(),
-                runs.eventsAfter(stored.snapshot().id(), 0));
+                runs.eventsAfter(stored.snapshot().id(), 0), clock.instant());
     }
 
     private void markBlocked(StoredRun stored, String code, String detail) {

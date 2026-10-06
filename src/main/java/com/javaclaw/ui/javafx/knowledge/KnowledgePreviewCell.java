@@ -1,6 +1,8 @@
 package com.javaclaw.ui.javafx.knowledge;
 
 import com.javaclaw.platform.fxml.EmbeddedFxmlLoader;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.DoubleBinding;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -18,6 +20,15 @@ public final class KnowledgePreviewCell extends ListCell<String> {
                         "/fxml/knowledge/knowledge-preview-cell.fxml"),
                 this, VBox.class);
         if (loaded != root) throw new IllegalStateException("知识预览 Cell FXML 根节点不一致");
+
+        DoubleBinding availableWidth = Bindings.createDoubleBinding(
+                () -> Math.max(0, getWidth() - getInsets().getLeft() - getInsets().getRight()),
+                widthProperty(), insetsProperty());
+        root.setMinWidth(0);
+        root.prefWidthProperty().bind(availableWidth);
+        root.maxWidthProperty().bind(availableWidth);
+        contentLabel.setMinWidth(0);
+        contentLabel.setMaxWidth(Double.MAX_VALUE);
     }
 
     @Override

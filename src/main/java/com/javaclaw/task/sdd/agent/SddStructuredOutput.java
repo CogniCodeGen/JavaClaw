@@ -33,7 +33,10 @@ final class SddStructuredOutput<T> {
 
     String formatInstructions() {
         return "只返回一个完整 JSON 对象，严格符合以下 Schema。不要添加 Markdown 代码围栏、前言或后记；"
-                + "不得增加 Schema 未声明的字段。\n" + schema.toPrettyString();
+                + "不得增加 Schema 未声明的字段。"
+                + "若 Framework 要求调用 harness_submit_decision，阶段结果必须序列化为 JSON 文本"
+                + "放在该控制调用的 userMessage 字符串中；该字符串本身必须能直接解析为下面的阶段对象，"
+                + "不能替换成自然语言摘要。控制调用外层的决策协议保持不变。\n" + schema.toPrettyString();
     }
 
     T parse(String output) {

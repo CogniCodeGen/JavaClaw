@@ -14,6 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -40,6 +42,8 @@ final class ChatStatusController implements AutoCloseable {
     private TokenTracker tracker;
     private AutoCloseable embeddingSubscription;
     private Timeline refreshClock;
+    private final Map<String, SessionUsage> sessionUsage = new HashMap<>();
+    private String workspaceId;
     private boolean closed;
 
     ChatStatusController(
@@ -67,6 +71,8 @@ final class ChatStatusController implements AutoCloseable {
     void bind(WorkspaceRuntime workspace) {
         Objects.requireNonNull(workspace, "workspace");
         releaseWorkspaceListeners();
+        sessionUsage.clear();
+        workspaceId = workspace.context().workspaceId();
         settings = workspace.agentConfig();
         tracker = workspace.tokenTracker();
         tracker.setOnTokensChanged(() -> fx.dispatch(() -> {
@@ -81,15 +87,52 @@ final class ChatStatusController implements AutoCloseable {
                     }
                 }));
         refresh();
-        refreshTitle();
     }
 
     void resetSession() {
-        if (tracker != null) {
-            tracker.resetSession();
-            refresh();
-            refreshTitle();
+        ChatSession session = currentSession.get();
+        if (session != null) {
+            SessionUsage usage = usageFor(session);
+            usage.tokens = 0;
+            usage.durationMs = 0;
+            if (usage.turnStartedNanos != 0) usage.turnStartedNanos = System.nanoTime();
         }
+        refreshUsage();
+    }
+
+    String workspaceId() {
+        return workspaceId;
+    }
+
+    void beginTurn(String turnWorkspaceId, ChatSession session) {
+        if (!owns(turnWorkspaceId, session)) return;
+        usageFor(session).turnStartedNanos = System.nanoTime();
+        refreshUsage();
+    }
+
+    void recordUsage(String turnWorkspaceId, ChatSession session, long input, long output) {
+        if (!owns(turnWorkspaceId, session)) return;
+        SessionUsage usage = usageFor(session);
+        usage.tokens = add(usage.tokens, add(Math.max(0, input), Math.max(0, output)));
+        refreshUsage();
+    }
+
+    void finishTurn(String turnWorkspaceId, ChatSession session) {
+        if (!owns(turnWorkspaceId, session)) return;
+        SessionUsage usage = usageFor(session);
+        if (usage.turnStartedNanos != 0) {
+            usage.durationMs = add(usage.durationMs, activeDurationMs(usage));
+            usage.turnStartedNanos = 0;
+        }
+        refreshUsage();
+    }
+
+    void forgetSession(String sessionId) {
+        sessionUsage.remove(sessionId);
+    }
+
+    void clearSessionUsage() {
+        sessionUsage.clear();
     }
 
     void setStreaming(boolean streaming) {
@@ -105,7 +148,7 @@ final class ChatStatusController implements AutoCloseable {
         if (session == null) {
             return;
         }
-        long contextTokens = tracker == null ? 0 : tracker.getSessionTokens();
+        long contextTokens = usageFor(session).tokens;
         String context = contextTokens >= 1000
                 ? String.format("%.1fk", contextTokens / 1000.0)
                 : Long.toString(contextTokens);
@@ -116,12 +159,18 @@ final class ChatStatusController implements AutoCloseable {
                 + " · ctx " + context + " / 200k"
                 + (model.isBlank() ? "" : " · " + model);
         header.showTitle(session.getTitle(), metadata);
+        refreshTokenSummary();
     }
 
     void refresh() {
         refreshLocalMode();
-        refreshTokenSummary();
         refreshNavigationBadges();
+        refreshUsage();
+    }
+
+    private void refreshUsage() {
+        if (currentSession.get() == null) refreshTokenSummary();
+        else refreshTitle();
     }
 
     @Override
@@ -135,6 +184,8 @@ final class ChatStatusController implements AutoCloseable {
             refreshClock = null;
         }
         releaseWorkspaceListeners();
+        sessionUsage.clear();
+        workspaceId = null;
         settings = null;
     }
 
@@ -148,7 +199,9 @@ final class ChatStatusController implements AutoCloseable {
             return;
         }
         try {
-            long sessionTokens = tracker.getSessionTokens();
+            ChatSession session = currentSession.get();
+            SessionUsage sessionProjection = session == null ? null : usageFor(session);
+            long sessionTokens = sessionProjection == null ? 0 : sessionProjection.tokens;
             long todayTokens = tracker.getTodayTokens();
             long monthlyTokens = tracker.getMonthlyTokens();
             String monthlyCost = TokenTracker.formatCostCny(tracker.getMonthlyCostCny());
@@ -165,12 +218,47 @@ final class ChatStatusController implements AutoCloseable {
                     + " / 输出 " + TokenTracker.formatTokens(month.output) + "）\n"
                     + "本月成本：" + monthlyCost + "（估算，仅供参考）\n"
                     + "本次会话：" + TokenTracker.formatTokens(sessionTokens) + " tokens · 耗时 "
-                    + TokenTracker.formatDuration(tracker.getSessionDurationSeconds()) + "\n"
+                    + TokenTracker.formatDuration(sessionProjection == null ? 0
+                            : add(sessionProjection.durationMs, activeDurationMs(sessionProjection)) / 1000) + "\n"
                     + "点击可重置本次会话计数";
             modeBar.updateTokenSummary(summary, details);
         } catch (RuntimeException failure) {
             log.debug("刷新 Token 徽标失败", failure);
         }
+    }
+
+    private boolean owns(String turnWorkspaceId, ChatSession session) {
+        return !closed && session != null && workspaceId != null
+                && workspaceId.equals(turnWorkspaceId);
+    }
+
+    private SessionUsage usageFor(ChatSession session) {
+        return sessionUsage.computeIfAbsent(session.getId(), ignored -> {
+            SessionUsage usage = new SessionUsage();
+            // Seed once. Live deltas already include the metrics later saved on the final reply.
+            for (ChatMessage message : session.getMessages()) {
+                TurnMetrics metrics = message.getMetrics();
+                if (metrics == null) continue;
+                usage.tokens = add(usage.tokens, add(metrics.inputTokens(), metrics.outputTokens()));
+                usage.durationMs = add(usage.durationMs, metrics.durationMs());
+            }
+            return usage;
+        });
+    }
+
+    private static long activeDurationMs(SessionUsage usage) {
+        return usage.turnStartedNanos == 0 ? 0
+                : Math.max(0, (System.nanoTime() - usage.turnStartedNanos) / 1_000_000);
+    }
+
+    private static long add(long left, long right) {
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
+
+    private static final class SessionUsage {
+        long tokens;
+        long durationMs;
+        long turnStartedNanos;
     }
 
     private void refreshNavigationBadges() {

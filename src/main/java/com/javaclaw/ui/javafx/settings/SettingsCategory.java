@@ -6,10 +6,10 @@ import java.util.Locale;
 public enum SettingsCategory {
 
     MODEL(Group.CORE, "模型配置",
-            "api key base url provider openai anthropic ollama dashscope gemini 模型 思考 "
+            "model models llm api key base url provider openai anthropic ollama dashscope gemini 模型 思考 "
                     + "thinking 高级 http 超时 timeout 迭代 循环"),
     TIERED_MODEL(Group.CORE, "分级模型",
-            "tier 分级 轻量 light 普通 normal 高性能 high 路由 routing 意图 intent 规划"),
+            "tiered model models tier 分级 轻量 light 普通 normal 高性能 high 路由 routing 意图 intent 规划"),
     EMBEDDING(Group.CORE, "嵌入模型",
             "rag embedding 嵌入 向量 vector 检索 文档 knowledge 知识库 维度 dimension"),
     AGENT(Group.CORE, "智能体",
@@ -26,7 +26,7 @@ public enum SettingsCategory {
             "site 站点 网站 凭据 cookie 登录 自动登录 用户名 密码 password"),
 
     APPEARANCE(Group.APPEARANCE, "界面风格",
-            "主题 theme 风格 外观 配色 深色 暗色 dark emerald midnight carbon sapphire "
+            "appearance 主题 theme 风格 外观 配色 深色 暗色 dark emerald midnight carbon sapphire "
                     + "ocean plum graphite terracotta honey 翡翠 午夜 碳黑 蓝宝石 海洋 梅紫 石墨 陶土 蜂蜜"),
     FONT(Group.APPEARANCE, "字体",
             "字体 font typeface sans mono 等宽 字号 密度 缩放 inter noto cascadia jetbrains 排版 对话"),

@@ -73,6 +73,10 @@ public final class MarkdownBubbleController implements AutoCloseable {
         presenter.replaceText(text);
     }
 
+    void replaceStreamingText(String text) {
+        presenter.replaceStreamingText(text);
+    }
+
     void refresh() {
         presenter.refresh();
     }

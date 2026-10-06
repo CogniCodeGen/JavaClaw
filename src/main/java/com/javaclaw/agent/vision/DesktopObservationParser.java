@@ -46,6 +46,57 @@ final class DesktopObservationParser {
                         visibleText, frameWidth, frameHeight));
     }
 
+    /** Diagnose only otherwise-valid exact host candidates, without inventing a confidence. */
+    static ConfidenceRepair confidenceRepair(JsonNode output, String visibleText,
+            int frameWidth, int frameHeight, List<DesktopObservationCondition> requested) {
+        JsonNode nodes = output.path("conditionEvidence");
+        if (requested.isEmpty() || !nodes.isArray() || nodes.size() > MAX_CONDITIONS)
+            return new ConfidenceRepair(List.of(), List.of());
+        var counts = new java.util.HashMap<String, Integer>();
+        nodes.forEach(node -> counts.merge(node.path("criterionId").asText(), 1, Integer::sum));
+        List<DesktopObservationCondition> eligible = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
+        for (int index = 0; index < nodes.size(); index++) {
+            JsonNode node = nodes.get(index);
+            if (!node.isObject() || !node.path("criterionId").isTextual()
+                    || !node.path("subject").isTextual()
+                    || !"main-content".equals(node.path("region").asText())) continue;
+            String id = node.path("criterionId").asText();
+            String subject = node.path("subject").asText();
+            var condition = requested.stream().filter(value -> value.criterionId().equals(id)
+                    && value.subject().equals(subject)).findFirst();
+            if (condition.isEmpty() || counts.getOrDefault(id, 0) != 1) continue;
+            JsonNode content = node.path("content");
+            if (!content.isObject() || !content.path("label").isTextual()
+                    || !content.path("role").isTextual()
+                    || !List.of("content", "list", "table", "empty-state")
+                            .contains(content.path("role").asText().toLowerCase(java.util.Locale.ROOT))
+                    || redactedVisualText(content.path("label").asText())
+                    || !validGeometry(content, frameWidth, frameHeight)) continue;
+            String excerpt = DesktopEvidenceExcerpt.supportedExcerpt(content.path("label").asText(), visibleText);
+            if (excerpt == null || excerpt.isBlank()
+                    || !DesktopEvidenceExcerpt.containsVisibleText(visibleText, excerpt)) continue;
+            // Present null/string/low values are not missing fields and are never repaired here.
+            if ((node.has("confidence") && !viewConfidence(node.path("confidence")))
+                    || (content.has("confidence") && !viewConfidence(content.path("confidence")))) continue;
+            if (node.has("confidence") && content.has("confidence")) continue;
+            eligible.add(condition.get());
+            if (!node.has("confidence")) paths.add("/output/conditionEvidence/" + index + "/confidence");
+            if (!content.has("confidence"))
+                paths.add("/output/conditionEvidence/" + index + "/content/confidence");
+        }
+        return new ConfidenceRepair(List.copyOf(eligible), List.copyOf(paths));
+    }
+
+    /** Repair candidates must match the first observation's already-accepted OCR, not new prose. */
+    static List<DesktopVisualConditionEvidence> repairedConditions(JsonNode output, String visibleText,
+            int frameWidth, int frameHeight, List<DesktopObservationCondition> eligible) {
+        return parseConditionEvidence(output.path("conditionEvidence"), eligible,
+                visibleText, frameWidth, frameHeight);
+    }
+
+    record ConfidenceRepair(List<DesktopObservationCondition> eligible, List<String> paths) { }
+
     private static List<DesktopVisualConditionEvidence> parseConditionEvidence(
             JsonNode nodes, List<DesktopObservationCondition> requested,
             String visibleText, int frameWidth, int frameHeight) {
@@ -128,21 +179,33 @@ final class DesktopObservationParser {
     private static DesktopVisualTarget parseVisualTarget(JsonNode node, int frameWidth, int frameHeight,
                                                          int labelLimit) {
         if (!node.isObject() || !node.path("label").isTextual() || !node.path("role").isTextual()
-                || !isInt(node.path("x")) || !isInt(node.path("y"))
-                || !isInt(node.path("width")) || !isInt(node.path("height"))
+                || !validGeometry(node, frameWidth, frameHeight)
                 || !node.path("confidence").isNumber()) return null;
         int x = node.path("x").intValue();
         int y = node.path("y").intValue();
         int width = node.path("width").intValue();
         int height = node.path("height").intValue();
         double confidence = node.path("confidence").doubleValue();
-        if (x < 0 || y < 0 || width <= 0 || height <= 0
-                || (long) x + width > frameWidth || (long) y + height > frameHeight
-                || !Double.isFinite(confidence) || confidence < MIN_TARGET_CONFIDENCE || confidence > 1) return null;
+        if (!Double.isFinite(confidence) || confidence < MIN_TARGET_CONFIDENCE || confidence > 1) return null;
         String label = safeVisualText(node.path("label").asText(), labelLimit);
         String role = safeVisualText(node.path("role").asText(), 40);
         if (label.isBlank() && role.isBlank()) return null;
         return new DesktopVisualTarget(label, role, x, y, width, height, confidence);
+    }
+
+    private static boolean validGeometry(JsonNode node, int frameWidth, int frameHeight) {
+        if (!isInt(node.path("x")) || !isInt(node.path("y"))
+                || !isInt(node.path("width")) || !isInt(node.path("height"))) return false;
+        int x = node.path("x").intValue(), y = node.path("y").intValue();
+        int width = node.path("width").intValue(), height = node.path("height").intValue();
+        return x >= 0 && y >= 0 && width > 0 && height > 0
+                && (long) x + width <= frameWidth && (long) y + height <= frameHeight;
+    }
+
+    private static boolean viewConfidence(JsonNode value) {
+        double confidence = value.asDouble(Double.NaN);
+        return value.isNumber() && Double.isFinite(confidence)
+                && confidence >= MIN_VIEW_CONFIDENCE && confidence <= 1;
     }
 
     private static boolean isInt(JsonNode node) {

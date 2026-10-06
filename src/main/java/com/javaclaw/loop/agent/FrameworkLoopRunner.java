@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.application.agent.FrameworkToolApprovalCoordinator;
+import com.javaclaw.application.agent.ConversationReplyProjection;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.framework.api.AgentClient;
@@ -135,7 +136,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
             return IterationResult.failed();
         }
 
-        Capture capture = new Capture();
+        Capture capture = new Capture(handle.id().value());
         Disposable events = handle.events(0).subscribe(
                 event -> onEvent(handle, callbacks, capture, event),
                 failure -> capture.failure.compareAndSet(null, failure));
@@ -157,7 +158,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
                         .asLong(capture.outputTokens);
             }
             String visible = reply;
-            if (!visible.isBlank()) callbacks.onEvent(new ConversationEvent.Reply(visible));
+            capture.reply.canonical(visible, callbacks);
             callbacks.onEvent(new ConversationEvent.Usage(
                     capture.inputTokens, capture.outputTokens));
             return IterationResult.ok(reply, capture.inputTokens, capture.outputTokens,
@@ -176,6 +177,7 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
             log.warn("循环第 {} 轮 Run {} 失败", number, handle.id(), failure);
             return IterationResult.failed(capture.inputTokens, capture.outputTokens);
         } finally {
+            capture.reply.close();
             events.dispose();
             active.compareAndSet(handle, null);
         }
@@ -216,7 +218,9 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
             ConversationCallbacks callbacks,
             Capture capture,
             RunEventEnvelope event) {
+        if (closed || active.get() != handle) return;
         JsonNode payload = event.payload();
+        if (capture.reply.onEvent(event, callbacks)) return;
         switch (event.type()) {
             case "core.model.started" -> callbacks.onEvent(
                     new ConversationEvent.Hint("循环执行体正在推理…"));
@@ -379,6 +383,8 @@ public final class FrameworkLoopRunner implements LoopIterationRunner, AutoClose
     }
 
     private static final class Capture {
+        private final ConversationReplyProjection reply;
+        private Capture(String segmentId) { reply = new ConversationReplyProjection(segmentId); }
         private final List<String> toolCalls = java.util.Collections.synchronizedList(new ArrayList<>());
         private final java.util.Map<String, JsonNode> pendingReports =
                 new java.util.concurrent.ConcurrentHashMap<>();

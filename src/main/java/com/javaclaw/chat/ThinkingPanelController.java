@@ -1,6 +1,7 @@
 package com.javaclaw.chat;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.javaclaw.framework.api.TaskResult;
 import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.loop.model.LoopStatus;
 import com.javaclaw.chat.ThinkingPanelViewModel.PanelStatus;
@@ -104,6 +105,20 @@ public final class ThinkingPanelController implements AutoCloseable {
         endStream("处理完成", ThinkingContentRenderer.StreamEnd.COMPLETED);
     }
 
+    /** Run settlement and task acceptance remain distinct in the progress panel. */
+    void endStream(TaskResult result) {
+        String taskStatus = result == null ? null : switch (result.outcome()) {
+            case PARTIAL -> "未完成 · 待继续";
+            case BLOCKED -> "受阻 · 待处理";
+            case UNVERIFIED -> "运行结束 · 未核验";
+            case VERIFIED_COMPLETE, DELIVERED, NOT_APPLICABLE -> null;
+        };
+        if (taskStatus == null) endStream();
+        else endStream(taskStatus, ThinkingContentRenderer.StreamEnd.COMPLETED,
+                result.outcome() == com.javaclaw.framework.api.TaskOutcome.UNVERIFIED
+                        ? "本轮" + taskStatus : "本轮任务" + taskStatus);
+    }
+
     public void endStreamCancelled() {
         endStream("已取消", ThinkingContentRenderer.StreamEnd.CANCELLED);
     }
@@ -113,11 +128,16 @@ public final class ThinkingPanelController implements AutoCloseable {
     }
 
     private void endStream(String panelStatus, ThinkingContentRenderer.StreamEnd end) {
+        endStream(panelStatus, end, null);
+    }
+
+    private void endStream(String panelStatus, ThinkingContentRenderer.StreamEnd end,
+            String taskStatus) {
         if (closed.get()) return;
         setStatus(PanelStatus.IDLE, panelStatus);
         stopElapsedTicker();
         refreshElapsedLabel();
-        renderer.finish(end);
+        renderer.finish(end, taskStatus);
     }
 
     public void reset() {

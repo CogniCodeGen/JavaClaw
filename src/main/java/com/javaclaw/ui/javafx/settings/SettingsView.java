@@ -15,6 +15,8 @@ public final class SettingsView implements AutoCloseable {
     private final SettingsViewController controller;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private boolean closing;
+    private boolean runtimeRefreshPending;
+    private Runnable onModelConfigChanged = () -> { };
 
     SettingsView(Stage stage, ViewHandle<?> handle, SettingsViewController controller,
                  FxDispatcher fx) {
@@ -33,10 +35,15 @@ public final class SettingsView implements AutoCloseable {
         stage.setOnHidden(event -> close());
     }
 
-    /** 模型或运行时配置生效后的通知；回调在 JavaFX Application Thread 执行。 */
+    /**
+     * 模型或运行时配置生效后的通知；关闭设置窗口后在 JavaFX Application Thread 执行。
+     * 窗口内合并通知，避免运行时重建关闭仍被设置分区使用的工作区任务作用域。
+     */
     public void setOnModelConfigChanged(Runnable callback) {
         ensureOpen();
-        controller.configure(this::closeWindow, callback);
+        onModelConfigChanged = callback == null ? () -> { } : callback;
+        controller.configure(this::closeWindow,
+                callback == null ? null : () -> runtimeRefreshPending = true);
     }
 
     public void show() {
@@ -49,7 +56,14 @@ public final class SettingsView implements AutoCloseable {
     public void show(String categoryName) {
         ensureOpen();
         controller.prepare(categoryName);
-        stage.showAndWait();
+        try {
+            stage.showAndWait();
+        } finally {
+            if (runtimeRefreshPending) {
+                runtimeRefreshPending = false;
+                onModelConfigChanged.run();
+            }
+        }
     }
 
     private void closeWindow() {

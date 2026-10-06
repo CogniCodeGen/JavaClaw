@@ -50,8 +50,13 @@ public final class KnowledgeUseCase implements KnowledgeApplicationService {
         for (Path file : files.stream().filter(Objects::nonNull).distinct().toList()) {
             String failure = validateFile(file);
             if (failure.isBlank()) {
-                if (knowledge.importFile(file, target)) succeeded++;
-                else failure = "导入失败";
+                try {
+                    if (knowledge.importFile(file, target)) succeeded++;
+                    else failure = "导入失败";
+                } catch (ValidationException invalid) {
+                    failure = invalid.getMessage();
+                    if (failure == null || failure.isBlank()) failure = "导入参数不符合要求";
+                }
             }
             if (!failure.isBlank()) failures.add(file.getFileName() + "：" + failure);
         }

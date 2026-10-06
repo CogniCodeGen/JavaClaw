@@ -1,6 +1,7 @@
 package com.javaclaw.ui.javafx.memory;
 
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
+import com.javaclaw.application.memory.MemoryApplicationService.EmbeddingState;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.ReadOnlyStringProperty;
 import javafx.beans.property.ReadOnlyStringWrapper;
@@ -37,21 +38,37 @@ final class MemoryViewModel {
         if (!state.degraded()) return "";
         StringBuilder message = new StringBuilder();
         if (!state.healthy()) {
-            message.append("嵌入服务不可用：")
-                    .append(MemoryUiText.oneLine(state.error(), 88))
-                    .append("。事实/情景已降级为纯文本暂存");
+            String status = switch (state.status()) {
+                case UNCONFIGURED -> "未配置";
+                case CHECKING -> "检查中";
+                case DEGRADED -> "已降级";
+                case UNAVAILABLE -> "不可用";
+                case HEALTHY -> "正常";
+            };
+            message.append("嵌入服务").append(status);
+            if (!state.error().isBlank()) message.append("：").append(MemoryUiText.oneLine(state.error(), 88));
+            message.append("。事实/情景可保存为纯文本");
         }
         if (state.pendingCount() > 0) {
             if (state.healthy()) {
                 message.append("有 ").append(state.pendingCount())
-                        .append(" 条降级暂存记忆待回填（嵌入服务已恢复，可立即重嵌入）");
+                        .append(" 条降级暂存记忆待回填（嵌入服务正常，可立即重嵌入）");
             } else {
                 message.append("（").append(state.pendingCount())
-                        .append(" 条待嵌入，服务恢复后可重新纳入向量召回与图谱）");
+                        .append(" 条待嵌入，").append(embeddingReadyCondition(state))
+                        .append("可重新纳入向量召回与图谱）");
             }
         } else if (!state.healthy()) {
-            message.append("，恢复服务后新记忆将带向量入库。");
+            message.append("，").append(embeddingReadyCondition(state)).append("新记忆将带向量入库。");
         }
         return message.toString();
+    }
+
+    private static String embeddingReadyCondition(EmbeddingState state) {
+        return switch (state.status()) {
+            case UNCONFIGURED -> "配置并连接成功后";
+            case CHECKING -> "检查通过后";
+            default -> "服务恢复后";
+        };
     }
 }

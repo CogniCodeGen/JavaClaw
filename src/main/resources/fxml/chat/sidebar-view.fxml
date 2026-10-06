@@ -35,7 +35,7 @@
                     <tooltip><Tooltip text="新建工作区"/></tooltip>
                 </Button>
                 <Button text="-" styleClass="sidebar-ws-btn" onAction="#onDeleteWorkspace">
-                    <tooltip><Tooltip text="删除选中的工作区"/></tooltip>
+                    <tooltip><Tooltip text="删除其他工作区"/></tooltip>
                 </Button>
             </children>
         </HBox>

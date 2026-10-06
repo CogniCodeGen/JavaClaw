@@ -1451,6 +1451,10 @@ bool sameBounds(CGRect bounds, const jc_desktop_window &expected) {
         && std::abs(bounds.size.height - expected.height) <= 2;
 }
 
+bool isForegroundApplicationWindowBounds(CGRect bounds) {
+    return bounds.size.width >= 24 && bounds.size.height >= 24;
+}
+
 uint64_t frontmostWindowIdFor(pid_t pid) {
     CFArrayRef raw = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
     if (!raw) return 0;
@@ -1464,7 +1468,7 @@ uint64_t frontmostWindowIdFor(pid_t pid) {
         CGRect bounds{};
         if (!boundsValue || !CGRectMakeWithDictionaryRepresentation(
                 (__bridge CFDictionaryRef)boundsValue, &bounds)
-                || bounds.size.width < 24 || bounds.size.height < 24) continue;
+                || !isForegroundApplicationWindowBounds(bounds)) continue;
         if (owner.intValue == pid && number && (!layer || layer.intValue >= 0)
                 && (!alpha || alpha.doubleValue > 0.01)) return number.unsignedLongLongValue;
     }
@@ -1547,6 +1551,89 @@ AXError setMainWindowIfSupported(MacSession *session,
     return AXUIElementSetAttributeValue(window.value, kAXMainAttribute, kCFBooleanTrue);
 }
 
+// Report only a bounded public bundle identifier, never a window title or path.
+NSString *publicBlockerBundleIdentifier(pid_t pid) {
+    NSString *bundle = pid > 0
+        ? [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier : nil;
+    if (!bundle.length || bundle.length > 96) return @"unavailable";
+    for (NSUInteger index = 0; index < bundle.length; ++index) {
+        unichar character = [bundle characterAtIndex:index];
+        if (!((character >= 'a' && character <= 'z')
+                || (character >= 'A' && character <= 'Z')
+                || (character >= '0' && character <= '9')
+                || character == '.' || character == '_' || character == '-'))
+            return @"unavailable";
+    }
+    return bundle;
+}
+
+struct PointerReceiverDiagnostic {
+    bool collected = false;
+    uint64_t windowId = 0;
+    CGRect primaryBounds{};
+};
+
+struct PointerReceiverDiagnosticState {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool completed = false;
+    bool expired = false;
+    PointerReceiverDiagnostic result;
+};
+
+// Read-only mouse-down hit testing; never sends input.
+// The queued block owns its state and never refers to a session or caller stack.
+PointerReceiverDiagnostic pointerReceiverDiagnostic(CGPoint point) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || NSThread.isMainThread)
+        return {};
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    auto state = std::make_shared<PointerReceiverDiagnosticState>();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (state->expired || std::chrono::steady_clock::now() >= deadline) return;
+        }
+        PointerReceiverDiagnostic result;
+        @autoreleasepool {
+            @try {
+                CGRect primary = CGDisplayBounds(CGMainDisplayID());
+                if (std::isfinite(primary.origin.x) && std::isfinite(primary.origin.y)
+                        && std::isfinite(primary.size.width) && std::isfinite(primary.size.height)
+                        && primary.origin.x == 0 && primary.origin.y == 0
+                        && primary.size.width > 0 && primary.size.height > 0) {
+                    double cocoaY = primary.size.height - point.y;
+                    if (std::isfinite(cocoaY)) {
+                        NSInteger number = [NSWindow windowNumberAtPoint:NSMakePoint(point.x, cocoaY)
+                            belowWindowWithWindowNumber:0];
+                        if (number >= 0) {
+                            result.collected = true;
+                            result.windowId = static_cast<uint64_t>(number);
+                            result.primaryBounds = primary;
+                        }
+                    }
+                }
+            } @catch (NSException *exception) {
+                (void)exception;
+                // An unavailable query is not evidence of a pointer receiver.
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (state->expired || std::chrono::steady_clock::now() >= deadline) return;
+            state->result = result;
+            state->completed = true;
+        }
+        state->ready.notify_one();
+    });
+    std::unique_lock<std::mutex> lock(state->mutex);
+    if (!state->ready.wait_until(lock, deadline, [&] { return state->completed; })
+            || std::chrono::steady_clock::now() >= deadline) {
+        state->expired = true;
+        return {};
+    }
+    return state->result;
+}
+
 // CGWindowListCopyWindowInfo is ordered from front to back. Check both the
 // selected window identity and the window that will actually receive a pointer
 // event at the requested screen point. A PID match alone is insufficient when
@@ -1566,6 +1653,10 @@ bool targetWindowReady(pid_t pid, const jc_desktop_window &expected,
     uint64_t topAtPoint = 0;
     pid_t topPid = 0;
     int topLayer = 0;
+    CGRect topBounds{};
+    int topSharingState = -1;
+    bool topTitleEmpty = true;
+    bool topDockSignature = false;
     uint64_t firstAppWindowId = 0;
     for (NSDictionary *entry in windows) {
         NSNumber *number = entry[(id)kCGWindowNumber];
@@ -1584,8 +1675,19 @@ bool targetWindowReady(pid_t pid, const jc_desktop_window &expected,
             topAtPoint = id;
             topPid = owner.intValue;
             topLayer = layer ? layer.intValue : 0;
+            topBounds = bounds;
+            NSNumber *sharing = entry[(__bridge NSString *)kCGWindowSharingState];
+            topSharingState = sharing && sharing.intValue >= 0 && sharing.intValue <= 2
+                ? sharing.intValue : -1;
+            NSObject *title = entry[(__bridge NSString *)kCGWindowName];
+            topTitleEmpty = !title || ([title isKindOfClass:NSString.class]
+                && [(NSString *)title length] == 0);
+            topDockSignature = [layer isKindOfClass:NSNumber.class] && layer.doubleValue == 20
+                && [sharing isKindOfClass:NSNumber.class] && sharing.doubleValue == 1
+                && [title isKindOfClass:NSString.class] && [(NSString *)title length] > 0;
         }
-        if (owner.intValue == pid && !sawAppWindow) {
+        if (owner.intValue == pid && !sawAppWindow
+                && isForegroundApplicationWindowBounds(bounds)) {
             sawAppWindow = true;
             firstAppWindowId = id;
             firstAppWindowIsTarget = id == expected.window_id;
@@ -1601,17 +1703,47 @@ bool targetWindowReady(pid_t pid, const jc_desktop_window &expected,
     }
     if ((pointerAction && topAtPoint != expected.window_id)
             || (!pointerAction && !firstAppWindowIsTarget)) {
-        if (reason) *reason = pointerAction
-            ? [NSString stringWithFormat:
+        PointerReceiverDiagnostic receiver;
+        NSString *blockerBundle = nil;
+        if (pointerAction) {
+            // Never skip a CG window: only a fresh unrestricted mouse-down hit
+            // can resolve this exact observed Dock overlay against the target.
+            receiver = pointerReceiverDiagnostic(point);
+            blockerBundle = publicBlockerBundleIdentifier(topPid);
+            if (firstAppWindowIsTarget && topDockSignature
+                    && [blockerBundle isEqualToString:@"com.apple.dock"]
+                    && receiver.collected && receiver.windowId != 0
+                    && receiver.windowId == expected.window_id
+                    && CGRectEqualToRect(topBounds, receiver.primaryBounds)
+                    && CGRectContainsPoint(receiver.primaryBounds, point)
+                    && NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid)
+                return true;
+        }
+        if (reason && pointerAction) {
+            bool finiteBounds = std::isfinite(topBounds.origin.x)
+                && std::isfinite(topBounds.origin.y)
+                && std::isfinite(topBounds.size.width)
+                && std::isfinite(topBounds.size.height);
+            NSString *bounds = finiteBounds && topAtPoint
+                ? [NSString stringWithFormat:@"%.9g,%.9g,%.9g,%.9g",
+                    topBounds.origin.x, topBounds.origin.y,
+                    topBounds.size.width, topBounds.size.height] : @"unavailable";
+            *reason = [NSString stringWithFormat:
                 @"Another window is in front of the selected target; no input was sent "
-                 "(blockerPid=%d blockerWindowId=%llu blockerLayer=%d targetWindowId=%llu)",
+                 "(blockerPid=%d blockerWindowId=%llu blockerLayer=%d targetWindowId=%llu "
+                 "blockerBundle=%@ blockerRect=%@ blockerSharingState=%d blockerTitleEmpty=%d "
+                 "systemAxHitCollected=0 receiverWindowId=%llu receiverCollected=%d)",
                 topPid, static_cast<unsigned long long>(topAtPoint), topLayer,
-                static_cast<unsigned long long>(expected.window_id)]
-            : [NSString stringWithFormat:
+                static_cast<unsigned long long>(expected.window_id),
+                blockerBundle, bounds, topSharingState, topTitleEmpty ? 1 : 0,
+                static_cast<unsigned long long>(receiver.windowId), receiver.collected ? 1 : 0];
+        } else if (reason) {
+            *reason = [NSString stringWithFormat:
                 @"A different window of the target application is first; no input was sent "
                  "(frontAppWindowId=%llu targetWindowId=%llu)",
                 static_cast<unsigned long long>(firstAppWindowId),
                 static_cast<unsigned long long>(expected.window_id)];
+        }
         return false;
     }
     return true;

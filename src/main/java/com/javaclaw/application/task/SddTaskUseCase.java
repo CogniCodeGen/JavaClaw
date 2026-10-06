@@ -41,7 +41,7 @@ public final class SddTaskUseCase implements SddTaskApplicationService {
         String title = required(command.title(), "任务标题");
         SddManagedTask created = tasks.create(title, description,
                 text(command.capabilities()).isBlank() ? "auto" : command.capabilities().strip(),
-                nullableText(command.workDir()), Math.max(0, command.tokenBudget()),
+                nullableText(command.workDir()), tokenBudget(command.tokenBudget()),
                 text(command.notificationChannel()).isBlank()
                         ? "none" : command.notificationChannel().strip(),
                 required(command.createdAt(), "创建时间"));
@@ -76,7 +76,7 @@ public final class SddTaskUseCase implements SddTaskApplicationService {
     @Override
     public Task updateTokenBudget(String taskId, long newBudget) {
         SddManagedTask task = requireManaged(taskId);
-        tasks.updateTokenBudget(task.id, Math.max(0, newBudget));
+        tasks.updateTokenBudget(task.id, tokenBudget(newBudget));
         return require(task.id);
     }
 
@@ -132,6 +132,11 @@ public final class SddTaskUseCase implements SddTaskApplicationService {
     private static String nullableText(String value) {
         String checked = text(value).strip();
         return checked.isEmpty() ? null : checked;
+    }
+
+    private static long tokenBudget(long value) {
+        if (value < 0) throw new ValidationException("Token 预算必须是非负整数（0 表示不限）");
+        return value;
     }
 
     private static String text(String value) {

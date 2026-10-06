@@ -48,6 +48,16 @@ public final class WorkflowUseCase implements WorkflowApplicationService {
     }
 
     @Override
+    public OperationResult delete(String workflowId) {
+        String id = required(workflowId, "工作流 ID");
+        WorkflowItem selected = snapshot().find(id);
+        if (selected == null) throw new NotFoundException("工作流不存在: " + id);
+        if (selected.system()) throw new ValidationException("系统工作流不能删除");
+        if (!workflows.delete(id)) throw new NotFoundException("工作流不存在: " + id);
+        return new OperationResult(snapshot(), "");
+    }
+
+    @Override
     public PublishResult publish(GraphDefinition graph) {
         GraphDefinition checked = Objects.requireNonNull(graph, "graph");
         workflows.saveDraft(checked);

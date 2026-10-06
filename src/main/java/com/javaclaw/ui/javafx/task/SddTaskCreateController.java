@@ -110,8 +110,10 @@ public final class SddTaskCreateController {
         long preset = budgets.getOrDefault(budgetBox.getValue(), 120_000L);
         if (preset != CUSTOM_BUDGET) return preset;
         try {
-            return Math.max(0, Long.parseLong(clean(customBudgetField.getText())));
-        } catch (NumberFormatException failure) {
+            long budget = Long.parseLong(clean(customBudgetField.getText()));
+            if (budget < 0) throw new IllegalArgumentException("negative token budget");
+            return budget;
+        } catch (IllegalArgumentException failure) {
             showError("自定义 Token 预算必须是非负整数");
             customBudgetField.requestFocus();
             return null;

@@ -55,14 +55,23 @@ public final class TraceExporter {
      * @return 写入的字节数
      */
     public long exportTo(Path zipFile) throws IOException {
+        return exportTo(zipFile, null);
+    }
+
+    /** Supplies an authoritative trace projection without creating a second trace store. */
+    public long exportTo(Path zipFile, TraceWriter traceWriter) throws IOException {
         Files.createDirectories(zipFile.getParent());
         try (OutputStream out = Files.newOutputStream(zipFile);
              ZipOutputStream zos = new ZipOutputStream(out)) {
 
             // 1. 诊断日志
-            Path trace = recorder.tracePath();
-            if (Files.exists(trace)) {
-                copyEntry(zos, trace, "agent-trace.jsonl");
+            if (traceWriter != null) {
+                zos.putNextEntry(new ZipEntry("agent-trace.jsonl"));
+                traceWriter.write(zos);
+                zos.closeEntry();
+            } else {
+                Path trace = recorder.tracePath();
+                if (Files.exists(trace)) copyEntry(zos, trace, "agent-trace.jsonl");
             }
 
             // 2. 主日志
@@ -91,6 +100,12 @@ public final class TraceExporter {
         long size = Files.size(zipFile);
         log.info("诊断包已导出: {} ({} bytes)", zipFile, size);
         return size;
+    }
+
+    @FunctionalInterface
+    public interface TraceWriter {
+        /** Write UTF-8 JSONL without closing the exporter's shared ZIP stream. */
+        void write(OutputStream output) throws IOException;
     }
 
     private static void copyEntry(ZipOutputStream zos, Path source, String entryName) throws IOException {

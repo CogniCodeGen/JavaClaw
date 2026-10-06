@@ -53,7 +53,7 @@ final class ToolCatalogSession implements FrameworkTool {
     private boolean businessToolCompleted;
     private long lastEventSequence;
     private List<String> activeNames = List.of();
-    private final Set<String> activeModelSteps = new LinkedHashSet<>();
+    private final Map<String, Set<String>> activeModelSteps = new LinkedHashMap<>();
     private final Map<String, StartedTool> startedTools = new HashMap<>();
 
     ToolCatalogSession(ReasoningRequest request, RunStore runs, ObjectMapper json,
@@ -250,6 +250,7 @@ final class ToolCatalogSession implements FrameworkTool {
     /** Rebuilds activation solely from durable tool events, so restart needs no new store. */
     private synchronized void refresh() {
         for (var event : runs.eventsAfter(request.runId(), lastEventSequence)) {
+            long priorSequence = lastEventSequence;
             lastEventSequence = event.sequence();
             String type = event.type();
             JsonNode payload = event.payload();
@@ -257,7 +258,19 @@ final class ToolCatalogSession implements FrameworkTool {
             if (type.equals("core.step.started")) {
                 String kind = payload.path("kind").asText();
                 if (kind.equals("MODEL") && !activeNames.isEmpty()) {
-                    activeModelSteps.add(stepId);
+                    if (event.schemaVersion() != 1 || !event.producer().equals("framework.core")
+                            || !event.runId().equals(request.runId().value())) {
+                        lastEventSequence = priorSequence;
+                        throw new ToolRecoveryRequiredException(stepId,
+                                "catalog activation requires a trusted frozen provider directory");
+                    }
+                    try {
+                        activeModelSteps.put(stepId, exposedActivationNames(payload.path("input"),
+                                new LinkedHashSet<>(activeNames), stepId));
+                    } catch (ToolRecoveryRequiredException invalid) {
+                        lastEventSequence = priorSequence;
+                        throw invalid;
+                    }
                 } else if (kind.equals("TOOL")) {
                     JsonNode input = payload.path("input");
                     startedTools.put(stepId, new StartedTool(input.path("tool").asText(),
@@ -267,9 +280,16 @@ final class ToolCatalogSession implements FrameworkTool {
                 continue;
             }
             if (type.equals("core.step.completed")) {
-                if (activeModelSteps.remove(stepId)) {
-                    activeNames = List.of();
-                    activeModelSteps.clear();
+                Set<String> consumed = activeModelSteps.get(stepId);
+                if (consumed != null) {
+                    if (event.schemaVersion() != 1 || !event.producer().equals("framework.core")
+                            || !event.runId().equals(request.runId().value())) {
+                        lastEventSequence = priorSequence;
+                        throw new ToolRecoveryRequiredException(stepId,
+                                "catalog activation requires a trusted provider completion");
+                    }
+                    activeModelSteps.remove(stepId);
+                    activeNames = activeNames.stream().filter(name -> !consumed.contains(name)).toList();
                 }
                 StartedTool started = startedTools.remove(stepId);
                 if (started != null) {
@@ -414,6 +434,80 @@ final class ToolCatalogSession implements FrameworkTool {
         return projectPlanned(names, maxSelectedTools, mode, false, false, !inputAllowed);
     }
 
+    /** A frozen read masks other activations without granting or consuming their interfaces. */
+    synchronized ToolCatalogProjection projectRequiredRead(String name, int maxSelectedTools) {
+        refresh();
+        if (maxSelectedTools < 1 || !trustedReadOnlyTool(name)) {
+            throw new IllegalStateException("required frozen read is not currently authorized");
+        }
+        if (request.control().remainingToolCalls() == 0) {
+            return withControl(List.of(), 0, authorizedNames.size());
+        }
+        List<ToolCallback> selected = new ArrayList<>();
+        int characters = addRequired(selected, 0, authorized.get(name));
+        return withControl(selected, characters, authorizedNames.size());
+    }
+
+    /** 下一冻结输入隐藏其它激活接口，仍由原门禁决定能否执行。 */
+    synchronized ToolCatalogProjection projectRequiredInput(String name, int maxSelectedTools,
+            ComputerUseSessionCursor cursor) {
+        refresh();
+        if (maxSelectedTools < 1 || !trustedDesktopInputTool(name) || cursor.requiresTool()
+                || !cursor.inputAllowed() || !cursor.pendingInvocationIds().isEmpty()) {
+            throw new IllegalStateException("required frozen input is not currently grounded and authorized");
+        }
+        if (request.control().remainingToolCalls() == 0) {
+            return withControl(List.of(), 0, authorizedNames.size());
+        }
+        List<ToolCallback> selected = new ArrayList<>();
+        int characters = addRequired(selected, 0, authorized.get(name));
+        return withControl(selected, characters, authorizedNames.size());
+    }
+
+    /** Only the host's frozen provider directory can consume a prior activation. */
+    synchronized Set<String> exposedActivationNames(JsonNode input, Set<String> active, String modelStepId) {
+        if (active.isEmpty()) return Set.of();
+        if (input == null || !input.isObject() || !input.path("toolNames").isArray()) {
+            throw new ToolRecoveryRequiredException(modelStepId,
+                    "activated tools lack a frozen provider directory; reconcile legacy history");
+        }
+        boolean fingerprinted = request.plan().descriptor().onDemandContextPolicy() != null;
+        JsonNode fingerprints = input.path("toolFingerprints");
+        if (fingerprinted && !fingerprints.isObject()) {
+            throw new ToolRecoveryRequiredException(modelStepId,
+                    "activated tools lack frozen provider definitions");
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        Set<String> exposed = new LinkedHashSet<>();
+        for (JsonNode value : input.path("toolNames")) {
+            String name = value.asText("");
+            if (!value.isTextual() || name.isBlank() || !seen.add(name)
+                    || fingerprinted && (!fingerprints.path(name).isTextual()
+                        || fingerprints.path(name).asText().isBlank())) {
+                throw new ToolRecoveryRequiredException(modelStepId,
+                        "activated tools have an invalid frozen provider directory");
+            }
+            boolean knownName = authorized.containsKey(name)
+                    || HarnessDecisionToolCallback.NAME.equals(name) && decisionCallback != null
+                    || NAME.equals(name) && catalogCallback != null && allowedByToolPolicy(this);
+            if (!knownName || fingerprinted
+                    && !matchesProviderDefinition(name, fingerprints.path(name).asText())) {
+                throw new ToolRecoveryRequiredException(modelStepId,
+                        "frozen provider tool is no longer authorized or has changed: " + name);
+            }
+            if (active.contains(name)) exposed.add(name);
+        }
+        if (fingerprinted && fingerprints.size() != seen.size()) {
+            throw new ToolRecoveryRequiredException(modelStepId,
+                    "activated provider tool fingerprints do not match frozen names");
+        }
+        if (!seen.contains(HarnessDecisionToolCallback.NAME)) {
+            throw new ToolRecoveryRequiredException(modelStepId,
+                    "activated provider directory lacks the trusted harness control tool");
+        }
+        return Set.copyOf(exposed);
+    }
+
     private ToolCatalogProjection projectPlanned(List<String> names, int maxSelectedTools,
             CatalogMode mode, boolean deferLaunch) {
         return projectPlanned(names, maxSelectedTools, mode, deferLaunch, false);
@@ -483,6 +577,33 @@ final class ToolCatalogSession implements FrameworkTool {
                 .map(callback -> new ToolSummary(callback.getToolDefinition().name(),
                         group(callback), callback.getToolDefinition().description()))
                 .toList();
+    }
+
+    /** Required task schemas remain restricted to currently authorized, genuine host reads. */
+    synchronized boolean trustedReadOnlyTool(String name) {
+        return com.javaclaw.agent.ToolRiskRegistry.isKnownHostReadOnly(name)
+                && trustedHostTool(name);
+    }
+
+    synchronized boolean trustedDesktopInputTool(String name) {
+        return OnDemandDesktopPrerequisites.desktopFrameAction(name) && trustedHostTool(name);
+    }
+
+    /** Metadata matching never activates an interface or grants execution permission. */
+    synchronized boolean trustedHostTool(String name) {
+        return trustedHostTool(name, authorized.get(name));
+    }
+
+    synchronized boolean trustedHostTool(String name, ToolCallback callback) {
+        return callback == authorized.get(name) && callback instanceof SpringAiToolCallback
+                && authorizedTools.stream()
+                .filter(tool -> tool.descriptor().name().equals(name))
+                .anyMatch(tool -> SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)
+                        && SpringAiAnnotatedToolRegistry.isExactHostTool(tool)
+                        && com.javaclaw.agent.ToolRiskRegistry.matchesHostContract(tool.descriptor())
+                        && callback.getToolDefinition().inputSchema().equals(
+                                tool.descriptor().inputSchema().toString())
+                        && allowedByToolPolicy(tool));
     }
 
     /** Metadata only: candidates come from the Run-authorized callbacks, without a tool call. */

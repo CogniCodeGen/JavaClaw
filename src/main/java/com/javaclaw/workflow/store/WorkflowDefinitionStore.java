@@ -9,6 +9,9 @@ import java.util.List;
 public interface WorkflowDefinitionStore {
     List<WorkflowDefinitionRecord> list(boolean includeArchived);
     WorkflowDefinitionRecord get(String id);
+    default WorkflowDefinitionRecord createDraft(GraphDefinition definition) {
+        return saveDraft(definition);
+    }
     WorkflowDefinitionRecord saveDraft(GraphDefinition definition);
     WorkflowDefinitionRecord publish(String id, NodeExecutorRegistry registry);
     WorkflowDefinitionRecord cloneFrom(GraphDefinition source, String newName);

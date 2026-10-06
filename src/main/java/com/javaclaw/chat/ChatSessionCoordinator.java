@@ -11,7 +11,10 @@ import com.javaclaw.application.chat.ChatHistoryApplicationService.SessionSnapsh
 import com.javaclaw.application.chat.ChatHistoryApplicationService.TurnUsage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.ui.javafx.loop.LoopStatusView;
+import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.scene.Node;
+import javafx.scene.control.Label;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.stage.Window;
 import org.slf4j.Logger;
@@ -289,6 +292,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         if (currentSession != null && currentSession.getId().equals(sessionId)) {
             selectAfterCurrentDeletion();
         }
+        status.forgetSession(sessionId);
+        status.refresh();
         history.saveSessions(workspace, sessionSnapshots(sessions));
     }
 
@@ -309,6 +314,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             history.delete(workspace, id);
         }
         if (currentDeleted) selectAfterCurrentDeletion();
+        sessionIds.forEach(status::forgetSession);
+        status.refresh();
         history.saveSessions(workspace, sessionSnapshots(sessions));
     }
 
@@ -326,6 +333,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         String deletedId = currentSession.getId();
         chatService.get().deleteSession(deletedId);
         history.delete(currentWorkspaceId(), deletedId);
+        status.forgetSession(deletedId);
         sessions.remove(currentSession);
         sidebar.removeSession(deletedId);
         disposeTranscript();
@@ -348,6 +356,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         sidebar.clearSessions();
         sessions.clear();
         currentSession = null;
+        // The status binding runs before selection reload; discard any old selection it observed.
+        status.clearSessionUsage();
         load();
     }
 
@@ -547,6 +557,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 || !chatService.get().sessionTurns(currentSession.getId()).isEmpty()) return;
         chatService.get().deleteSession(currentSession.getId());
         history.delete(currentWorkspaceId(), currentSession.getId());
+        status.forgetSession(currentSession.getId());
         sessions.remove(currentSession);
         sidebar.removeSession(currentSession.getId());
     }
@@ -624,7 +635,9 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 message.getImagePaths(),
                 message.isAdopted(),
                 delivery,
-                usage);
+                usage,
+                message.getAttachments().stream().map(file ->
+                        file.toPath().toAbsolutePath().normalize().toString()).toList());
     }
 
     private static ChatMessage messageFrom(MessageSnapshot snapshot) {
@@ -637,7 +650,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 ChatMessage.Role.valueOf(snapshot.role().name()),
                 snapshot.content(),
                 snapshot.timestamp(),
-                List.of(),
+                snapshot.attachmentPaths().stream().map(File::new).toList(),
                 snapshot.imagePaths(),
                 delivery,
                 metrics);
@@ -663,8 +676,44 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     }
 
     private void renderPersistedMessage(ChatMessage message) {
-        List<ImageView> images = inlineImages.loadPersisted(message.getImagePaths());
-        transcript.addMessage(createMessageRow(message, images).root());
+        List<Node> images = new ArrayList<>();
+        for (String path : message.getImagePaths()) {
+            List<ImageView> previews = inlineImages.loadPersisted(List.of(path));
+            if (previews.isEmpty() || previews.getFirst().getImage() == null
+                    || previews.getFirst().getImage().isError()) {
+                images.add(unavailableAttachment(new File(path), true));
+            } else images.addAll(previews);
+        }
+        List<File> attachments = new ArrayList<>();
+        for (File file : message.getAttachments()) {
+            if (unavailableAttachmentFile(file))
+                images.add(unavailableAttachment(file, ChatMessage.isImageFile(file)));
+            else attachments.add(file);
+        }
+        ChatMessage displayed = message;
+        if (attachments.size() != message.getAttachments().size()) {
+            displayed = new ChatMessage(message.getRole(), message.getContent(), message.getTimestamp(),
+                    attachments, message.getImagePaths(), message.getDeliveryState(), message.getMetrics());
+            displayed.setAdopted(message.isAdopted());
+        }
+        transcript.addMessage(createMessageRow(displayed, images).root());
+    }
+
+    private static boolean unavailableAttachmentFile(File file) {
+        if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())
+                || !file.isFile() || !file.canRead()) return true;
+        if (!ChatMessage.isImageFile(file)) return false;
+        try {
+            return new Image(file.toURI().toString(), 140, 180, true, true).isError();
+        } catch (RuntimeException unavailable) {
+            return true;
+        }
+    }
+
+    private static Label unavailableAttachment(File file, boolean image) {
+        Label label = new Label((image ? "图片附件不可用：" : "附件不可用：") + file.getName());
+        label.getStyleClass().add("attachment-file-label");
+        return label;
     }
 
     private ChatMessageRowView createMessageRow(

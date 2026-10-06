@@ -71,20 +71,25 @@ public final class ScheduleTools {
             return ToolResponse.error("schedule_create",
                     "executionPolicy 必须是 RECURRING 或 UNTIL_CONDITION");
         }
+        int intervalValue = 1;
+        if ("interval".equals(type)) {
+            try {
+                if (!val.matches("[0-9]+")) throw new NumberFormatException();
+                intervalValue = Integer.parseInt(val);
+                if (intervalValue < 1) throw new NumberFormatException();
+            } catch (NumberFormatException invalid) {
+                return ToolResponse.error("schedule_create", "interval 必须是 1 到 2147483647 的整数分钟数");
+            }
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "schedule_create",
                 "创建定时任务「" + nm + "」（" + type + "：" + val + "）：" + pr)) {
             return ToolResponse.error("schedule_create", "用户取消了创建");
         }
         try {
             Task draft = schedules.createDraft(nm);
-            int intervalValue = 1;
             String dailyTime = "";
             String cronExpression = "";
             switch (type) {
-                case "interval" -> {
-                    try { intervalValue = Math.max(1, Integer.parseInt(val)); }
-                    catch (NumberFormatException ex) { return ToolResponse.error("schedule_create", "interval 需要分钟数，如 5"); }
-                }
                 case "daily" -> {
                     if (!val.matches("\\d{1,2}:\\d{2}")) return ToolResponse.error("schedule_create", "daily 需要 HH:mm，如 09:00");
                     dailyTime = val;

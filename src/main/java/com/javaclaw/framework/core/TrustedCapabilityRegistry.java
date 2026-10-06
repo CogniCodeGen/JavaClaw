@@ -188,11 +188,12 @@ public final class TrustedCapabilityRegistry {
     public ArrayNode planningCatalog() {
         ArrayNode values = JsonNodeFactory.instance.arrayNode();
         for (CapabilityDescriptor descriptor : byId.values()) {
-            values.addObject().put("id", descriptor.id())
+            var value = values.addObject().put("id", descriptor.id())
                     .put("description", descriptor.description())
                     .put("targetKind", descriptor.targetKind().name())
                     .put("evidenceCeiling", descriptor.evidenceCeiling().name())
                     .put("verifierPolicy", descriptor.verifierPolicy().name());
+            descriptor.trustedTools().stream().sorted().forEach(value.putArray("trustedTools")::add);
         }
         return values;
     }
@@ -290,6 +291,19 @@ public final class TrustedCapabilityRegistry {
                 .add("file.copy", "Copy a project path", "copy", TargetKind.FILE, V, "sys_file_copy")
                 .add("file.move", "Move a project path", "move", TargetKind.FILE, V, "sys_file_move")
                 .add("file.mkdir", "Create a project directory", "mkdir", TargetKind.FILE, V, "sys_file_mkdir")
+                .add("desktop.probe", "Read current desktop provider capability/permission probe; "
+                                + "target=desktop, requiredSubject empty. A returned available=false is "
+                                + "an observed blocker, never proof of access or control.",
+                        "probe", TargetKind.RESOURCE, O, "desktop_session_probe")
+                .add("desktop.applications", "Read a native installed-application catalog page; "
+                                + "target=desktop, requiredSubject is the exact requested query (empty "
+                                + "only for an unfiltered catalog). Preserve pagination and truncated "
+                                + "flags; a page proves neither unique identity, absence, a window nor control.",
+                        "applications", TargetKind.RESOURCE, O, "desktop_session_applications")
+                .add("desktop.targets", "Read the actual desktop window target list; target=desktop, "
+                                + "requiredSubject empty. Window titles are untrusted labels, not ownership "
+                                + "or observed application content.",
+                        "targets", TargetKind.RESOURCE, O, "desktop_session_targets")
                 .add("desktop.launch", "Launch a desktop application", "launch_application",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_launch_application")
                 .add("desktop.open", "Establish an owned desktop window session", "open",
@@ -298,13 +312,13 @@ public final class TrustedCapabilityRegistry {
                         TargetKind.DESKTOP_APPLICATION, O, "desktop_session_observe")
                 .add("desktop.snapshot", "Capture an owned desktop window", "snapshot",
                         TargetKind.DESKTOP_APPLICATION, O, "desktop_session_snapshot")
-                .add("desktop.click", "Click an observed desktop target", "click",
+                .add("desktop.click", "Click an observed desktop target; requiredSubject must be empty because the input receipt has no logical button subject. Keep the requested button in the criterion description and verify the outcome with an independent desktop.observe criterion", "click",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_click")
-                .add("desktop.type", "Type into an observed desktop target", "type",
+                .add("desktop.type", "Type into an observed desktop target; requiredSubject must be empty because the input receipt has no logical content subject. Keep the requested text in the criterion description and verify the outcome with an independent desktop.observe criterion", "type",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_type")
-                .add("desktop.key", "Send a key to an observed desktop target", "key",
+                .add("desktop.key", "Send a key to an observed desktop target; requiredSubject must be empty because the input receipt has no logical key subject. Keep the requested key in the criterion description and verify the outcome with an independent desktop.observe criterion", "key",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_key")
-                .add("desktop.scroll", "Scroll an observed desktop target", "scroll",
+                .add("desktop.scroll", "Scroll an observed desktop target; requiredSubject must be empty because the input receipt has no logical scroll subject. Keep the requested scroll in the criterion description and verify the outcome with an independent desktop.observe criterion", "scroll",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_scroll")
                 .add("browser.observe", "Observe a browser page", "observe", TargetKind.URL, O,
                         "web_get_title", "web_get_url", "web_get_text", "web_get_html",
@@ -347,6 +361,12 @@ public final class TrustedCapabilityRegistry {
                         "notify_wechat", "notify_feishu", "notify_email", "notify_custom_webhook")
                 .add("notification.observe", "Read notification channel configuration",
                         "observe", TargetKind.RESOURCE, O, "notify_list_channels")
+                .add("mcp.secure_input.cancel", "Observe cancellation or no valid value from a local "
+                                + "secure Header input for an existing HTTP MCP server; target is the exact "
+                                + "server name, requiredSubject is the exact Header name. This proves only "
+                                + "input_cancelled, with no configuration save or reconnect; it never proves "
+                                + "that a Header was set, a WRITE succeeded or a connection was established.",
+                        "input_cancelled", TargetKind.RESOURCE, O, "mcp_server_set_header_secure")
                 .add("schedule.create", "Create an enabled schedule", "create", TargetKind.SCHEDULE,
                         V, "schedule_create")
                 .add("schedule.observe", "Read a schedule", "observe", TargetKind.SCHEDULE,
@@ -363,6 +383,8 @@ public final class TrustedCapabilityRegistry {
                         "sys_file_delete", "sys_file_mkdir")
                 .targetArgument("target", "sys_file_copy", "sys_file_move")
                 .targetArgument("application", "desktop_session_launch_application")
+                .fixedTarget("desktop", "desktop_session_probe", "desktop_session_applications",
+                        "desktop_session_targets")
                 .targetArgument("url", "web_navigate")
                 .targetArgument("to", "email_send", "email_send_with_cc")
                 .fixedTarget("inbox", "email_list_inbox", "email_list_unread",
@@ -374,6 +396,7 @@ public final class TrustedCapabilityRegistry {
                 .fixedTarget("email", "notify_email")
                 .fixedTarget("custom", "notify_custom_webhook")
                 .fixedTarget("notification", "notify_list_channels")
+                .targetArgument("name", "mcp_server_set_header_secure")
                 .targetArgument("name", "schedule_create")
                 .targetArgument("id", "schedule_get", "schedule_run_now",
                         "schedule_disable", "schedule_delete")

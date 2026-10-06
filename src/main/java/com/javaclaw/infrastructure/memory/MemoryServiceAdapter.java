@@ -5,6 +5,7 @@ import com.javaclaw.application.error.NotFoundException;
 import com.javaclaw.application.memory.MemoryApplicationService.ChangeItem;
 import com.javaclaw.application.memory.MemoryApplicationService.CorrectionItem;
 import com.javaclaw.application.memory.MemoryApplicationService.EmbeddingState;
+import com.javaclaw.application.memory.MemoryApplicationService.EmbeddingStatus;
 import com.javaclaw.application.memory.MemoryApplicationService.EntityItem;
 import com.javaclaw.application.memory.MemoryApplicationService.EpisodeItem;
 import com.javaclaw.application.memory.MemoryApplicationService.FactItem;
@@ -78,7 +79,19 @@ public final class MemoryServiceAdapter implements MemoryPort {
                         ? List.of() : documents(knowledge.allKnowledgeChunks()), persona(memory.getPersona()),
                 memory.corrections().stream().filter(Objects::nonNull).map(this::correction).toList(),
                 memory.recentChangeLog(CHANGE_LIMIT).stream().map(this::change).toList(),
-                new EmbeddingState(memory.embeddingError(), memory.pendingCount()));
+                embeddingState());
+    }
+
+    private EmbeddingState embeddingState() {
+        var health = memory.embeddingHealth();
+        EmbeddingStatus status = switch (health.status()) {
+            case UNCONFIGURED -> EmbeddingStatus.UNCONFIGURED;
+            case CHECKING -> EmbeddingStatus.CHECKING;
+            case HEALTHY -> EmbeddingStatus.HEALTHY;
+            case DEGRADED -> EmbeddingStatus.DEGRADED;
+            case UNAVAILABLE -> EmbeddingStatus.UNAVAILABLE;
+        };
+        return new EmbeddingState(status, health.lastError(), memory.pendingCount());
     }
 
     @Override public List<com.javaclaw.memory.MemoryGraphScope> scopes() { return memory.scopes(); }

@@ -152,7 +152,7 @@ public final class GraphExecutionManager implements AutoCloseable {
         }
     }
 
-    public boolean cancel(String runId) {
+    public synchronized boolean cancel(String runId) {
         CancellationToken token = active.get(runId);
         if (token != null) return token.cancel();
         GraphRun run = store.loadRun(runId);

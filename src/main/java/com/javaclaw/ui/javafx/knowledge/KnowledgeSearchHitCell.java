@@ -3,6 +3,8 @@ package com.javaclaw.ui.javafx.knowledge;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.Scope;
 import com.javaclaw.application.knowledge.KnowledgeApplicationService.SearchHit;
 import com.javaclaw.platform.fxml.EmbeddedFxmlLoader;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.DoubleBinding;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -18,7 +20,8 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 /** Search result cell; FXML defines structure and Java only renders highlighted text runs. */
-public final class KnowledgeSearchHitCell extends ListCell<SearchHit> {
+public final class
+KnowledgeSearchHitCell extends ListCell<SearchHit> {
     private final Supplier<String> query;
     @FXML private VBox root;
     @FXML private Label documentLabel;
@@ -34,6 +37,15 @@ public final class KnowledgeSearchHitCell extends ListCell<SearchHit> {
                         "/fxml/knowledge/knowledge-search-hit-cell.fxml"),
                 this, VBox.class);
         if (loaded != root) throw new IllegalStateException("知识检索 Cell FXML 根节点不一致");
+
+        DoubleBinding availableWidth = Bindings.createDoubleBinding(
+                () -> Math.max(0, getWidth() - getInsets().getLeft() - getInsets().getRight()),
+                widthProperty(), insetsProperty());
+        root.setMinWidth(0);
+        root.prefWidthProperty().bind(availableWidth);
+        root.maxWidthProperty().bind(availableWidth);
+        snippetFlow.setMinWidth(0);
+        snippetFlow.setMaxWidth(Double.MAX_VALUE);
     }
 
     @Override

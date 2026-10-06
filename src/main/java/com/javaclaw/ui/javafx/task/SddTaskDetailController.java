@@ -242,7 +242,8 @@ public final class SddTaskDetailController {
     }
 
     private void renderOverview(Task task, OpenSpecChange change) {
-        boolean hasResult = task.result() != null && !task.result().isBlank();
+        boolean hasResult = task.state() != SddTaskState.RUNNING
+                && task.result() != null && !task.result().isBlank();
         visible(resultCard, hasResult);
         boolean failed = task.state() == SddTaskState.FAILED;
         resultCard.getStyleClass().remove("sdd-result-card-failed");
@@ -318,7 +319,8 @@ public final class SddTaskDetailController {
             String value = duration.toDays() > 0 ? duration.toDays() + "d " + duration.toHoursPart() + "h"
                     : duration.toHours() > 0 ? duration.toHours() + "h " + duration.toMinutesPart() + "m"
                     : duration.toMinutes() + "m " + duration.toSecondsPart() + "s";
-            return new String[]{value, task.state() == SddTaskState.RUNNING ? "运行中" : "累计"};
+            return new String[]{value, task.state() == SddTaskState.RUNNING
+                    ? "至今（含等待）" : "至最后更新（含等待）"};
         } catch (RuntimeException failure) {
             return new String[]{"—", ""};
         }

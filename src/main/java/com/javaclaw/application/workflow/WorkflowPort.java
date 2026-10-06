@@ -18,6 +18,10 @@ public interface WorkflowPort {
 
     void saveDraft(GraphDefinition graph);
 
+    default boolean delete(String workflowId) {
+        throw new UnsupportedOperationException("当前工作流存储不支持删除");
+    }
+
     String publish(String workflowId);
 
     List<ValidationIssue> validate(GraphDefinition graph);

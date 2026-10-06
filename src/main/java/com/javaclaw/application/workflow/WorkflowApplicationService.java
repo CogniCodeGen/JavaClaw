@@ -23,6 +23,10 @@ public interface WorkflowApplicationService {
 
     void saveDraft(GraphDefinition graph);
 
+    default OperationResult delete(String workflowId) {
+        throw new UnsupportedOperationException("当前工作流服务不支持删除");
+    }
+
     PublishResult publish(GraphDefinition graph);
 
     List<ValidationIssue> validate(GraphDefinition graph);

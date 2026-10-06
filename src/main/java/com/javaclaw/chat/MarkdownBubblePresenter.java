@@ -109,6 +109,11 @@ final class MarkdownBubblePresenter {
     }
 
     void replaceText(String text) {
+        replaceStreamingText(text);
+        finish();
+    }
+
+    void replaceStreamingText(String text) {
         if (disposed) return;
         invalidatePendingWork();
         viewModel.replace(text);
@@ -116,7 +121,6 @@ final class MarkdownBubblePresenter {
         updatePlainFallbackHeight();
         showPlainImmediately();
         setState(MarkdownBubble.State.STREAMING_PLAIN);
-        finish();
     }
 
     void refresh() {
@@ -169,7 +173,10 @@ final class MarkdownBubblePresenter {
         plainView.setEditable(false);
         plainView.setWrapText(true);
         plainView.setContextMenu(MarkdownRenderedViewFactory.contextMenu(
-                plainView::copy, plainView::selectAll, viewModel::text));
+                plainView::copy, () -> {
+                    plainView.requestFocus();
+                    plainView.selectAll();
+                }, viewModel::text));
         plainView.totalHeightEstimateProperty().addListener((observable, previous, current) -> {
             if (current != null && current.doubleValue() > 0) {
                 setPlainHeight(current.doubleValue() + 4);

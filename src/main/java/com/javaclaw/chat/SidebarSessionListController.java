@@ -12,6 +12,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * Coordinates session filtering, grouping, selection and batch actions.
@@ -79,6 +81,7 @@ public final class SidebarSessionListController
         });
         searchListener = (observable, previous, query) -> {
             viewModel.searchQueryProperty().set(query == null ? "" : query);
+            checkedSessionIds.clear();
             refreshProjection();
         };
         searchField.textProperty().addListener(searchListener);
@@ -178,37 +181,47 @@ public final class SidebarSessionListController
         manageButton.setText(enabled ? "完成" : "管理");
         batchDeleteRow.setVisible(enabled);
         batchDeleteRow.setManaged(enabled);
-        updateBatchButtons();
         refreshProjection();
     }
 
     @FXML
     private void onToggleSelectAll() {
-        if (checkedSessionIds.size() < sessions.size()) {
-            sessions.stream().map(SessionState::id).forEach(checkedSessionIds::add);
+        Set<String> visibleIds = filteredSessions().stream()
+                .map(SessionState::id).collect(Collectors.toSet());
+        checkedSessionIds.retainAll(visibleIds);
+        if (!checkedSessionIds.containsAll(visibleIds)) {
+            checkedSessionIds.addAll(visibleIds);
         } else {
             checkedSessionIds.clear();
         }
-        updateBatchButtons();
         refreshProjection();
     }
 
     @FXML
     private void onBatchDelete() {
-        if (checkedSessionIds.isEmpty()) return;
+        List<SessionState> selectedSessions = filteredSessions().stream()
+                .filter(session -> checkedSessionIds.contains(session.id()))
+                .toList();
+        if (selectedSessions.isEmpty()) return;
+        List<String> selectedIds = selectedSessions.stream().map(SessionState::id).toList();
+        String selectedDetails = selectedSessions.stream()
+                .map(session -> normalizedTitle(session.title()) + "（"
+                        + Objects.toString(session.id(), "ID 缺失") + "）")
+                .collect(Collectors.joining("\n"));
+        Stage owner = root.getScene() != null && root.getScene().getWindow() instanceof Stage stage
+                ? stage : null;
         Alert alert = ui.createConfirmAlert(
                 "确认批量删除",
-                "确定要删除选中的 " + checkedSessionIds.size() + " 个会话吗？\n此操作不可恢复。",
-                null);
+                "确定要删除选中的 " + selectedIds.size() + " 个会话吗？\n此操作不可恢复。"
+                        + "\n\n即将删除的会话：\n" + selectedDetails,
+                owner);
         alert.showAndWait().filter(ButtonType.OK::equals).ifPresent(ignored -> {
-            List<String> selected = List.copyOf(checkedSessionIds);
-            if (onBatchDeleteSessions != null) onBatchDeleteSessions.accept(selected);
+            if (onBatchDeleteSessions != null) onBatchDeleteSessions.accept(selectedIds);
             viewModel.batchModeProperty().set(false);
             checkedSessionIds.clear();
             manageButton.setText("管理");
             batchDeleteRow.setVisible(false);
             batchDeleteRow.setManaged(false);
-            updateBatchButtons();
             refreshProjection();
         });
     }
@@ -240,20 +253,21 @@ public final class SidebarSessionListController
     public void checked(String sessionId, boolean selected) {
         if (selected) checkedSessionIds.add(sessionId);
         else checkedSessionIds.remove(sessionId);
-        updateBatchButtons();
         refreshProjection();
     }
 
-    private void updateBatchButtons() {
+    private void updateBatchButtons(int visibleCount) {
         int selected = checkedSessionIds.size();
-        int total = sessions.size();
         batchDeleteButton.setText(selected > 0 ? "删除选中（" + selected + "）" : "删除选中");
         batchDeleteButton.setDisable(selected == 0);
-        selectAllButton.setText(selected >= total && total > 0 ? "取消全选" : "全选");
+        selectAllButton.setText(selected == visibleCount && visibleCount > 0 ? "取消全选" : "全选");
+        selectAllButton.setDisable(visibleCount == 0);
     }
 
     private void refreshProjection() {
         List<SessionState> visible = filteredSessions();
+        checkedSessionIds.retainAll(visible.stream().map(SessionState::id).collect(Collectors.toSet()));
+        updateBatchButtons(visible.size());
         List<SidebarSessionItem> projection = new ArrayList<>();
         for (int start = 0; start < visible.size();) {
             String group = groupKey(visible.get(start).createdAt());

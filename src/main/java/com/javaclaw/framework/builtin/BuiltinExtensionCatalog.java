@@ -97,16 +97,17 @@ public final class BuiltinExtensionCatalog {
                             return correctionPrompt.contribute(request, state);
                         }
                     });
-                    registrar.outputGuard((output, request, runId) ->
-                            memoryMutations.protectOutput(runId, request, output));
+                    registrar.outputGuard(com.javaclaw.framework.core.ProvisionalOutputGuard.checked(
+                            (output, request, runId) -> memoryMutations.protectOutput(runId, request, output)));
                 }));
         extensions.add(declarative("memory.distillation", "Memory Distillation",
                 "Post-run asynchronous distillation workflow using ModelTaskGateway",
                 schema(true), 40, dependsOnGraph(), registrar ->
-                        registrar.outputGuard((output, request, runId) -> {
+                        registrar.outputGuard(com.javaclaw.framework.core.ProvisionalOutputGuard.finalEffect(
+                                (output, request, runId) -> {
                             memoryMutations.distill(runId, request, output);
                             return output;
-                        })));
+                        }))));
         extensions.add(declarative("memory.habit", "Habit Review",
                 "Due-checked habit-review workflow after durable episode distillation",
                 intervalSchema(), 50,
@@ -133,7 +134,8 @@ public final class BuiltinExtensionCatalog {
                 "Reply repair and PlanRevision without a second execution loop",
                 schema(true), 30,
                 List.of(new ExtensionDependency("gepa.evaluate", ">=2.0.0 <3.0.0", false)),
-                registrar -> registrar.outputGuard((output, request, runId) -> output)));
+                registrar -> registrar.outputGuard(com.javaclaw.framework.core.ProvisionalOutputGuard.finalEffect(
+                        (output, request, runId) -> output))));
         extensions.add(declarative("gepa.goal", "Structured Goals",
                 "Goal decomposition contributed as reasoning context",
                 schema(true), 40, List.of(), registrar ->
@@ -271,7 +273,9 @@ public final class BuiltinExtensionCatalog {
         ObjectNode schema = BuiltinSchemas.objectSchema();
         ObjectNode properties = (ObjectNode) schema.withObject("/properties");
         properties.putObject("mode").put("const", "unavailable");
-        properties.putObject("reason").put("const", "answer_too_large");
+        properties.putObject("reason").put("type", "string")
+                .putArray("enum").add("answer_too_large").add("structured_output_invalid")
+                .add("evaluation_timeout");
         properties.putObject("summary").put("type", "string").put("maxLength", 500);
         schema.putArray("required").add("mode").add("reason").add("summary");
         return schema;

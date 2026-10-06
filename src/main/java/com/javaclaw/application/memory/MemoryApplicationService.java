@@ -68,7 +68,7 @@ public interface MemoryApplicationService {
             persona = persona == null ? PersonaDraft.empty() : persona;
             corrections = List.copyOf(corrections == null ? List.of() : corrections);
             changes = List.copyOf(changes == null ? List.of() : changes);
-            embedding = embedding == null ? new EmbeddingState("", 0) : embedding;
+            embedding = embedding == null ? new EmbeddingState(EmbeddingStatus.UNCONFIGURED, "", 0) : embedding;
         }
     }
 
@@ -180,9 +180,19 @@ public interface MemoryApplicationService {
         }
     }
 
-    record EmbeddingState(String error, int pendingCount) {
-        public EmbeddingState { error = normalizeText(error); }
-        public boolean healthy() { return error.isBlank(); }
+    enum EmbeddingStatus { UNCONFIGURED, CHECKING, HEALTHY, DEGRADED, UNAVAILABLE }
+
+    record EmbeddingState(EmbeddingStatus status, String error, int pendingCount) {
+        public EmbeddingState {
+            status = status == null ? EmbeddingStatus.UNCONFIGURED : status;
+            error = normalizeText(error);
+        }
+        /** Compatibility for error-only snapshots; runtime adapters provide an explicit health status. */
+        public EmbeddingState(String error, int pendingCount) {
+            this(normalizeText(error).isBlank() ? EmbeddingStatus.HEALTHY : EmbeddingStatus.UNAVAILABLE,
+                    error, pendingCount);
+        }
+        public boolean healthy() { return status == EmbeddingStatus.HEALTHY; }
         public boolean degraded() { return pendingCount > 0 || !healthy(); }
         public boolean canRefill() { return pendingCount > 0 && healthy(); }
     }

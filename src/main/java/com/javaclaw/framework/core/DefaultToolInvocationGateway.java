@@ -65,9 +65,16 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
     private CompletionStage<ToolInvocationResult> invokeInternal(
             ToolInvocationRequest request, boolean inline) {
         var descriptor = request.tool().descriptor();
-        boolean trustedContextRead = inline
+        // Trusted recall is answer context even on the normal asynchronous execution path.
+        boolean trustedContextRead = (inline
                 && com.javaclaw.framework.springai.TrustedFrameworkToolIdentity
-                        .isContextRead(request.tool());
+                        .isContextRead(request.tool()))
+                || (com.javaclaw.framework.builtin.memory.MemoryRecallExtension
+                        .isTrustedRecallTool(request.tool())
+                    && descriptor.idempotent()
+                    && descriptor.effectPolicy() == ToolEffectPolicy.LEGACY
+                    && descriptor.requiredPermissions().equals(
+                            com.javaclaw.framework.api.PermissionSet.of("tool.read")));
         boolean trustedToolCatalog = com.javaclaw.framework.springai.TrustedFrameworkToolIdentity
                 .isToolCatalog(request.tool());
         if (!ToolGroupAccess.allows(request.runRequest(), descriptor.group())) {

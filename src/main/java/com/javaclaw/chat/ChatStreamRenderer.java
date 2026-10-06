@@ -34,6 +34,8 @@ final class ChatStreamRenderer {
 
     private AssistantMessageView assistantMessage;
     private final StringBuilder replyBuffer = new StringBuilder();
+    private String replySegmentId;
+    private int replySegmentOffset;
     private String planAgentName;
     private final StringBuilder planAgentBuffer = new StringBuilder();
     private String planAgentFallback;
@@ -63,6 +65,8 @@ final class ChatStreamRenderer {
         finalPlanDraft = null;
         planAgentFallback = null;
         replyBuffer.setLength(0);
+        replySegmentId = null;
+        replySegmentOffset = 0;
         planAgentBuffer.setLength(0);
         activeToolName = null;
         displayedImagePaths.clear();
@@ -92,6 +96,53 @@ final class ChatStreamRenderer {
             thinking.setReplying();
         }
         replyBuffer.append(chunk);
+        MarkdownBubble reply = activeReply();
+        if (reply != null) {
+            reply.appendText(chunk);
+            revealReply();
+        }
+    }
+
+    void updateReplyStream(String action, String segmentId, String text) {
+        if (assistantMessage == null || action == null
+                || segmentId == null || segmentId.isBlank()) return;
+        String id = segmentId.strip();
+        switch (action) {
+            case "begin" -> {
+                if (id.equals(replySegmentId)) {
+                    replaceReplySegment("");
+                } else {
+                    replySegmentId = id;
+                    replySegmentOffset = replyBuffer.length();
+                }
+            }
+            case "reset" -> {
+                if (id.equals(replySegmentId)) replaceReplySegment("");
+            }
+            case "replace" -> {
+                if (text == null) return;
+                if (replySegmentId == null) {
+                    replySegmentId = id;
+                    replySegmentOffset = replyBuffer.length();
+                }
+                if (id.equals(replySegmentId)) replaceReplySegment(text);
+            }
+            default -> { }
+        }
+    }
+
+    private void replaceReplySegment(String text) {
+        replyBuffer.setLength(replySegmentOffset);
+        if (replyBuffer.isEmpty() && !text.isEmpty()) thinking.setReplying();
+        replyBuffer.append(text);
+        refreshLiveReply();
+    }
+
+    private void refreshLiveReply() {
+        MarkdownBubble reply = activeReply();
+        if (reply == null) return;
+        reply.replaceStreamingText(replyBuffer.toString());
+        if (!replyBuffer.isEmpty()) revealReply();
     }
 
     void appendSubAgent(String toolName, String content, ChunkKind kind) {
@@ -200,6 +251,7 @@ final class ChatStreamRenderer {
         if (assistantMessage == null) return;
         if (!replyBuffer.isEmpty()) replyBuffer.append("\n\n");
         replyBuffer.append("[循环中断] ").append(warning);
+        refreshLiveReply();
         thinking.recordPipelineProgress("loop-warning", "循环检测",
                 ThinkingContentRenderer.StageState.ERROR, "已中断循环");
     }
@@ -278,6 +330,8 @@ final class ChatStreamRenderer {
     void resetReferences() {
         assistantMessage = null;
         replyBuffer.setLength(0);
+        replySegmentId = null;
+        replySegmentOffset = 0;
         planAgentName = null;
         planAgentBuffer.setLength(0);
         planAgentFallback = null;

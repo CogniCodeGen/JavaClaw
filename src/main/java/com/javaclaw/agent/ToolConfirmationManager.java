@@ -193,6 +193,13 @@ public class ToolConfirmationManager {
                 toolName, description, false, operationParameters);
     }
 
+    public static ConfirmOutcome requestConfirmationOutcome(
+            ToolCallOrigin origin, String toolName, String description,
+            java.util.function.BooleanSupplier cancelled) {
+        return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin,
+                toolName, description, false, java.util.Map.of(), cancelled);
+    }
+
     /**
      * 高风险 shell 命令专用确认：<b>AUTO 总闸对其不生效</b>，其余漏斗与统一路径一致。
      *
@@ -307,6 +314,15 @@ public class ToolConfirmationManager {
     private static ConfirmOutcome confirmInternal(ToolCallOrigin origin, String toolName,
             String description, boolean humanGateInAuto,
             java.util.Map<String, String> operationParameters) {
+        return confirmInternal(origin, toolName, description, humanGateInAuto, operationParameters, () -> false);
+    }
+
+    private static ConfirmOutcome confirmInternal(ToolCallOrigin origin, String toolName,
+            String description, boolean humanGateInAuto,
+            java.util.Map<String, String> operationParameters,
+            java.util.function.BooleanSupplier cancelled) {
+        java.util.Objects.requireNonNull(cancelled, "cancelled");
+        if (cancelled.getAsBoolean()) return ConfirmOutcome.DENIED;
         if (ToolRiskRegistry.isKnownHostReadOnly(toolName)) return ConfirmOutcome.ALLOWED_AUTO;
         ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
         if (level == null && !ToolRiskRegistry.isKnownHostTool(toolName)) {
@@ -376,7 +392,9 @@ public class ToolConfirmationManager {
                 toolName, riskLabel(effectiveLevel), description,
                 kind, timeoutSeconds(origin),
                 kind == ConfirmKind.DOUBLE_CONFIRM ? DOUBLE_CONFIRM_KEYWORD : "",
-                offerAllowAll, operationParameters));
+                offerAllowAll, operationParameters), cancelled);
+
+        if (cancelled.getAsBoolean()) return ConfirmOutcome.DENIED;
 
         if (decision == ConfirmDecision.ALLOW_ALL && offerAllowAll) {
             recordAllowAll(origin.taskId());

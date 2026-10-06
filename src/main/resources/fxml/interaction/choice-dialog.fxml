@@ -9,7 +9,7 @@
       spacing="10.0" style="-fx-padding: 8 4 4 4;" prefWidth="460.0">
     <children>
         <Label fx:id="messageLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
-        <Label text="账号：" styleClass="settings-group-title"/>
+        <Label text="选项：" styleClass="settings-group-title"/>
         <ComboBox fx:id="optionBox" maxWidth="1.7976931348623157E308"
                   styleClass="settings-field"/>
     </children>

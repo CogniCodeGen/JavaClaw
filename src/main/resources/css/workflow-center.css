@@ -413,8 +413,8 @@
 .workflow-console {
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
     -fx-font-size: 11px;
-    -fx-control-inner-background: #151a22;
-    -fx-text-fill: #d7e0ea;
+    -fx-control-inner-background: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-body;
     -fx-border-color: transparent;
     -fx-background-radius: 9;
     -fx-border-radius: 9;

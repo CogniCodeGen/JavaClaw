@@ -14,12 +14,15 @@ import com.javaclaw.framework.api.RunScope;
 import com.javaclaw.workflow.model.StatePatch;
 
 import java.util.Map;
+import java.util.UUID;
 
 /** Durable Agent owner of an existing graph execution; never creates a second scheduler. */
 final class GraphAgentTurn {
     static final String OWNER_KEY = "_agent.turnId";
+    static final String ATTEMPT_KEY = "_agent.driverAttemptId";
     private final AgentClient agents;
     private final ManagedTurn turn;
+    private final String driverAttempt = UUID.randomUUID().toString();
     private String activeStep;
 
     private GraphAgentTurn(AgentClient agents, ManagedTurn turn) {
@@ -53,16 +56,20 @@ final class GraphAgentTurn {
             turn.close();
             throw failure;
         }
+        GraphAgentTurn owner = new GraphAgentTurn(agents, turn);
         run.state(run.state().apply(StatePatch.builder()
-                .set(OWNER_KEY, turn.id().value()).build()));
-        return new GraphAgentTurn(agents, turn);
+                .set(OWNER_KEY, turn.id().value())
+                .set(ATTEMPT_KEY, owner.driverAttempt).build()));
+        return owner;
     }
 
     void onEvent(GraphEvent event) {
         if (turn.cancelled()) return;
         var payload = GraphEventJson.encode(event);
         if (event instanceof GraphEvent.NodeStarted started) {
-            activeStep = "graph:" + event.runId() + ":visit:" + started.step();
+            // Resuming the same node is a new orchestration attempt; the prior
+            // paused attempt's step may already have been durably settled.
+            activeStep = "graph:" + event.runId() + ":attempt:" + driverAttempt + ":visit:" + started.step();
             turn.emit("core.step.started", JsonNodeFactory.instance.objectNode()
                     .put("stepId", activeStep).put("kind", "ORCHESTRATION").set("input", payload));
         } else if (event instanceof GraphEvent.NodeCompleted) {

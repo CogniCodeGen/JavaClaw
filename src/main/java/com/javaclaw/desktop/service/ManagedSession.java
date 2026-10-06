@@ -479,12 +479,20 @@ final class ManagedSession implements AutoCloseable {
                     case SCROLL -> DesktopElement.SCROLL;
                     case KEY -> 0;
                 };
-                if (required != 0 && (element.actions() & required) == 0)
-                    return new DesktopActionResult(DesktopActionResult.Status.STALE_FRAME,
-                            "此元素不支持所请求的动作，请重新观察并选择可操作目标",
-                            frame.windowGeneration())
-                            .withContext(DesktopActionResult.Mode.NONE, action.observationId(),
-                                    DesktopActionResult.NextStep.OBSERVE);
+                if (required != 0 && (element.actions() & required) == 0) {
+                    String capability = switch (action.kind()) {
+                        case CLICK -> "PRESS 按压";
+                        case TYPE -> "WRITE 写入";
+                        case SCROLL -> "SCROLL 滚动";
+                        case KEY -> "按键";
+                    };
+                    return new DesktopActionResult(DesktopActionResult.Status.FAILED,
+                            "所选辅助功能目标不支持" + capability
+                                    + "动作；请重新观察并选择具备该能力的控件",
+                            frame.windowGeneration(), DesktopActionResult.Mode.NONE,
+                            DesktopActionResult.Reason.INVALID_TARGET, false,
+                            action.observationId(), DesktopActionResult.NextStep.OBSERVE);
+                }
                 x = element.centerX();
                 y = element.centerY();
                 regionX = element.x();

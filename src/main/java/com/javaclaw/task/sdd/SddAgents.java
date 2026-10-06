@@ -57,6 +57,12 @@ public interface SddAgents {
     ExecutionResult executeTask(TaskContext ctx, TaskItem current, List<TaskItem> doneItems,
                                 List<Capability> specs);
 
+    /** Host approval fingerprint; implementations without durable evidence retain the legacy path. */
+    default ExecutionResult executeTask(TaskContext ctx, TaskItem current, List<TaskItem> doneItems,
+                                        List<Capability> specs, String approvedBasis) {
+        return executeTask(ctx, current, doneItems, specs);
+    }
+
     /**
      * 验收阶段：综合场景核验有未通过项时，产出补做的实现项动作（追加到 tasks.md，不动已完成项）。
      *
@@ -74,13 +80,21 @@ public interface SddAgents {
      *
      * @param summary   执行摘要（写回日志/审计）
      * @param splitInto 非空表示该项太大、请求就地拆解为这些子项；空表示已就地完成
+     * @param executionId 宿主捕获的实际实现执行身份；空值不授予任何可信验收结论
      */
-    record ExecutionResult(String summary, List<String> splitInto) {
+    record ExecutionResult(String summary, List<String> splitInto, String executionId) {
         public ExecutionResult {
             splitInto = splitInto == null ? List.of() : List.copyOf(splitInto);
+            executionId = executionId == null ? "" : executionId;
+        }
+        public ExecutionResult(String summary, List<String> splitInto) {
+            this(summary, splitInto, "");
         }
         public static ExecutionResult done(String summary) {
             return new ExecutionResult(summary, List.of());
+        }
+        public static ExecutionResult done(String summary, String executionId) {
+            return new ExecutionResult(summary, List.of(), executionId);
         }
         public static ExecutionResult split(List<String> children) {
             return new ExecutionResult("（实现项过大，请求拆解）", children);

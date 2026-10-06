@@ -34,14 +34,52 @@ public final class ThreadMemoryCleanup {
             if (Files.isSymbolicLink(current)) throw new IllegalArgumentException("记忆清理不能穿过符号链接");
     }
     private static List<Object> markHabitSources(MemoryRoot root, String thread) {
+        if (thread == null || thread.isBlank()) {
+            throw new IllegalArgumentException("记忆清理必须指定来源会话");
+        }
         List<Object> changed = new ArrayList<>();
         java.util.function.Consumer<com.javaclaw.memory.model.Fact> mark = fact -> {
             if (!fact.evidenceDeleted && fact.evidenceKeys != null
-                    && fact.evidenceKeys.stream().anyMatch(key -> key.startsWith(thread + ":"))) {
+                    && fact.evidenceKeys.stream().anyMatch(key -> belongsToThread(key, thread))) {
                 fact.evidenceDeleted = true; changed.add(fact);
             }
         };
         root.facts.iterate(mark); root.pendingFacts.iterate(mark);
+        var stats = root.stats;
+        if (stats == null) return changed;
+        boolean progressChanged = false;
+        if (stats.pendingHabitObservations != null) {
+            var observations = new ArrayList<>(stats.pendingHabitObservations);
+            if (observations.removeIf(observation -> observation != null
+                    && belongsToThread(observation.evidenceKey, thread))) {
+                stats.pendingHabitObservations = observations;
+                changed.add(observations);
+                progressChanged = true;
+            }
+        }
+        if (stats.pendingHabitEvidenceKeys != null) {
+            var keys = new ArrayList<>(stats.pendingHabitEvidenceKeys);
+            if (keys.removeIf(key -> belongsToThread(key, thread))) {
+                stats.pendingHabitEvidenceKeys = keys;
+                changed.add(keys);
+                progressChanged = true;
+            }
+        }
+        if (progressChanged) {
+            // An in-flight review must not overwrite deletion with its older ledger snapshot.
+            stats.habitReviewRevision++;
+            changed.add(stats);
+        }
         return changed;
+    }
+
+    private static boolean belongsToThread(String evidenceKey, String thread) {
+        if (evidenceKey == null) return false;
+        int separator = evidenceKey.indexOf(':');
+        // Evidence keys have two nonempty identity components. Ambiguous legacy keys
+        // must never let deletion of one thread remove another thread's observations.
+        return separator > 0 && separator == evidenceKey.lastIndexOf(':')
+                && separator < evidenceKey.length() - 1
+                && evidenceKey.substring(0, separator).equals(thread);
     }
 }

@@ -1,5 +1,7 @@
 package com.javaclaw.task.sdd;
 
+import com.javaclaw.framework.api.RunId;
+
 /**
  * 带阶段标签的 token 汇聚端口 —— 让 token 用量按 SDD 阶段（proposal/spec/design/plan/
  * implement/verify/remediate）分桶记账，便于定位"钱花在哪"并验证优化效果。
@@ -20,6 +22,11 @@ public interface SddTokenSink {
      * @param outputTokens 本次输出 token
      */
     void record(String phase, long inputTokens, long outputTokens);
+
+    /** 携带持久子轮次标识，支持恢复重放时对同一笔阶段用量去重。 */
+    default void record(String phase, RunId runId, long inputTokens, long outputTokens) {
+        record(phase, inputTokens, outputTokens);
+    }
 
     /** 空实现（无记账）。 */
     SddTokenSink NOOP = (p, i, o) -> {};

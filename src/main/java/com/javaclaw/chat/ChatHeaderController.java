@@ -21,6 +21,7 @@ public final class ChatHeaderController implements AutoCloseable {
     @FXML private Button sidebarToggleButton;
     @FXML private Label statusDot;
     @FXML private Label titleLabel;
+    @FXML private Tooltip titleTooltip;
     @FXML private Label metadataLabel;
     @FXML private Label localModeBadge;
     @FXML private Label embeddingHealthBadge;
@@ -37,6 +38,7 @@ public final class ChatHeaderController implements AutoCloseable {
     @FXML
     private void initialize() {
         titleLabel.textProperty().bind(viewModel.titleProperty());
+        titleTooltip.setText(viewModel.titleProperty().get());
         metadataLabel.textProperty().bind(viewModel.metadataProperty());
         embeddingHealthBadge.textProperty().bind(viewModel.embeddingProperty());
         localModeBadge.visibleProperty().bind(viewModel.localModeProperty());
@@ -76,7 +78,11 @@ public final class ChatHeaderController implements AutoCloseable {
         settingsButton.setTooltip(new Tooltip("设置（" + modifier + " + ,）"));
     }
 
-    void showTitle(String title, String metadata) { viewModel.showTitle(title, metadata); }
+    void showTitle(String title, String metadata) {
+        String fullTitle = title == null || title.isBlank() ? "JavaClaw 工作区" : title;
+        viewModel.showTitle(fullTitle.replaceAll("(?U)\\s+", " ").strip(), metadata);
+        titleTooltip.setText(fullTitle);
+    }
     void setStreaming(boolean value) { viewModel.streamingProperty().set(value); }
     void setLocalMode(boolean value) { viewModel.localModeProperty().set(value); }
     void setSidebarToggleVisible(boolean value) {
@@ -110,6 +116,7 @@ public final class ChatHeaderController implements AutoCloseable {
     @Override
     public void close() {
         titleLabel.textProperty().unbind();
+        titleLabel.setTooltip(null);
         metadataLabel.textProperty().unbind();
         embeddingHealthBadge.textProperty().unbind();
         localModeBadge.visibleProperty().unbind();

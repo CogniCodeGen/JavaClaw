@@ -245,7 +245,7 @@ public class KnowledgeExpert implements AutoCloseable {
                 || lowerName.endsWith(".html") || lowerName.endsWith(".htm");
     }
 
-    /** 把分块嵌入后写入指定 scope 的库，返回成功写入数（嵌入失败的分块跳过）。 */
+    /** 全部分块嵌入成功后，在指定 scope 的库中整批替换同名文档。 */
     private int storeChunks(String docName, Scope scope, List<String> chunks) {
         if (chunks.stream().anyMatch(SensitiveDataRedactor::containsLikelyCredential)) {
             throw new SecurityException(SensitiveDataRedactor.credentialStorageDeniedReason());
@@ -253,11 +253,11 @@ public class KnowledgeExpert implements AutoCloseable {
         String now = LocalDateTime.now().format(TIME_FMT);
         MemoryStore store = storeOf(scope);
         int expectedDim = gate.dimensions();
-        int added = 0, idx = 0;
+        List<KnowledgeChunk> staged = new ArrayList<>();
         for (String content : chunks) {
             if (content == null || content.isBlank()) continue;
             float[] vec = gate.embed(content, EmbeddingPurpose.BACKGROUND_INDEX);
-            if (vec == null) continue; // 无嵌入 → 跳过（不写无向量分块）
+            if (vec == null) return 0; // 整批终止，保留此前已导入的版本。
             // 维度不匹配：配置的 rag.embedding.dimensions 与模型实际输出不一致，
             // 直接抛出明确原因（JVector 索引按 expectedDim 建库，写入会失败/语义错乱）。
             if (vec.length != expectedDim) {
@@ -267,12 +267,11 @@ public class KnowledgeExpert implements AutoCloseable {
                         vec.length, expectedDim));
             }
             KnowledgeChunk kc = new KnowledgeChunk(docName, scope.name(), content, vec);
-            kc.chunkIndex = idx++;
+            kc.chunkIndex = staged.size();
             kc.importTime = now;
-            store.addKnowledgeChunk(kc, "user");
-            added++;
+            staged.add(kc);
         }
-        return added;
+        return staged.isEmpty() ? 0 : store.replaceKnowledgeByDoc(docName, staged, "user");
     }
 
     /** Paragraph-aware bounded chunking owned by the knowledge extension, not an Agent runtime. */
@@ -383,7 +382,7 @@ public class KnowledgeExpert implements AutoCloseable {
 
     @com.javaclaw.framework.spi.ToolContract(group = "knowledge", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "knowledge_search",
-            description = "基于关键词搜索知识库文档内容。当向量检索不可用时作为备选。传入多个关键词（空格分隔）。")
+            description = "仅搜索当前工作区中已启用参与对话检索的全局及工作区文档。基于关键词搜索内容，当向量检索不可用时作为备选。传入多个关键词（空格分隔）。")
     public String knowledge_search(
             @ToolParam( description = "搜索关键词，多个关键词用空格分隔") String keywords) {
         if (!ragEnabled) {
@@ -392,7 +391,11 @@ public class KnowledgeExpert implements AutoCloseable {
         if (keywords == null || keywords.isBlank()) {
             return ToolResponse.error("knowledge_search", "关键词不能为空");
         }
-        String result = textSearch(keywords, null, config.getRagRetrieveLimit());
+        Set<String> enabledDocs = getEnabledDocs();
+        if (enabledDocs.isEmpty()) {
+            return ToolResponse.error("knowledge_search", "当前没有参与对话检索的文档，请在知识库中心或对话知识菜单中启用文档");
+        }
+        String result = textSearch(keywords, enabledDocs, config.getRagRetrieveLimit());
         if (result == null) {
             return ToolResponse.error("knowledge_search", "未找到包含关键词的文档分块，请换用更宽泛的关键词重试");
         }
@@ -400,16 +403,17 @@ public class KnowledgeExpert implements AutoCloseable {
     }
 
     /**
-     * 检索与查询相关的分块（向量优先，失败/无果降级关键词）。selectedDocs 非空时仅从选中文档检索。
+     * 检索与查询相关的分块（向量优先，失败/无果降级关键词）。selectedDocs 为 null 时不筛选，空集合不检索，否则仅检索选中文档。
      * 供外部直接注入上下文使用；无结果返回 null。
      */
     public String retrieveContext(String query, Set<String> selectedDocs) {
-        if (!ragEnabled || getTotalChunkCount() == 0) {
+        if (!ragEnabled || getTotalChunkCount() == 0
+                || (selectedDocs != null && selectedDocs.isEmpty())) {
             return null;
         }
         int limit = config.getRagRetrieveLimit();
         double threshold = config.getRagScoreThreshold();
-        boolean filter = selectedDocs != null && !selectedDocs.isEmpty();
+        boolean filter = selectedDocs != null;
 
         float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
@@ -443,7 +447,7 @@ public class KnowledgeExpert implements AutoCloseable {
     /** 关键词检索（不依赖嵌入），按命中关键词数排序取 top-N。 */
     private String textSearch(String keywords, Set<String> selectedDocs, int limit) {
         String[] terms = keywords.toLowerCase().split("\\s+");
-        boolean filter = selectedDocs != null && !selectedDocs.isEmpty();
+        boolean filter = selectedDocs != null;
         record SC(String src, String content, int hits) {}
         List<SC> scored = new ArrayList<>();
         for (KnowledgeChunk c : allChunks()) {

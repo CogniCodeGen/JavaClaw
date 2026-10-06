@@ -27,6 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import java.awt.Desktop;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -210,7 +211,7 @@ public class JavaClawApp extends Application {
 
             // 窗口创建完成后才接管第二进程的唤起请求；早到请求由协调器缓存。
             SingleInstanceCoordinator.current().ifPresent(coordinator -> {
-                coordinator.setShowHandler(() -> fxDispatcher.dispatch(this::showMainWindow));
+                coordinator.setShowHandler(() -> fxDispatcher.dispatch(this::showMainWindowFromSingleInstance));
                 coordinator.setBuildMismatchHandler(() ->
                         fxDispatcher.dispatch(this::showBuildMismatchNotice));
             });
@@ -327,12 +328,40 @@ public class JavaClawApp extends Application {
                 .toLowerCase(java.util.Locale.ROOT).contains("mac");
     }
 
-    /** 从托盘恢复主窗口：显示、取消最小化并置顶。 */
+    /** 仅记录单实例通知的 FX 窗口调用；调用后状态不代表系统已完成置前。 */
+    private void showMainWindowFromSingleInstance() {
+        if (primaryStage == null) {
+            log.info("单实例主窗口恢复调用未执行: 窗口尚未创建");
+            return;
+        }
+        log.info("单实例主窗口恢复调用前: showing={}, iconified={}, focused={}",
+                primaryStage.isShowing(), primaryStage.isIconified(), primaryStage.isFocused());
+        showMainWindow();
+        log.info("单实例主窗口恢复调用后: showing={}, iconified={}, focused={}",
+                primaryStage.isShowing(), primaryStage.isIconified(), primaryStage.isFocused());
+    }
+
+    /** 从托盘或单实例通知恢复主窗口：显示、取消最小化并请求置前。 */
     private void showMainWindow() {
         if (primaryStage == null) return;
         if (!primaryStage.isShowing()) primaryStage.show();
         if (primaryStage.isIconified()) primaryStage.setIconified(false);
         primaryStage.toFront();
+        // Stage 的窗口排序不会激活后台 macOS 应用。AWT 已在 Launcher 中提前初始化，
+        // 只在用户明确恢复窗口时请求当前应用置前，不把其他窗口一并拉到前台。
+        if (isMac() && DesktopToolkitBootstrap.isPreparedForJavaFx()) {
+            try {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop desktop = Desktop.getDesktop();
+                    if (desktop.isSupported(Desktop.Action.APP_REQUEST_FOREGROUND)) {
+                        desktop.requestForeground(false);
+                    }
+                }
+            } catch (RuntimeException failure) {
+                log.warn("macOS 应用置前请求失败，保留普通窗口恢复: {}",
+                        failure.getMessage(), failure);
+            }
+        }
         primaryStage.requestFocus();
         SystemTrayManager tray = trayManager;
         if (tray != null && !exitInitiated.get()) {

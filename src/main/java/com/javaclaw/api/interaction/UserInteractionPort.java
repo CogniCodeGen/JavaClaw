@@ -40,6 +40,13 @@ public interface UserInteractionPort {
         return confirm(request) ? ConfirmDecision.ALLOW_ONCE : ConfirmDecision.DENY;
     }
 
+    /** A cancelled owner invalidates this confirmation; UI implementations also dismiss its dialog. */
+    default ConfirmDecision confirmEx(ConfirmRequest request, java.util.function.BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) return ConfirmDecision.DENY;
+        ConfirmDecision decision = confirmEx(request);
+        return cancelled.getAsBoolean() ? ConfirmDecision.DENY : decision;
+    }
+
     /**
      * 从互斥选项中选择一项（阻塞直到用户响应或超时）。
      *

@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -39,6 +40,8 @@ public final class WorkflowViewController implements AutoCloseable {
     @FXML private MenuButton nodePalette;
     @FXML private Button publishButton;
     @FXML private Button testButton;
+    @FXML private Button renameButton;
+    @FXML private Button deleteButton;
     @FXML private StackPane loadingOverlay;
     @FXML private WorkflowCanvasController canvasController;
     @FXML private WorkflowInspectorController inspectorController;
@@ -60,6 +63,7 @@ public final class WorkflowViewController implements AutoCloseable {
     private Consumer<WorkflowItem> onPublished = ignored -> { };
     private Runnable closeAction = () -> { };
     private boolean restoringSelection;
+    private boolean awaitingDraftSave;
 
     public WorkflowViewController(
             WorkflowApplicationService useCases,
@@ -99,6 +103,10 @@ public final class WorkflowViewController implements AutoCloseable {
                 .or(publishAction.busyProperty()));
         testButton.disableProperty().bind(viewModel.selectedWorkflowProperty().isNull()
                 .or(testAction.busyProperty()));
+        renameButton.disableProperty().bind(viewModel.readOnlyProperty()
+                .or(viewModel.selectedWorkflowProperty().isNull()));
+        deleteButton.disableProperty().bind(viewModel.readOnlyProperty()
+                .or(viewModel.selectedWorkflowProperty().isNull()));
         loadingOverlay.visibleProperty().bind(loadAction.busyProperty()
                 .or(definitionAction.busyProperty()).or(publishAction.busyProperty()));
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
@@ -141,6 +149,40 @@ public final class WorkflowViewController implements AutoCloseable {
                 TaskSpec.io("workflow-clone-" + selected.id()),
                 context -> useCases.cloneDraft(selected.id()), this::apply,
                 failure -> failed("复制工作流失败", failure)));
+    }
+
+    @FXML
+    private void renameRequested() {
+        if (!editable()) return;
+        afterDraftSaved(() -> inputDialogs.showRename(
+                root.getScene() == null ? null : root.getScene().getWindow(),
+                viewModel.currentGraph().name()).ifPresent(name -> {
+            try {
+                viewModel.editor().rename(name);
+                viewModel.changed();
+                String id = viewModel.currentGraph().id();
+                saveDraft(() -> requestSnapshot(id));
+            } catch (IllegalArgumentException failure) {
+                failed("重命名失败", failure);
+            }
+        }));
+    }
+
+    @FXML
+    private void deleteRequested() {
+        autosave.stop();
+        if (!editable()) return;
+        afterDraftSaved(() -> {
+            WorkflowItem selected = viewModel.selectedWorkflowProperty().get();
+            if (selected == null || selected.system()) return;
+            if (!inputDialogs.confirmDelete(
+                    root.getScene() == null ? null : root.getScene().getWindow(), selected.name())) return;
+            definitionAction.execute(TaskSpec.io("workflow-delete-" + selected.id()),
+                    context -> useCases.delete(selected.id()), result -> {
+                        apply(result);
+                        log("工作流已删除：" + selected.name());
+                    }, failure -> failed("删除工作流失败", failure));
+        });
     }
 
     @FXML private void undoRequested() { edit(() -> viewModel.editor().undo()); }
@@ -278,11 +320,11 @@ public final class WorkflowViewController implements AutoCloseable {
     }
 
     private void afterDraftSaved(Runnable continuation) {
+        autosave.stop();
         if (!viewModel.dirtyProperty().get()) {
             continuation.run();
             return;
         }
-        autosave.stop();
         saveDraft(continuation);
     }
 
@@ -291,19 +333,45 @@ public final class WorkflowViewController implements AutoCloseable {
     }
 
     private void saveDraft(Runnable success, Consumer<Throwable> failureHandler) {
+        if (awaitingDraftSave) {
+            if (success != null) failureHandler.accept(
+                    new IllegalStateException("正在保存工作流，请稍后重试"));
+            return;
+        }
+        continueSavingDraft(success, failureHandler);
+    }
+
+    private void continueSavingDraft(Runnable success, Consumer<Throwable> failureHandler) {
         if (viewModel.editor() == null || viewModel.readOnlyProperty().get()) {
+            awaitingDraftSave = false;
             if (success != null) success.run();
             return;
         }
         var graph = viewModel.currentGraph();
+        awaitingDraftSave = success != null;
         saveAction.execute(TaskSpec.io("workflow-save-" + graph.id()), context -> {
             useCases.saveDraft(graph);
             return null;
         }, ignored -> {
+            var current = viewModel.currentGraph();
+            if (current != graph) {
+                if (success != null && current != null && current.id().equals(graph.id())) {
+                    autosave.stop();
+                    continueSavingDraft(success, failureHandler);
+                } else if (success != null) {
+                    awaitingDraftSave = false;
+                    failureHandler.accept(new CancellationException("当前工作流已切换，原操作已取消"));
+                }
+                return;
+            }
+            awaitingDraftSave = false;
             viewModel.markSaved();
             if (success != null) success.run();
         }, failure -> {
-            viewModel.markSaveFailed();
+            awaitingDraftSave = false;
+            var current = viewModel.currentGraph();
+            if (current != null && current.id().equals(graph.id())
+                    && viewModel.dirtyProperty().get()) viewModel.markSaveFailed();
             failureHandler.accept(failure);
         });
     }
@@ -346,6 +414,8 @@ public final class WorkflowViewController implements AutoCloseable {
         nodePalette.disableProperty().unbind();
         publishButton.disableProperty().unbind();
         testButton.disableProperty().unbind();
+        renameButton.disableProperty().unbind();
+        deleteButton.disableProperty().unbind();
         loadingOverlay.visibleProperty().unbind();
         loadingOverlay.managedProperty().unbind();
     }

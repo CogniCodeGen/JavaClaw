@@ -25,9 +25,10 @@ public final class MaintenanceModelTaskGateway implements ModelTaskGateway {
         RunRequest source = origin.request();
         String id = UUID.nameUUIDFromBytes((source.scope() + ":memory-maintenance").getBytes(StandardCharsets.UTF_8)).toString();
         RunScope scope = new RunScope(source.scope().workspaceId(), source.scope().userId(), id);
+        // Committed terminal turns are provenance, not live parents of post-turn maintenance.
         RunRequest maintenance = RunRequest.builder().agent(source.agent()).profile(source.profile())
                 .scope(scope).source(new InvocationSource("maintenance", source.scope().sessionId()))
-                .linkage(new RunLinkage(request.ownerRunId(), source.linkage().workflowRunId(), request.purpose()))
+                .linkage(new RunLinkage(null, source.linkage().workflowRunId(), request.purpose()))
                 .input(InputBlock.text(request.purpose())).permissionCeiling(PermissionSet.NONE)
                 .budget(MAINTENANCE_BUDGET).attributes(java.util.Map.of(
                         "framework.maintenance", JsonNodeFactory.instance.booleanNode(true),

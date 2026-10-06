@@ -1,5 +1,7 @@
 package com.javaclaw.chat;
 
+import javafx.application.Platform;
+import javafx.scene.layout.Region;
 import org.fxmisc.richtext.InlineCssTextArea;
 
 /** 只读消息文本的统一配置和内容高度适配。 */
@@ -28,21 +30,14 @@ final class BubbleTextAreaSupport {
     }
 
     private static void fitHeight(InlineCssTextArea area) {
-        Runnable estimate = () -> setHeight(area,
-                Math.max(28, area.getParagraphs().size() * 20.0 + 8));
-        area.totalHeightEstimateProperty().addListener((observable, previous, height) -> {
-            if (height != null && height.doubleValue() > 0) {
-                setHeight(area, height.doubleValue() + 4);
-            } else {
-                estimate.run();
-            }
-        });
-        estimate.run();
-    }
-
-    private static void setHeight(InlineCssTextArea area, double height) {
-        area.setPrefHeight(height);
-        area.setMinHeight(height);
-        area.setMaxHeight(height);
+        area.setAutoHeight(true);
+        area.setPrefHeight(Region.USE_COMPUTED_SIZE);
+        area.setMinHeight(Region.USE_PREF_SIZE);
+        area.setMaxHeight(Region.USE_PREF_SIZE);
+        // RichTextFX measures wrapped paragraphs at the area's current width.
+        // Defer until the parent's current resize pass ends so the whole row is remeasured.
+        area.widthProperty().addListener((observable, previous, width) ->
+                Platform.runLater(area::requestLayout));
+        area.requestLayout();
     }
 }

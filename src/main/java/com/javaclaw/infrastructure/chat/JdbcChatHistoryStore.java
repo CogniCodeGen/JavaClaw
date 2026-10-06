@@ -140,7 +140,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                     jdbc.query(
                             """
                             SELECT role, content, timestamp, image_paths_json, adopted,
-                                   delivery_state, input_tokens, output_tokens, duration_ms
+                                   delivery_state, input_tokens, output_tokens, duration_ms,
+                                   attachment_paths_json
                             FROM chat_messages
                             WHERE workspace_id = ? AND session_id = ?
                             ORDER BY position
@@ -271,7 +272,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                 readStringList(row.getString("image_paths_json")),
                 row.getBoolean("adopted"),
                 state == null || state.isBlank() ? null : DeliveryStatus.valueOf(state),
-                usage);
+                usage,
+                readStringList(row.getString("attachment_paths_json")));
     }
 
     private List<PersistedMessage> snapshotMessages(List<MessageSnapshot> messages) {
@@ -284,9 +286,10 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                         new PersistedMessage(
                                 position,
                                 message,
-                                json.writeValueAsString(message.imagePaths())));
+                                json.writeValueAsString(message.imagePaths()),
+                                json.writeValueAsString(message.attachmentPaths())));
             } catch (com.fasterxml.jackson.core.JsonProcessingException failure) {
-                throw new IllegalStateException("无法序列化消息图片路径", failure);
+                throw new IllegalStateException("无法序列化消息附件路径", failure);
             }
         }
         return List.copyOf(snapshot);
@@ -299,8 +302,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                 INSERT INTO chat_messages(
                     workspace_id, session_id, position, role, content, timestamp,
                     image_paths_json, adopted, delivery_state,
-                    input_tokens, output_tokens, duration_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    input_tokens, output_tokens, duration_ms, attachment_paths_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 messages,
                 messages.size(),
@@ -324,6 +327,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                     setNullableLong(statement, 10, usage == null ? null : usage.inputTokens());
                     setNullableLong(statement, 11, usage == null ? null : usage.outputTokens());
                     setNullableLong(statement, 12, usage == null ? null : usage.durationMs());
+                    statement.setString(13, persisted.attachmentPathsJson());
                 });
     }
 
@@ -411,7 +415,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         try {
             return json.readValue(value, new TypeReference<List<String>>() {});
         } catch (Exception failure) {
-            log.warn("解析消息图片路径失败，使用空列表", failure);
+            log.warn("解析消息附件路径失败，使用空列表", failure);
             return Collections.emptyList();
         }
     }
@@ -448,5 +452,5 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     private record PersistedMessage(
-            int position, MessageSnapshot message, String imagePathsJson) {}
+            int position, MessageSnapshot message, String imagePathsJson, String attachmentPathsJson) {}
 }

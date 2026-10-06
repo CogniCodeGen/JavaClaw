@@ -96,6 +96,14 @@ public final class WorkflowEditorModel {
         replace(copy(nodes, current.edges()));
     }
 
+    public void rename(String name) {
+        String checked = name == null ? "" : name.strip();
+        if (checked.isEmpty()) throw new IllegalArgumentException("工作流名称不能为空");
+        replace(new GraphDefinition(current.schemaVersion(), current.id(), checked,
+                current.description(), current.version(), current.kind(), current.startNodeId(),
+                current.nodes(), current.edges(), current.maxSteps()));
+    }
+
     public void moveNode(String id, double x, double y) {
         List<NodeDefinition> nodes = current.nodes().stream().map(n -> n.id().equals(id)
                 ? new NodeDefinition(n.id(), n.type(), n.executorType(), n.label(), n.config(), x, y,

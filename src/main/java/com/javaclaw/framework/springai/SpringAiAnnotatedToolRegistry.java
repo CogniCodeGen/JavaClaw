@@ -389,7 +389,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             effectSignal.remove();
             effectTarget.remove();
             return HostEffectReceiptAdapter.receipt(
-                    source, descriptor.name(), arguments, signal, context, observedAt, target);
+                    source, descriptor.name(), arguments, signal, context, observedAt, target, rawOutput);
         }
 
         @Override

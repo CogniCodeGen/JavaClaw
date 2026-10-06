@@ -718,9 +718,11 @@ public class WorkspaceSpringConfiguration {
             JsonCodec json,
             com.javaclaw.platform.process.ProcessRunner processes,
             WorkspaceContext workspace,
-            SddTaskStore store, com.javaclaw.framework.api.ThreadClient threads) {
+            SddTaskStore store, com.javaclaw.framework.api.ThreadClient threads,
+            com.javaclaw.framework.spi.RunStore evidenceRuns) {
         return new SddTaskManager(agents, modelTasks, workspace, skills, skillCurator, settings,
-                tasks, interaction, workflows, jdbc, json, processes, workspace.workspaceId(), store).bindThreadClient(threads);
+                tasks, interaction, workflows, jdbc, json, processes, workspace.workspaceId(), store)
+                .bindThreadClient(threads).bindEvidenceStore(evidenceRuns);
     }
 
     @Bean

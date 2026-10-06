@@ -8,12 +8,16 @@ import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.app.UIHelper;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -52,7 +56,16 @@ public final class InteractionDialogFactory {
     }
 
     public ConfirmDecision confirm(ConfirmRequest request) {
+        return confirm(request, ignored -> {}, () -> false);
+    }
+
+    public ConfirmDecision confirm(ConfirmRequest request,
+            java.util.function.Consumer<Runnable> registerClose,
+            java.util.function.BooleanSupplier cancelled) {
         Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(registerClose, "registerClose");
+        Objects.requireNonNull(cancelled, "cancelled");
+        if (cancelled.getAsBoolean()) return ConfirmDecision.DENY;
         ViewHandle<VBox> handle = load(CONFIRM_VIEW, "确认弹窗");
         List<Node> boundButtons = new ArrayList<>();
         try {
@@ -74,7 +87,23 @@ public final class InteractionDialogFactory {
             bindAllowButtons(dialog, controller, request.managedTask(), boundButtons);
             dialog.setResultConverter(InteractionDialogFactory::decision);
             ui.styleDialog(dialog);
-            return dialog.showAndWait().orElse(ConfirmDecision.DENY);
+            Runnable close = () -> {
+                dialog.setResult(ConfirmDecision.DENY);
+                dialog.close();
+            };
+            registerClose.accept(close);
+            if (cancelled.getAsBoolean()) return ConfirmDecision.DENY;
+            // The nested FX event loop must also honor expiry when the caller itself is on FX.
+            Timeline lifecycle = new Timeline(new KeyFrame(Duration.millis(100), ignored -> {
+                if (cancelled.getAsBoolean()) close.run();
+            }));
+            lifecycle.setCycleCount(Animation.INDEFINITE);
+            lifecycle.play();
+            try {
+                return dialog.showAndWait().orElse(ConfirmDecision.DENY);
+            } finally {
+                lifecycle.stop();
+            }
         } finally {
             boundButtons.forEach(button -> button.disableProperty().unbind());
             handle.close();

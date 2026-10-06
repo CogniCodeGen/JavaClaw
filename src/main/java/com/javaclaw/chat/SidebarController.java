@@ -225,17 +225,33 @@ public class SidebarController implements AutoCloseable {
     }
 
     /**
-     * 删除当前选中的工作区
+     * 独立选择并删除非当前工作区，不改变运行中的工作区。
      */
     @FXML
     private void onDeleteWorkspace() {
-        WorkspaceSummary selected = workspaceCombo.getSelectionModel().getSelectedItem();
-        if (selected == null) return;
-
-        if (workspaces.list().size() <= 1) {
+        List<WorkspaceSummary> available = workspaces.list();
+        if (available.size() <= 1) {
             ui.createWarningAlert("不能删除最后一个工作区", null).showAndWait();
             return;
         }
+
+        String currentId = workspaces.currentWorkspaceId();
+        List<WorkspaceSummary> deletable = available.stream()
+                .filter(workspace -> !workspace.id().equals(currentId))
+                .toList();
+        if (deletable.isEmpty()) {
+            ui.createWarningAlert("没有可删除的非当前工作区", null).showAndWait();
+            return;
+        }
+
+        ChoiceDialog<WorkspaceSummary> picker = new ChoiceDialog<>(deletable.getFirst(), deletable);
+        picker.setTitle("删除工作区");
+        picker.setHeaderText("选择要删除的工作区，当前工作区不会出现在列表中");
+        picker.setContentText("工作区:");
+        if (root.getScene() != null) picker.initOwner(root.getScene().getWindow());
+        ui.styleDialog(picker);
+        WorkspaceSummary selected = picker.showAndWait().orElse(null);
+        if (selected == null) return;
 
         Alert confirm = ui.createConfirmAlert("删除工作区",
                 "确定要删除工作区「" + selected.name() + "」吗？\n此操作将永久删除该工作区的所有数据。", null);
@@ -247,8 +263,11 @@ public class SidebarController implements AutoCloseable {
                             + "请先切换到其他工作区，待切换完成后再删除。", null).showAndWait();
                     return;
                 }
-                if (!workspaces.delete(selected.id())) return;
-                workspaceCombo.getItems().remove(selected);
+                if (!workspaces.delete(selected.id())) {
+                    ui.createWarningAlert("删除工作区未完成，请稍后重试", null).showAndWait();
+                    return;
+                }
+                refreshWorkspaceCombo();
             }
         });
     }

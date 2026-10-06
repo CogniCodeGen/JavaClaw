@@ -138,6 +138,7 @@ public class MemoryStore implements AutoCloseable {
                 factIndex = MemoryStoreIndexLifecycle.ensureIndex(root.facts, new FactVectorizer(), dimension);
                 episodeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.episodes, new EpisodeVectorizer(), dimension);
                 knowledgeIndex = MemoryStoreIndexLifecycle.ensureIndex(root.knowledge, new KnowledgeVectorizer(), dimension);
+                recoverPromotedEntityMetadata();
                 log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
             } catch (RuntimeException | Error failure) {
                 cleanupFailedOpen(started, failure);
@@ -146,6 +147,62 @@ public class MemoryStore implements AutoCloseable {
         } finally {
             writeLock.unlock();
         }
+    }
+
+    /**
+     * Older promotion code moved already-persisted objects between maps without explicitly
+     * storing their changed fields. Recover only storage metadata from the owning map and
+     * its existing vector index; preserve IDs, content, timestamps and curation state.
+     */
+    private void recoverPromotedEntityMetadata() {
+        record StoredEntity<E>(long entityId, E entity) {}
+        List<StoredEntity<Fact>> facts = new ArrayList<>();
+        root.facts.iterateIndexed((entityId, fact) -> {
+            if (fact.pending || fact.entityId != entityId || !validStoredEmbedding(fact.embedding)) {
+                facts.add(new StoredEntity<>(entityId, fact));
+            }
+        });
+        for (StoredEntity<Fact> entry : facts) {
+            Fact fact = entry.entity();
+            float[] embedding = validStoredEmbedding(fact.embedding)
+                    ? fact.embedding : factIndex.getVector(entry.entityId());
+            if (!validStoredEmbedding(embedding)) {
+                throw new IllegalStateException("已索引事实缺少可恢复的向量: " + fact.id);
+            }
+            fact.entityId = entry.entityId();
+            fact.pending = false;
+            fact.embedding = embedding;
+            mgr.store(fact); // Restore fields to match the existing map/index; neither changes.
+        }
+
+        List<StoredEntity<Episode>> episodes = new ArrayList<>();
+        root.episodes.iterateIndexed((entityId, episode) -> {
+            if (episode.pending || episode.entityId != entityId || !validStoredEmbedding(episode.embedding)) {
+                episodes.add(new StoredEntity<>(entityId, episode));
+            }
+        });
+        for (StoredEntity<Episode> entry : episodes) {
+            Episode episode = entry.entity();
+            float[] embedding = validStoredEmbedding(episode.embedding)
+                    ? episode.embedding : episodeIndex.getVector(entry.entityId());
+            if (!validStoredEmbedding(embedding)) {
+                throw new IllegalStateException("已索引情景缺少可恢复的向量: " + episode.id);
+            }
+            episode.entityId = entry.entityId();
+            episode.pending = false;
+            episode.embedding = embedding;
+            mgr.store(episode); // Episodes have no identity bitmap index for GigaMap.update.
+        }
+        if (!facts.isEmpty() || !episodes.isEmpty()) {
+            log.info("[{}] 已恢复晋升实体的存储元数据 (facts={}, episodes={})",
+                    label, facts.size(), episodes.size());
+        }
+    }
+
+    private boolean validStoredEmbedding(float[] embedding) {
+        if (embedding == null || embedding.length != dimension) return false;
+        for (float value : embedding) if (!Float.isFinite(value)) return false;
+        return true;
     }
 
     // ==================== working-memory checkpoints ====================
@@ -573,6 +630,7 @@ public class MemoryStore implements AutoCloseable {
             f.entityId = root.facts.add(f);
             root.pendingFacts.store();
             root.facts.store();
+            mgr.store(f); // The reused pending entity already has a persisted object identity.
             logInternal("PROMOTE", "Fact", f.id, actor, trunc(f.text));
             return true;
         });
@@ -729,6 +787,7 @@ public class MemoryStore implements AutoCloseable {
             e.entityId = root.episodes.add(e);
             root.pendingEpisodes.store();
             root.episodes.store();
+            mgr.store(e); // Persist promotion fields on the already-stored pending entity.
             logInternal("PROMOTE", "Episode", e.id, actor, trunc(e.userInput));
             return true;
         });
@@ -787,6 +846,120 @@ public class MemoryStore implements AutoCloseable {
             c.entityId = root.knowledge.add(c);
             root.knowledge.store();
             logInternal("ADD", "KnowledgeChunk", c.id, actor, trunc(c.docName));
+        });
+    }
+
+    /**
+     * 在当前存储中整批替换同名文档；调用方须先完成全部嵌入。
+     * 成功路径只持久化一次知识映射。失败补偿不构成跨存储或崩溃事务。
+     */
+    public int replaceKnowledgeByDoc(String docName, List<KnowledgeChunk> chunks, String actor) {
+        java.util.Objects.requireNonNull(docName, "docName");
+        List<KnowledgeChunk> staged = List.copyOf(chunks);
+        return writeCall(() -> {
+            if (staged.isEmpty()) return 0;
+            List<KnowledgeChunk> previous = new ArrayList<>();
+            List<Long> previousIds = new ArrayList<>();
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            java.util.Set<String> stagedIds = new java.util.HashSet<>();
+            root.knowledge.iterateIndexed((entityId, c) -> {
+                if (docName.equals(c.docName)) {
+                    previous.add(c);
+                    previousIds.add(entityId);
+                }
+                if (c.id != null) ids.add(c.id);
+            });
+            for (KnowledgeChunk c : staged) {
+                if (!docName.equals(c.docName)) {
+                    throw new IllegalArgumentException("替换分块的文档名不一致");
+                }
+                if (c.embedding == null || c.embedding.length != dimension) {
+                    throw new IllegalArgumentException("替换分块的嵌入必须符合当前索引维度: " + dimension);
+                }
+                for (float value : c.embedding) {
+                    if (!Float.isFinite(value)) {
+                        throw new IllegalArgumentException("替换分块的嵌入包含非有限数值");
+                    }
+                }
+                if (c.id == null) c.id = UUID.randomUUID().toString();
+                if (!ids.add(c.id)) {
+                    throw new IllegalArgumentException("替换分块必须使用新的唯一标识");
+                }
+                stagedIds.add(c.id);
+                MemoryContextIndex.refresh(c);
+            }
+
+            java.util.Set<Long> inserted = new java.util.LinkedHashSet<>();
+            try {
+                // 新批次全部加入后才移除旧版本，避免追加失败先丢失旧内容。
+                // GigaMap 4.1 的 addAll 在索引更新前推进计数，并补偿普通异常。
+                root.knowledge.addAll(staged);
+                root.knowledge.iterateIndexed((entityId, c) -> {
+                    if (stagedIds.contains(c.id)) {
+                        c.entityId = entityId;
+                        inserted.add(entityId);
+                    }
+                });
+                if (inserted.size() != staged.size()) {
+                    throw new IllegalStateException("替换分块未全部加入当前知识映射");
+                }
+                for (long entityId : previousIds) root.knowledge.removeById(entityId);
+                root.knowledge.store();
+            } catch (RuntimeException | Error failure) {
+                // 扫描实际映射，不依赖失败 addAll 的返回值或不完整的 bitmap 索引。
+                try {
+                    root.knowledge.iterateIndexed((entityId, c) -> {
+                        if (stagedIds.contains(c.id)) inserted.add(entityId);
+                    });
+                } catch (RuntimeException | Error rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+                for (long id : inserted) {
+                    try {
+                        root.knowledge.removeById(id);
+                    } catch (RuntimeException | Error rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+                List<KnowledgeChunk> remaining = new ArrayList<>();
+                try {
+                    root.knowledge.iterate(remaining::add);
+                    List<KnowledgeChunk> missing = new ArrayList<>();
+                    for (KnowledgeChunk c : previous) {
+                        if (remaining.stream().noneMatch(current -> current == c)) missing.add(c);
+                    }
+                    for (KnowledgeChunk c : missing) {
+                        try {
+                            root.knowledge.addAll(List.of(c));
+                        } catch (RuntimeException | Error rollbackFailure) {
+                            failure.addSuppressed(rollbackFailure);
+                        }
+                    }
+                    root.knowledge.iterateIndexed((entityId, c) -> {
+                        if (c.entityId != entityId
+                                && previous.stream().anyMatch(old -> old == c)) {
+                            // 旧对象已持久化过，update 登记字段变更供这次 store 重存。
+                            try {
+                                root.knowledge.update(c, restored -> restored.entityId = entityId);
+                            } catch (RuntimeException | Error rollbackFailure) {
+                                failure.addSuppressed(rollbackFailure);
+                            }
+                        }
+                    });
+                    root.knowledge.store();
+                } catch (RuntimeException | Error rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+                throw failure;
+            }
+            // 知识已提交；后置审计/observer 失败不能再撤销已持久化的新版本。
+            try {
+                logInternal("REPLACE", "KnowledgeChunk", docName, actor,
+                        previous.size() + " -> " + staged.size() + " 块");
+            } catch (RuntimeException auditFailure) {
+                throw new IllegalStateException("文档分块已替换，但审计或变更通知失败", auditFailure);
+            }
+            return staged.size();
         });
     }
 

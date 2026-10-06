@@ -97,7 +97,8 @@
                                                         <Slider fx:id="chunkSlider" min="128.0" max="1024.0"
                                                                 blockIncrement="64.0" majorTickUnit="64.0"
                                                                 snapToTicks="true"
-                                                                onMouseReleased="#chunkSettingsReleased"/>
+                                                                onMouseReleased="#chunkSettingsReleased"
+                                                                onKeyReleased="#chunkSettingsReleased"/>
                                                         <HBox styleClass="kc-slider-scale">
                                                             <children>
                                                                 <Label text="128"/>
@@ -124,14 +125,15 @@
                                                         <Slider fx:id="overlapSlider" min="0.0" max="256.0"
                                                                 blockIncrement="8.0" majorTickUnit="8.0"
                                                                 snapToTicks="true"
-                                                                onMouseReleased="#chunkSettingsReleased"/>
+                                                                onMouseReleased="#chunkSettingsReleased"
+                                                                onKeyReleased="#chunkSettingsReleased"/>
                                                         <HBox styleClass="kc-slider-scale">
                                                             <children>
                                                                 <Label text="0"/>
                                                                 <Region HBox.hgrow="ALWAYS"/>
                                                                 <Label text="推荐 10%~20%"/>
                                                                 <Region HBox.hgrow="ALWAYS"/>
-                                                                <Label text="256"/>
+                                                                <Label fx:id="overlapMaxLabel" text="256"/>
                                                             </children>
                                                         </HBox>
                                                     </children>

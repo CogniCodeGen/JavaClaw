@@ -12,6 +12,7 @@ import com.javaclaw.framework.api.RunHandle;
 import com.javaclaw.framework.api.ToolApprovalChallenge;
 
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 /** Shared adapter for resolving a framework approval event through the product confirmation UI. */
 public final class FrameworkToolApprovalCoordinator {
@@ -26,8 +27,21 @@ public final class FrameworkToolApprovalCoordinator {
             RunHandle handle,
             ToolCallOrigin origin,
             JsonNode payload) {
+        resolve(agents, handle, origin, payload, () -> false);
+    }
+
+    static void resolve(
+            AgentClient agents,
+            RunHandle handle,
+            ToolCallOrigin origin,
+            JsonNode payload,
+            BooleanSupplier detached) {
         Objects.requireNonNull(agents, "agents");
         Objects.requireNonNull(handle, "handle");
+        Objects.requireNonNull(detached, "detached");
+        BooleanSupplier inactive = () -> detached.getAsBoolean()
+                || handle.completion().toCompletableFuture().isDone();
+        if (inactive.getAsBoolean()) return;
         ToolApprovalChallenge challenge;
         try {
             challenge = decode(payload);
@@ -43,7 +57,10 @@ public final class FrameworkToolApprovalCoordinator {
         ToolConfirmationManager.ConfirmOutcome outcome =
                 ToolConfirmationManager.requestConfirmationOutcome(
                         origin == null ? ToolCallOrigin.UNKNOWN : origin,
-                        challenge.tool(), description);
+                        challenge.tool(), description,
+                        inactive);
+        // Closing the observer is not a user's denial of the durable pending invocation.
+        if (inactive.getAsBoolean()) return;
         if (!outcome.isAllow()) {
             agents.cancel(handle.id(), new CancelReason(
                     "TOOL_APPROVAL_DENIED", "user denied " + challenge.tool()));

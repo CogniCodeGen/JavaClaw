@@ -8,8 +8,10 @@ import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Event;
 import com.javaclaw.application.schedule.ScheduleApplicationService.OperationResult;
+import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Snapshot;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
+import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -23,6 +25,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -58,6 +61,7 @@ public final class ScheduleViewController implements AutoCloseable {
     private final UiAsyncAction<OperationResult> operationAction;
     private final UiAsyncAction<String> decisionAction;
     private final Timeline statusTimer = new Timeline();
+    private final Tooltip statusTooltip = new Tooltip();
     private final AtomicBoolean closed = new AtomicBoolean();
     private AutoCloseable subscription;
     private Runnable closeAction = () -> { };
@@ -83,6 +87,8 @@ public final class ScheduleViewController implements AutoCloseable {
         taskList.setCellFactory(ignored -> cells.create(this::selectionRequested));
         listSubtitle.textProperty().bind(viewModel.subtitleProperty());
         statusLabel.textProperty().bind(viewModel.statusProperty());
+        statusTooltip.textProperty().bind(viewModel.statusProperty());
+        statusLabel.setTooltip(statusTooltip);
         loadingOverlay.visibleProperty().bind(loadAction.busyProperty()
                 .or(operationAction.busyProperty()).or(decisionAction.busyProperty()));
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
@@ -91,7 +97,9 @@ public final class ScheduleViewController implements AutoCloseable {
         runButton.disableProperty().bind(Bindings.createBooleanBinding(
                 () -> !canRun(), viewModel.selectedProperty(), operationAction.busyProperty()));
         detailsController.configure(this::toggleRequested, this::deleteRequested,
-                () -> viewModel.showStatus("有尚未保存的修改"));
+                () -> {
+                    if (detailsController.hasUnsavedChanges()) viewModel.showStatus("有尚未保存的修改");
+                });
         statusTimer.getKeyFrames().setAll(new KeyFrame(Duration.seconds(1), event -> {
             taskList.refresh();
             detailsController.refreshClock();
@@ -140,11 +148,17 @@ public final class ScheduleViewController implements AutoCloseable {
     private void saveCurrent(Runnable continuation) {
         Task selected = viewModel.selectedProperty().get();
         if (selected == null || selected.builtin()) return;
+        SaveCommand command;
+        try { command = detailsController.command(); }
+        catch (ValidationException invalid) {
+            failed("保存定时任务失败", invalid);
+            return;
+        }
         boolean wasDraft = viewModel.selectedIsDraft();
         operationAction.execute(TaskSpec.io("schedule-save-" + selected.id()),
-                context -> useCases.save(detailsController.command()), result -> {
+                context -> useCases.save(command), result -> {
                     if (wasDraft) viewModel.finishDraft();
-                    apply(result);
+                    apply(result, false);
                     if (continuation != null) continuation.run();
                 }, failure -> failed("保存定时任务失败", failure));
     }
@@ -152,15 +166,24 @@ public final class ScheduleViewController implements AutoCloseable {
     private void toggleRequested(boolean enabled) {
         Task selected = viewModel.selectedProperty().get();
         if (selected == null || selected.builtin()) return;
+        SaveCommand command;
+        try { command = detailsController.command(); }
+        catch (ValidationException invalid) {
+            detailsController.restoreEnabled(!enabled);
+            failed("状态更新失败", invalid);
+            return;
+        }
         if (viewModel.selectedIsDraft()) {
             viewModel.showStatus("草稿将在首次保存后" + (enabled ? "启用" : "保持暂停"));
             return;
         }
         operationAction.execute(TaskSpec.io("schedule-toggle-" + selected.id()),
-                context -> useCases.setEnabled(detailsController.command(), enabled),
-                this::apply, failure -> {
+                context -> useCases.setEnabled(command, enabled),
+                result -> apply(result, false), failure -> {
                     failed("状态更新失败", failure);
-                    requestSnapshot();
+                    if (failure instanceof ValidationException) {
+                        detailsController.restoreEnabled(selected.enabled());
+                    } else requestSnapshot();
                 });
     }
 
@@ -222,25 +245,29 @@ public final class ScheduleViewController implements AutoCloseable {
     }
 
     private void resolveDraft(Runnable continuation) {
-        if (!viewModel.hasDraft()) {
+        boolean hasDraft = viewModel.hasDraft();
+        if (!hasDraft && !detailsController.hasUnsavedChanges()) {
             continuation.run();
             return;
         }
-        Task draft = viewModel.draftProperty().get();
-        String draftName = viewModel.selectedIsDraft()
-                ? detailsController.command().name().strip() : draft.name();
-        if (draftName.isBlank()) draftName = draft.name();
-        String displayName = draftName;
+        Task pending = hasDraft ? viewModel.draftProperty().get() : viewModel.selectedProperty().get();
+        String editedName = detailsController.editedName().strip();
+        String displayName = editedName.isBlank() ? pending.name() : editedName;
         decisionAction.execute(TaskSpec.io("schedule-draft-decision"), context -> dialogs.choose(
                 new ChoiceRequest("未保存的定时任务",
-                        "定时任务「" + displayName + "」尚未保存。请选择如何继续。",
-                        List.of(new ChoiceOption("save", "保存并继续", "保存当前草稿"),
-                                new ChoiceOption("discard", "放弃", "丢弃当前草稿"),
+                        "定时任务「" + displayName + "」有尚未保存的修改。请选择如何继续。",
+                        List.of(new ChoiceOption("save", "保存并继续", "保存当前修改"),
+                                new ChoiceOption("discard", "放弃", "丢弃当前修改"),
                                 new ChoiceOption("cancel", "取消", "返回继续编辑")), 60)),
                 decision -> {
                     if ("save".equals(decision)) saveCurrent(continuation);
                     else if ("discard".equals(decision)) {
-                        discardDraft();
+                        if (hasDraft) discardDraft();
+                        else {
+                            Task selected = viewModel.selectedProperty().get();
+                            if (selected == null) showEmpty();
+                            else showSelection(selected, false, false);
+                        }
                         continuation.run();
                     }
                 }, failure -> failed("处理未保存草稿失败", failure));
@@ -260,24 +287,38 @@ public final class ScheduleViewController implements AutoCloseable {
     }
 
     private void apply(OperationResult result) {
-        apply(result.snapshot());
+        apply(result, true);
+    }
+
+    private void apply(OperationResult result, boolean preserveEdits) {
+        // An older background read must not replace the mutation's persisted snapshot.
+        loadAction.cancel();
+        apply(result.snapshot(), preserveEdits);
         viewModel.showStatus(result.message());
     }
 
     private void apply(Snapshot snapshot) {
+        apply(snapshot, true);
+    }
+
+    private void apply(Snapshot snapshot, boolean preserveEdits) {
         if (closed.get()) return;
         viewModel.apply(snapshot);
         Task selected = viewModel.selectedProperty().get();
         if (selected == null) showEmpty();
-        else showSelection(selected, viewModel.selectedIsDraft());
+        else showSelection(selected, viewModel.selectedIsDraft(), preserveEdits);
     }
 
     private void showSelection(Task task, boolean draft) {
+        showSelection(task, draft, true);
+    }
+
+    private void showSelection(Task task, boolean draft, boolean preserveEdits) {
         emptyPanel.setVisible(false);
         emptyPanel.setManaged(false);
         detailScroll.setVisible(true);
         detailScroll.setManaged(true);
-        detailsController.show(task, draft);
+        detailsController.show(task, draft, preserveEdits);
         if (!draft) taskList.getSelectionModel().select(task);
     }
 
@@ -336,6 +377,8 @@ public final class ScheduleViewController implements AutoCloseable {
         taskList.setItems(null);
         listSubtitle.textProperty().unbind();
         statusLabel.textProperty().unbind();
+        statusTooltip.textProperty().unbind();
+        statusLabel.setTooltip(null);
         loadingOverlay.visibleProperty().unbind();
         loadingOverlay.managedProperty().unbind();
         saveButton.disableProperty().unbind();

@@ -206,6 +206,11 @@ public final class EclipseStoreMemoryExtensionAdapter
         var relevant = CorrectionEngine.selectRelevant(memory.corrections(scope), query, 6);
         var violation = CorrectionGuard.findViolation(reply, relevant);
         if (violation.isEmpty()) return output;
+        if (com.javaclaw.framework.core.ProvisionalOutputGuard.checkingDraft()) {
+            // Draft checks are pure: withhold a rejected claim before it is displayed.
+            // Full output still follows the existing audit and model repair path below.
+            return withText(output, "", false);
+        }
         memory.inScope(scope).recordCorrectionGuardViolation(violation.get());
 
         ObjectNode input = JsonNodeFactory.instance.objectNode();

@@ -43,7 +43,10 @@ final class MarkdownRenderedViewFactory {
         view.setFocusTraversable(false);
         view.setPrefWidth(prefWidth);
         view.getStyleClass().add("md-bubble");
-        view.setContextMenu(contextMenu(view::copy, view::selectAll, rawMarkdown));
+        view.setContextMenu(contextMenu(view::copy, () -> {
+            view.requestFocus();
+            view.selectAll();
+        }, rawMarkdown));
 
         List<LinkRange> ranges = rendered.links();
         view.addEventHandler(MouseEvent.MOUSE_CLICKED, event -> {

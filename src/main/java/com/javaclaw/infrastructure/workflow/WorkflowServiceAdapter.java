@@ -40,7 +40,7 @@ public final class WorkflowServiceAdapter implements WorkflowPort {
 
     @Override
     public GraphDefinition createDraft() {
-        return service.definitions().saveDraft(WorkflowEditorModel.blank("新工作流")).draft();
+        return service.definitions().createDraft(WorkflowEditorModel.blank("新工作流")).draft();
     }
 
     @Override
@@ -52,6 +52,14 @@ public final class WorkflowServiceAdapter implements WorkflowPort {
     @Override
     public void saveDraft(GraphDefinition graph) {
         service.definitions().saveDraft(graph);
+    }
+
+    @Override
+    public boolean delete(String workflowId) {
+        if (service.systemGraphs().get(workflowId) != null) {
+            throw new IllegalArgumentException("系统工作流不能删除");
+        }
+        return service.definitions().delete(workflowId);
     }
 
     @Override
