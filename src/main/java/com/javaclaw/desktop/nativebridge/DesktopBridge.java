@@ -48,11 +48,16 @@ public final class DesktopBridge {
         providerId = platform;
         Path fixed = home.runtimeDirectory().resolve("native").resolve(platform).resolve(libraryName);
         Path library = fixed;
-        // Source checkout only: native build scripts place development artifacts under target/native.
+        // Source checkout only: load the prebuilt data/native library without compiling at startup.
         if (!Files.isRegularFile(fixed, LinkOption.NOFOLLOW_LINKS)
                 && Files.isRegularFile(home.root().resolve("pom.xml"), LinkOption.NOFOLLOW_LINKS)
                 && Files.isDirectory(home.root().resolve("src"), LinkOption.NOFOLLOW_LINKS)) {
-            library = home.root().resolve("target/native").resolve(platform).resolve(libraryName);
+            Path prebuilt = home.requireManaged(home.dataDirectory().resolve("native")
+                    .resolve(platform).resolve(libraryName));
+            // Keep existing development builds usable when no prebuilt library is present.
+            library = Files.notExists(prebuilt, LinkOption.NOFOLLOW_LINKS)
+                    ? home.root().resolve("target/native").resolve(platform).resolve(libraryName)
+                    : prebuilt;
         }
         library = home.requireManaged(library);
         if (!Files.isRegularFile(library, LinkOption.NOFOLLOW_LINKS))
@@ -291,6 +296,11 @@ public final class DesktopBridge {
     }
 
     public Optional<DesktopFrame> poll(MemorySegment session, String targetId, int timeoutMillis) {
+        return pollCaptured(session, targetId, timeoutMillis).map(CapturedFrame::frame);
+    }
+
+    /** Existing ABI frame identity stays paired with its pixels; no subsequent current-window guess. */
+    Optional<CapturedFrame> pollCaptured(MemorySegment session, String targetId, int timeoutMillis) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment frame = arena.allocate(jc_desktop_frame.layout());
             int result = desktop_bridge_h.jc_desktop_poll_frame(session, frame, timeoutMillis);
@@ -305,20 +315,23 @@ public final class DesktopBridge {
                 long timestamp = jc_desktop_frame.timestamp_millis(frame);
                 long generation = jc_desktop_frame.generation(frame);
                 long contentRevision = jc_desktop_frame.content_revision(frame);
+                long windowId = jc_desktop_frame.window_id(frame);
                 if (pixels.equals(MemorySegment.NULL) || width < 1 || height < 1
                         || stride < (long) width * 4 || byteCount != (long) stride * height
                         || byteCount > 256L * 1024 * 1024 || generation < 1
                         || contentRevision < 1)
                     throw new IllegalStateException("原生采集返回无效帧");
                 byte[] copy = pixels.reinterpret(byteCount).toArray(ValueLayout.JAVA_BYTE);
-                return Optional.of(new DesktopFrame(targetId, generation, timestamp,
-                        width, height, stride, copy, contentRevision));
+                return Optional.of(new CapturedFrame(new DesktopFrame(targetId, generation, timestamp,
+                        width, height, stride, copy, contentRevision), windowId));
             } finally {
                 desktop_bridge_h.jc_desktop_release_frame(frame);
             }
         } catch (RuntimeException failure) { throw failure; }
         catch (Throwable failure) { throw new IllegalStateException("采集失败", failure); }
     }
+
+    record CapturedFrame(DesktopFrame frame, long windowId) { }
 
     public List<DesktopElement> elements(MemorySegment session, DesktopFrame frame) {
         try (Arena arena = Arena.ofConfined()) {

@@ -1,6 +1,9 @@
 package com.javaclaw.browser;
 
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.framework.spi.BrowserObservationEvidenceProvider;
+import com.javaclaw.framework.spi.BrowserReceiptProof;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
 import com.microsoft.playwright.*;
@@ -18,7 +21,20 @@ import java.util.Map;
 
 /** Page snapshots, screenshots, content extraction and element-state inspection tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
-final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetProvider {
+final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetProvider,
+        BrowserObservationEvidenceProvider, com.javaclaw.framework.spi.InteractionSurfaceProvider,
+        com.javaclaw.framework.spi.ToolRuntimeContextProvider {
+
+    @Override public java.util.List<com.fasterxml.jackson.databind.JsonNode> currentContext() {
+        return BrowserInteractionContext.current(browserManager);
+    }
+
+    @Override public void bindInteractionObserver(java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        browserManager.bindInteractionObserver(observer);
+    }
+    @Override public java.util.List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
+        return browserManager.interactionSurfaces();
+    }
 
     private static final Logger log = LoggerFactory.getLogger(BrowserReadTools.class);
     private static final DateTimeFormatter TIMESTAMP_FMT =
@@ -28,6 +44,7 @@ final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetP
     private final SnapshotManager snapshotManager;
     private final BrowserOperationGate gate;
     private final BrowserTargetResolver targets;
+    private final ThreadLocal<ObservationEvidence> observationEvidence = new ThreadLocal<>();
 
     BrowserReadTools(
             PlaywrightBrowserManager browserManager,
@@ -46,6 +63,85 @@ final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetP
             return page == null ? "" : page.url();
         } finally { gate.exit(); }
     }
+
+    @Override public Map<String, String> consumeBrowserObservationEvidence(String tool) {
+        ObservationEvidence observed = observationEvidence.get();
+        observationEvidence.remove();
+        return observed != null && observed.tool().equals(tool) ? observed.metadata() : Map.of();
+    }
+
+    private void rememberObservation(String tool, ObservedText observed) {
+        observationEvidence.remove();
+        ToolEffectCapture.noteTarget(tool, observed.url());
+        observationEvidence.set(new ObservationEvidence(tool,
+                observed.visibleBody()
+                        ? BrowserReceiptProof.observationMetadata(observed.url(), observed.text())
+                        : BrowserReceiptProof.urlMetadata(observed.url())));
+        if (observed.fullBody() && observed.visibleBody()
+                && !SensitiveDataRedactor.containsLikelyCredential(observed.text())) {
+            com.javaclaw.framework.spi.InteractionStageContext.current().ifPresent(binding -> {
+                var identity = observed.identity();
+                if (identity != null) binding.observation(
+                        com.javaclaw.framework.spi.BrowserStagePredicateProof.observation(binding,
+                                identity, observed.url(), observed.text(), observed.capturedAtMillis()));
+            });
+        }
+    }
+
+    private ObservedText readObservedText(Locator locator) {
+        return readObservedText(locator, null);
+    }
+
+    private ObservedText readObservedText(Locator locator, Locator.EvaluateOptions options) {
+        Page selected = browserManager.getActivePage();
+        var before = selected == null ? null : browserManager.interactionSurface(selected).orElse(null);
+        // URL 与文字来自同一文档内的同步读取，网页自导航不能拼接旧正文与新 URL。
+        Object result = locator.evaluate("""
+                element => {
+                  const document = element.ownerDocument;
+                  const window = document.defaultView;
+                  let visibleBody = !!document.body && document.body.contains(element)
+                    && element.getClientRects().length > 0;
+                  for (let node = element; visibleBody && node; node = node.parentElement) {
+                    const style = window.getComputedStyle(node);
+                    if (style.display === 'none' || style.visibility === 'hidden'
+                        || style.visibility === 'collapse' || Number(style.opacity) === 0
+                        || style.contentVisibility === 'hidden') visibleBody = false;
+                  }
+                  return {url: document.location.href, text: element.innerText, visibleBody,
+                    fullBody: element === document.body};
+                }
+                """, null, options);
+        if (!(result instanceof Map<?, ?> values) || !(values.get("url") instanceof String url)
+                || !(values.get("text") instanceof String text)
+                || !(values.get("visibleBody") instanceof Boolean visibleBody)
+                || !(values.get("fullBody") instanceof Boolean fullBody)) {
+            throw new IllegalStateException("浏览器没有返回完整正文观察");
+        }
+        var after = selected == null ? null : browserManager.interactionSurface(selected).orElse(null);
+        boolean same = before != null && after != null
+                && before.runtimeId().equals(after.runtimeId()) && before.contextId().equals(after.contextId())
+                && before.surfaceId().equals(after.surfaceId()) && before.documentId().equals(after.documentId())
+                && before.generation() == after.generation()
+                && after.urlHash().equals(com.javaclaw.framework.spi.InteractionStageContext.sha256(url));
+        return new ObservedText(url, text, visibleBody, fullBody, same ? after : null, System.currentTimeMillis());
+    }
+
+    private void rememberSnapshotBody(Page page) {
+        observationEvidence.remove();
+        try {
+            // 快照中的输入值、URL 和标题不能充当正文证明；独立读取当前可见正文。
+            rememberObservation("web_snapshot", readObservedText(page.locator("body"),
+                    new Locator.EvaluateOptions().setTimeout(2000)));
+        } catch (RuntimeException unavailable) {
+            // 正文不可读取不改变快照本身的结果，也不能为其补造内容证明。
+            observationEvidence.remove();
+        }
+    }
+
+    private record ObservationEvidence(String tool, Map<String, String> metadata) { }
+    private record ObservedText(String url, String text, boolean visibleBody, boolean fullBody,
+            com.javaclaw.framework.api.InteractionSurfaceEvent identity, long capturedAtMillis) { }
 
     @Tool(
             name = "web_snapshot",
@@ -69,6 +165,7 @@ final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (page == null) return ToolResponse.error("web_snapshot", "浏览器未启动");
 
                 String result = snapshotManager.snapshot(page, interactiveOnly, showUrls, -1);
+                rememberSnapshotBody(page);
                 return ToolResponse.success(
                         "web_snapshot",
                         com.javaclaw.util.ExternalContentGuard.wrap("网页 " + page.url(), result));
@@ -185,13 +282,15 @@ final class BrowserReadTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (locator == null)
                     return ToolResponse.error("web_get_text", "未找到目标元素: " + target);
 
-                String text = locator.innerText();
+                ObservedText observed = readObservedText(locator);
+                String text = observed.text();
                 if (SensitiveDataRedactor.containsLikelyCredential(text)) {
                     return ToolResponse.error("web_get_text", "网页文本包含疑似凭据，已阻止返回");
                 }
+                rememberObservation("web_get_text", observed);
                 return ToolResponse.success(
                         "web_get_text",
-                        com.javaclaw.util.ExternalContentGuard.wrap("网页 " + page.url(), text));
+                        com.javaclaw.util.ExternalContentGuard.wrap("网页 " + observed.url(), text));
             } catch (Exception e) {
                 return ToolResponse.fromException("web_get_text", (Exception) e);
             }

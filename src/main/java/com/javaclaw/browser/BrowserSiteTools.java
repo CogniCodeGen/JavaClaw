@@ -23,7 +23,21 @@ import java.util.stream.Collectors;
 
 /** Site navigation, account selection and authenticated-session tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetProvider {
+final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetProvider,
+        com.javaclaw.framework.spi.InteractionSurfaceProvider, com.javaclaw.framework.spi.ToolRuntimeContextProvider,
+        com.javaclaw.framework.spi.ToolUserInputProvider,
+        com.javaclaw.framework.spi.BrowserNavigationNoOpProvider {
+
+    @Override public java.util.List<com.fasterxml.jackson.databind.JsonNode> currentContext() {
+        return BrowserInteractionContext.current(browserManager);
+    }
+
+    @Override public void bindInteractionObserver(java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        browserManager.bindInteractionObserver(observer);
+    }
+    @Override public java.util.List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
+        return browserManager.interactionSurfaces();
+    }
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSiteTools.class);
 
@@ -35,6 +49,9 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
     private final BrowserTargetResolver targets;
     private final SiteSessionRestorer sessionRestorer;
     private final JsonCodec json;
+    private final BrowserInteractionState interaction;
+    private final boolean eventDrivenInteraction;
+    private final ThreadLocal<StagedInput> stagedInput = new ThreadLocal<>();
 
     BrowserSiteTools(
             PlaywrightBrowserManager browserManager,
@@ -43,6 +60,13 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             ToolCallOrigin origin,
             BrowserOperationGate gate,
             JsonCodec json) {
+        this(browserManager, siteCredentials, snapshotManager, origin, gate, json,
+                new BrowserInteractionState(), false);
+    }
+
+    BrowserSiteTools(PlaywrightBrowserManager browserManager, SiteCredentialManager siteCredentials,
+            SnapshotManager snapshotManager, ToolCallOrigin origin, BrowserOperationGate gate,
+            JsonCodec json, BrowserInteractionState interaction, boolean eventDrivenInteraction) {
         this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
         this.siteCredentials = java.util.Objects.requireNonNull(siteCredentials, "siteCredentials");
         this.snapshotManager = java.util.Objects.requireNonNull(snapshotManager, "snapshotManager");
@@ -51,6 +75,8 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
         this.json = java.util.Objects.requireNonNull(json, "json");
         this.targets = new BrowserTargetResolver(snapshotManager);
         this.sessionRestorer = new SiteSessionRestorer(json);
+        this.interaction = java.util.Objects.requireNonNull(interaction, "interaction");
+        this.eventDrivenInteraction = eventDrivenInteraction;
     }
 
     @Override public String effectTarget() {
@@ -60,6 +86,135 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             return page == null ? "" : page.url();
         } finally { gate.exit(); }
     }
+
+    @Override public java.util.Optional<Prepared> prepareNavigationNoOp(
+            com.fasterxml.jackson.databind.JsonNode arguments,
+            com.javaclaw.framework.spi.ToolExecutionContext execution,
+            com.fasterxml.jackson.databind.JsonNode observedIdentity) {
+        String destination = com.javaclaw.framework.spi.BrowserReceiptProof.canonicalUrl(
+                arguments.path("url").asText(""));
+        if (destination.isBlank()) return java.util.Optional.empty();
+        NavigationState admitted;
+        if (!gate.tryEnter()) return java.util.Optional.empty();
+        try {
+            execution.cancellation().throwIfCancelled();
+            ProjectAccessPolicy.requireSafeBrowserUrl(destination);
+            admitted = navigationState(destination, observedIdentity, false);
+        } catch (RuntimeException unavailable) {
+            execution.cancellation().throwIfCancelled();
+            return java.util.Optional.empty();
+        } finally { gate.exit(); }
+        if (admitted == null) return java.util.Optional.empty();
+        var used = new java.util.concurrent.atomic.AtomicBoolean();
+        return java.util.Optional.of((context, clock) -> {
+            try {
+                if (!used.compareAndSet(false, true) || !context.runId().equals(execution.runId())
+                        || !context.invocationId().equals(execution.invocationId()))
+                    return navigationNoOpResult(context, clock.instant(), null);
+                context.cancellation().throwIfCancelled();
+                gate.enter();
+                try {
+                    context.cancellation().throwIfCancelled();
+                    NavigationState current = navigationState(destination, observedIdentity, true);
+                    // Recheck the actual objects, document and URL. There is no fallback dispatch.
+                    if (current == null || current.page() != admitted.page()
+                            || current.context() != admitted.context()
+                            || !sameNavigationIdentity(current.identity(), admitted.identity()))
+                        return navigationNoOpResult(context, clock.instant(), null);
+                    return navigationNoOpResult(context, clock.instant(), current);
+                } finally { gate.exit(); }
+            } catch (RuntimeException unavailable) {
+                return navigationNoOpResult(context, clock.instant(), null);
+            }
+        });
+    }
+
+    private NavigationState navigationState(String destination,
+            com.fasterxml.jackson.databind.JsonNode observedIdentity, boolean liveRead) {
+        Page selected = browserManager.existingActivePage();
+        if (selected == null) return null;
+        BrowserContext context = selected.context();
+        var before = browserManager.interactionSurface(selected).orElse(null);
+        if (!matchesObservedIdentity(before, observedIdentity)) return null;
+        String url = selected.url();
+        if (liveRead) {
+            // Only the bounded tool carrier performs this fixed host read, never a navigation.
+            Object value = selected.evaluate("() => ({url: window.location.href, ready: document.readyState})");
+            if (!(value instanceof java.util.Map<?, ?> state) || !(state.get("url") instanceof String actual)
+                    || !(state.get("ready") instanceof String ready)
+                    || !java.util.Set.of("interactive", "complete").contains(ready)) return null;
+            url = actual;
+        }
+        var after = browserManager.interactionSurface(selected).orElse(null);
+        if (browserManager.existingActivePage() != selected || selected.context() != context
+                || !sameNavigationIdentity(before, after) || !matchesObservedIdentity(after, observedIdentity)
+                || !after.urlHash().equals(com.javaclaw.framework.spi.InteractionStageContext.sha256(url))
+                || !destination.equals(com.javaclaw.framework.spi.BrowserReceiptProof.canonicalUrl(url))) return null;
+        return new NavigationState(selected, context, after, url);
+    }
+
+    private static boolean matchesObservedIdentity(com.javaclaw.framework.api.InteractionSurfaceEvent identity,
+            com.fasterxml.jackson.databind.JsonNode observed) {
+        return identity != null && observed != null
+                && identity.runtimeId().equals(observed.path("runtimeId").asText())
+                && identity.contextId().equals(observed.path("contextId").asText())
+                && identity.surfaceId().equals(observed.path("surfaceId").asText())
+                && identity.documentId().equals(observed.path("documentId").asText())
+                && identity.generation() == observed.path("generation").asLong(-1);
+    }
+
+    private static boolean sameNavigationIdentity(com.javaclaw.framework.api.InteractionSurfaceEvent first,
+            com.javaclaw.framework.api.InteractionSurfaceEvent second) {
+        return first != null && second != null && first.runtimeId().equals(second.runtimeId())
+                && first.contextId().equals(second.contextId()) && first.surfaceId().equals(second.surfaceId())
+                && first.documentId().equals(second.documentId()) && first.generation() == second.generation();
+    }
+
+    private static Completion navigationNoOpResult(com.javaclaw.framework.spi.ToolExecutionContext context,
+            java.time.Instant at, NavigationState current) {
+        boolean accepted = current != null;
+        var data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        data.put("reusedExisting", accepted);
+        data.put("dispatchAttempted", false);
+        String message = accepted ? "当前受控页面已处于目标 URL；已重新确认，未执行跳转。请重新观察页面正文。"
+                : "受控页面或文档身份已变化；未派发导航，请重新观察。";
+        var metadata = new java.util.LinkedHashMap<String, String>();
+        metadata.put("delivery", "NOT_SENT");
+        metadata.put("effect", "NONE");
+        metadata.put("dispatchAttempted", "false");
+        metadata.put("reusedExisting", Boolean.toString(accepted));
+        String target = "";
+        if (accepted) {
+            metadata.putAll(com.javaclaw.framework.spi.BrowserReceiptProof.urlMetadata(current.url()));
+            var identity = current.identity();
+            metadata.put("runtimeId", identity.runtimeId());
+            metadata.put("contextId", identity.contextId());
+            metadata.put("surfaceId", identity.surfaceId());
+            metadata.put("documentId", identity.documentId());
+            metadata.put("generation", Long.toString(identity.generation()));
+            metadata.put("capturedAtMillis", Long.toString(at.toEpochMilli()));
+            try {
+                var uri = java.net.URI.create(current.url());
+                target = new java.net.URI(uri.getScheme(), null, uri.getHost(), uri.getPort(),
+                        uri.getPath(), null, null).toString();
+                if (target.length() > 512) target = target.substring(0, 512);
+            } catch (java.net.URISyntaxException invalid) { throw new IllegalStateException(invalid); }
+            data.put("url", target);
+        }
+        return new Completion(new com.javaclaw.framework.spi.ToolExecutionResultV1(
+                accepted ? com.javaclaw.framework.api.ToolExecutionStatus.SUCCEEDED
+                        : com.javaclaw.framework.api.ToolExecutionStatus.FAILED,
+                data, accepted ? "" : "BROWSER_NAVIGATION_STATE_CHANGED", message),
+                new com.javaclaw.framework.spi.EffectReceiptV1(context.invocationId(), "web_navigate", "navigate",
+                        target, accepted ? com.javaclaw.framework.spi.EffectReceiptV1.Status.ACCEPTED
+                                : com.javaclaw.framework.spi.EffectReceiptV1.Status.FAILED,
+                        at, "core.tool.completed:" + context.runId().value() + ":" + context.invocationId(),
+                        accepted ? "host rechecked the current managed page; navigation was not dispatched"
+                                : "managed page state changed; navigation was not dispatched", "", metadata));
+    }
+
+    private record NavigationState(Page page, BrowserContext context,
+            com.javaclaw.framework.api.InteractionSurfaceEvent identity, String url) { }
 
     @Tool(
             name = "web_navigate",
@@ -113,6 +268,11 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
 
                 SiteLoginSupport.LoginAssessment login = assessLoginPage(page, status);
                 if (login.loginRequired()) {
+                    if (eventDrivenInteraction) {
+                        com.javaclaw.framework.spi.ToolEffectCapture.noteTarget("web_navigate", page.url());
+                        return beginAuthentication("web_navigate", normalizedUrl, page.url(),
+                                login.reason(), true, page.context().storageState());
+                    }
                     if (origin.kind() == ToolCallOrigin.Kind.INTERACTIVE) {
                         return performInteractiveLogin(
                                 "web_navigate", normalizedUrl, page.url(), login.reason(), true);
@@ -164,6 +324,191 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
 
     // ==================== 站点管理工具 ====================
 
+    @Override public void bindUserInputRun(String runId) {
+        if (eventDrivenInteraction) interaction.bindAuthorizationRun(runId);
+    }
+
+    @Override public void prepareUserInputAnswer(com.fasterxml.jackson.databind.JsonNode question,
+            com.fasterxml.jackson.databind.JsonNode answer, long questionSequence, long answerSequence) {
+        if (!eventDrivenInteraction || questionSequence <= 0 || answerSequence <= questionSequence) return;
+        String challenge = question.path("challengeId").asText("");
+        String text = answer.path("text").asText("").strip();
+        if (challenge.isBlank() || text.isBlank()) return;
+        if (question.path("kind").asText().equals("browser.authentication_required")) {
+            var pending = interaction.authentication();
+            if (pending != null && pending.challengeId().equals(challenge)) interaction.answerAuthentication(challenge);
+        } else if (question.path("kind").asText().equals("browser.account_selection_required")) {
+            String questionOrigin = question.path("origin").asText("");
+            var options = question.path("options");
+            if (questionOrigin.isBlank() || !options.isArray() || options.size() > 21) return;
+            List<String> allowed = new ArrayList<>();
+            options.forEach(option -> {
+                String id = option.path("accountId").asText("");
+                if (!id.isBlank() && id.length() <= 256) allowed.add(id);
+            });
+            var pending = interaction.accountChoice();
+            if (pending == null) {
+                // A host question survives process recovery; no cookie/password baseline is reconstructed.
+                pending = new BrowserInteractionState.PendingAccountChoice(challenge, questionOrigin, allowed);
+                interaction.accountChoice(pending);
+            }
+            if (pending.challengeId().equals(challenge) && pending.origin().equals(questionOrigin)
+                    && pending.accountIds().contains(text) && allowed.contains(text)) interaction.approveAccount(text);
+        }
+    }
+
+    @Override public com.javaclaw.framework.spi.ToolUserInputCheckpoint consumeUserInputCheckpoint(String tool) {
+        StagedInput staged = stagedInput.get();
+        stagedInput.remove();
+        return staged != null && staged.tool().equals(tool) ? staged.checkpoint() : null;
+    }
+
+    private void stageInput(String tool, com.javaclaw.framework.spi.ToolUserInputCheckpoint.Phase phase,
+            com.fasterxml.jackson.databind.node.ObjectNode context, String reason) {
+        stagedInput.set(new StagedInput(tool, new com.javaclaw.framework.spi.ToolUserInputCheckpoint(phase, context, reason)));
+        com.javaclaw.framework.spi.ToolEffectCapture.noteData(tool, context);
+    }
+
+    private void stageAccountChoice(String tool, String url, List<SiteCredential> matches) {
+        var context = json.mapper().createObjectNode();
+        String challenge = java.util.UUID.randomUUID().toString();
+        String siteOrigin = siteOrigin(url);
+        context.put("kind", "browser.account_selection_required");
+        context.put("challengeId", challenge);
+        context.put("origin", siteOrigin);
+        context.put("question", "请选择本次使用的账号：回复下列准确 accountId，或回复 __new__ 使用全新账号。选择后将显式调用 site_select_account；尚未切换账号或导航。");
+        context.put("nextTool", "site_select_account");
+        var options = context.putArray("options");
+        List<String> allowed = new ArrayList<>();
+        for (SiteCredential candidate : matches.stream().limit(20).toList()) {
+            String label = nullToEmpty(candidate.getName()) + "（" + safeUsername(candidate.getUsername()) + "）";
+            options.addObject().put("accountId", candidate.getId())
+                    .put("label", label.substring(0, Math.min(160, label.length())))
+                    .put("hasSession", candidate.isHasSession());
+            allowed.add(candidate.getId());
+        }
+        options.addObject().put("accountId", "__new__").put("label", "全新空白账号").put("hasSession", false);
+        allowed.add("__new__");
+        interaction.accountChoice(new BrowserInteractionState.PendingAccountChoice(challenge, siteOrigin, allowed));
+        com.javaclaw.framework.spi.ToolEffectCapture.noteTarget(tool, url);
+        stageInput(tool, com.javaclaw.framework.spi.ToolUserInputCheckpoint.Phase.NOT_SENT,
+                context, "BROWSER_ACCOUNT_REQUIRED");
+    }
+
+    private String beginAuthentication(String tool, String targetUrl, String loginUrl, String reason,
+            boolean protectedTargetObserved, String baseline) {
+        var pending = interaction.authentication();
+        if (pending == null || !pending.targetUrl().equals(targetUrl)) {
+            browserManager.keepSessionTransientUntilTaskReset(baseline);
+            pending = new BrowserInteractionState.PendingAuthentication(java.util.UUID.randomUUID().toString(),
+                    targetUrl, loginUrl, baseline, protectedTargetObserved);
+            interaction.authentication(pending);
+            // This is part of the established host login action, never replayed by site_auth_check.
+            try { browserManager.showPageForUser(loginUrl); }
+            catch (PlaywrightException unavailable) {
+                log.warn("Visible authentication page unavailable ({})", unavailable.getClass().getSimpleName());
+                return authenticationRequired(tool, pending, "导航/登录动作已执行；可见登录窗口未确认打开，请检查浏览器后回复", false);
+            } finally { snapshotManager.clearRefs(); }
+        }
+        return authenticationRequired(tool, pending, reason, false);
+    }
+
+    private String authenticationRequired(String tool, BrowserInteractionState.PendingAuthentication pending,
+            String reason, boolean renewChallenge) {
+        if (renewChallenge) {
+            pending = new BrowserInteractionState.PendingAuthentication(java.util.UUID.randomUUID().toString(),
+                    pending.targetUrl(), pending.loginUrl(), pending.baselineState(), pending.protectedTargetObserved());
+            interaction.authentication(pending);
+        }
+        var context = json.mapper().createObjectNode();
+        context.put("kind", "browser.authentication_required");
+        context.put("challengeId", pending.challengeId());
+        context.put("origin", siteOrigin(pending.targetUrl()));
+        context.put("authRequired", true);
+        context.put("authVerified", false);
+        context.put("sessionSaved", false);
+        context.put("reason", reason == null ? "" : reason);
+        context.put("question", "请在当前可见浏览器完成登录、验证码或双因素认证，并停留在目标站点的受保护页面，然后回复。回复只触发 site_auth_check 读取核验，不代表登录成功或同意保存会话；不会重放原导航。若当前页已关闭，先显式列出并选择目标页面。");
+        context.put("nextTool", "site_auth_check");
+        stageInput(tool, com.javaclaw.framework.spi.ToolUserInputCheckpoint.Phase.RESULT_ESTABLISHED,
+                context, "BROWSER_AUTHENTICATION_REQUIRED");
+        return ToolResponse.success(tool, "本次导航/工具动作已结束，登录尚未验证；等待用户完成登录后读取核验，本次未保存会话");
+    }
+
+    @Tool(name = "site_auth_check", description = "用户完成手动登录并回复宿主后，只读核验当前页面的登录挑战、真实主文档响应及目标站点会话变化；不导航、不提交、不保存、不读取原始凭据。成功后仍须 web_snapshot 获取新页面证据。")
+    @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
+    public String siteAuthCheck() {
+        gate.enter();
+        try {
+            var pending = interaction.authentication();
+            if (!eventDrivenInteraction || pending == null) {
+                return ToolResponse.error("site_auth_check", "当前没有可核验的宿主登录基线；请先观察页面，必要时显式发起交互登录。不会重放原导航");
+            }
+            if (!interaction.authenticationAnswered(pending.challengeId())) {
+                return authenticationRequired("site_auth_check", pending, "尚未收到当前登录问题的用户回复", false);
+            }
+            Page page = browserManager.getActivePage();
+            if (page == null) return authenticationRequired("site_auth_check", pending,
+                    "当前未选择页面；请显式 web_tab_list、web_tab_switch 后观察，不自动选择弹窗", true);
+            // The DOM reads pump Playwright events before inspecting the matching document response.
+            SiteLoginSupport.LoginSignals observed = loginSignals(page, 0);
+            SiteLoginSupport.LoginSignals signals = new SiteLoginSupport.LoginSignals(
+                    browserManager.mainDocumentStatus(page), observed.credentialForm(), observed.challengeForm());
+            String before = SiteLoginSupport.filterStorageStateForUrl(pending.baselineState(), pending.targetUrl(), json);
+            String after = SiteLoginSupport.filterStorageStateForUrl(page.context().storageState(), pending.targetUrl(), json);
+            boolean protectedObserved = pending.protectedTargetObserved();
+            if (!protectedObserved && java.util.Objects.equals(SiteLoginSupport.hostOf(pending.targetUrl()), SiteLoginSupport.hostOf(page.url()))
+                    && SiteLoginSupport.assess(signals).loginRequired()) {
+                pending = new BrowserInteractionState.PendingAuthentication(pending.challengeId(), pending.targetUrl(),
+                        pending.loginUrl(), pending.baselineState(), true);
+                interaction.authentication(pending);
+                protectedObserved = true;
+            }
+            if (!sameAuthenticationTarget(pending.targetUrl(), page.url())
+                    || SiteLoginSupport.verifyLogin(signals, !java.util.Objects.equals(before, after),
+                    pending.targetUrl(), page.url(), protectedObserved) != SiteLoginSupport.VerificationStatus.AUTHENTICATED) {
+                return authenticationRequired("site_auth_check", pending,
+                        "当前页面/目标站点会话变化尚不足以验证登录，请完成登录并回到原受挑战的目标页面后回复；不会自动重访", true);
+            }
+            browserManager.keepSessionTransientUntilTaskReset(pending.baselineState());
+            interaction.clearAuthentication();
+            snapshotManager.clearRefs();
+            var data = json.mapper().createObjectNode().put("kind", "browser.authentication_check")
+                    .put("authVerified", true).put("sessionSaved", false).put("nextTool", "web_snapshot");
+            com.javaclaw.framework.spi.ToolEffectCapture.noteData("site_auth_check", data);
+            return ToolResponse.success("site_auth_check", "当前目标站点登录态已核验，本次未保存会话；请用 web_snapshot 读取当前页面");
+        } catch (PlaywrightException unavailable) {
+            var pending = interaction.authentication();
+            if (pending != null) return authenticationRequired("site_auth_check", pending, "当前页面暂不可读；请检查后回复", true);
+            return ToolResponse.error("site_auth_check", "当前页面暂不可读，登录未验证");
+        } finally { gate.exit(); }
+    }
+
+    private static String siteOrigin(String url) {
+        try {
+            var value = java.net.URI.create(url);
+            return new java.net.URI(value.getScheme(), null, value.getHost(), value.getPort(), null, null, null).toString();
+        } catch (Exception invalid) { return ""; }
+    }
+
+    private static boolean sameAuthenticationTarget(String expected, String actual) {
+        try {
+            var left = java.net.URI.create(expected).normalize();
+            var right = java.net.URI.create(actual).normalize();
+            if (left.getHost() == null || right.getHost() == null) return false;
+            int leftPort = left.getPort() >= 0 ? left.getPort() : "https".equalsIgnoreCase(left.getScheme()) ? 443 : 80;
+            int rightPort = right.getPort() >= 0 ? right.getPort() : "https".equalsIgnoreCase(right.getScheme()) ? 443 : 80;
+            String leftPath = left.getRawPath() == null || left.getRawPath().isEmpty() ? "/" : left.getRawPath();
+            String rightPath = right.getRawPath() == null || right.getRawPath().isEmpty() ? "/" : right.getRawPath();
+            return left.getScheme().equalsIgnoreCase(right.getScheme()) && left.getHost().equalsIgnoreCase(right.getHost())
+                    && leftPort == rightPort && leftPath.equals(rightPath)
+                    && java.util.Objects.equals(left.getRawQuery(), right.getRawQuery())
+                    && java.util.Objects.equals(left.getRawFragment(), right.getRawFragment());
+        } catch (RuntimeException invalid) { return false; }
+    }
+
+    private record StagedInput(String tool, com.javaclaw.framework.spi.ToolUserInputCheckpoint checkpoint) { }
+
     @Tool(
             name = "site_select_account",
             description =
@@ -183,13 +528,25 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                     url, newAccount, accountId);
             try {
                 String normalizedUrl = PlaywrightBrowserManager.normalizeUrl(url);
+                if (eventDrivenInteraction) normalizedUrl = ProjectAccessPolicy.requireSafeBrowserUrl(normalizedUrl);
                 boolean createNew = Boolean.TRUE.equals(newAccount);
                 String requested = accountId == null ? "" : accountId.strip();
                 if (createNew == !requested.isBlank()) {
                     return ToolResponse.error("site_select_account",
                             "必须二选一：newAccount=true 且 accountId 为空，或 newAccount=false 且传准确账号 ID");
                 }
-                if (!ToolConfirmationManager.requestConfirmation(
+                if (eventDrivenInteraction && (interaction.accountChoice() != null
+                        || siteCredentials.findAllByUrl(normalizedUrl).size() > 1)) {
+                    var pending = interaction.accountChoice();
+                    String selection = createNew ? "__new__" : requested;
+                    if (pending == null || !pending.origin().equals(siteOrigin(normalizedUrl))
+                            || !interaction.accountApproved(selection)) {
+                        stageAccountChoice("site_select_account", normalizedUrl,
+                                siteCredentials.findAllByUrl(normalizedUrl));
+                        return ToolResponse.error("site_select_account", "尚未收到本次账号问题的准确用户选择；未切换账号");
+                    }
+                }
+                if (!eventDrivenInteraction && !ToolConfirmationManager.requestConfirmation(
                         origin, "site_select_account", "切换站点账号将清空当前浏览器会话状态: " + normalizedUrl)) {
                     return ToolResponse.error("site_select_account", "用户取消了账号切换");
                 }
@@ -202,6 +559,8 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                     }
                     browserManager.replaceActiveContextWithBlank();
                     snapshotManager.clearRefs();
+                    interaction.clearAccountChoice();
+                    interaction.clearAuthentication();
                     return ToolResponse.success(
                             "site_select_account", "已为当前会话切换到全新空白账号；访问站点后可登录并另存为新账号");
                 }
@@ -221,6 +580,8 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                 }
                 browserManager.replaceActiveContextWithBlank();
                 snapshotManager.clearRefs();
+                interaction.clearAccountChoice();
+                interaction.clearAuthentication();
                 return ToolResponse.success(
                         "site_select_account",
                         "当前会话已切换到账号「" + accountLabel(credential) + "」，下次导航将恢复该账号会话");
@@ -251,6 +612,14 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             if (SiteLoginSupport.hostOf(page.url()) == null) {
                 return ToolResponse.error(
                         "site_login_interactive", "当前页面不是可登录的网站，请先用 web_navigate 打开目标站点");
+            }
+            if (eventDrivenInteraction) {
+                var pending = interaction.authentication();
+                if (pending != null) return authenticationRequired("site_login_interactive", pending,
+                        "请完成当前登录；回复后调用 site_auth_check，不重复导航", false);
+                return beginAuthentication("site_login_interactive", page.url(), page.url(),
+                        "用户请求交互式登录", SiteLoginSupport.assess(loginSignals(page,
+                                browserManager.mainDocumentStatus(page))).loginRequired(), page.context().storageState());
             }
             if (origin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {
                 return ToolResponse.error(
@@ -287,7 +656,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             try {
                 Page page = browserManager.getActivePage();
                 if (page == null) return ToolResponse.error("site_login_now", "浏览器未启动");
-                if (!ToolConfirmationManager.requestConfirmation(
+                if (!eventDrivenInteraction && !ToolConfirmationManager.requestConfirmation(
                         origin, "site_login_now", "在当前页面 [" + page.url() + "] 用已登记凭据自动登录")) {
                     return ToolResponse.error("site_login_now", "用户取消了操作");
                 }
@@ -326,6 +695,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                             "site_login_now",
                             "未找到用户名输入框。请通过 web_snapshot 查看后用 username_selector 参数指定。");
                 }
+                browserManager.noteInteractionInput(page);
                 page.fill(userSel, site.getUsername());
 
                 // 2) 密码（直接由本工具读取，不进入 LLM 上下文）
@@ -366,6 +736,8 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                 SiteLoginSupport.LoginAssessment login = SiteLoginSupport.assess(signals);
                 if (login.loginRequired()) {
                     browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
+                    if (eventDrivenInteraction) return beginAuthentication("site_login_now", currentUrl, page.url(),
+                            login.reason(), challengeBeforeSubmit, stateBeforeLogin);
                     return ToolResponse.error(
                             "site_login_now",
                             "提交后页面仍要求登录（"
@@ -381,8 +753,16 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                         currentUrl, page.url(), challengeBeforeSubmit)
                         != SiteLoginSupport.VerificationStatus.AUTHENTICATED) {
                     browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
+                    if (eventDrivenInteraction) return beginAuthentication("site_login_now", currentUrl, page.url(),
+                            "目标站点登录态尚未验证", challengeBeforeSubmit, stateBeforeLogin);
                     return ToolResponse.uncertain("site_login_now",
                             "登录提交已执行，但目标站点的持久登录态尚未验证；请重新访问受保护页面检查");
+                }
+                if (eventDrivenInteraction) {
+                    browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
+                    interaction.clearAuthentication();
+                    snapshotManager.clearRefs();
+                    return ToolResponse.success("site_login_now", "登录已验证，本次会话未保存；继续观察页面。若需保存，须另行批准 site_save_session");
                 }
                 boolean saved =
                         ToolConfirmationManager.requestExplicitUserConfirmation(
@@ -458,6 +838,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (locator == null) {
                     return ToolResponse.error("site_fill_password", "无法解析元素: " + targetSelector);
                 }
+                browserManager.noteInteractionInput(page);
                 locator.fill(site.getPassword());
                 return ToolResponse.success(
                         "site_fill_password", "已将 " + site.getName() + " 的密码填入 " + targetSelector);
@@ -482,7 +863,7 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             try {
                 Page page = browserManager.getActivePage();
                 if (page == null) return ToolResponse.error("site_save_session", "浏览器未启动");
-                if (!ToolConfirmationManager.requestConfirmation(
+                if (!eventDrivenInteraction && !ToolConfirmationManager.requestConfirmation(
                         origin, "site_save_session", "保存当前站点及登录会话: " + page.url())) {
                     return ToolResponse.error("site_save_session", "用户取消了操作");
                 }
@@ -692,6 +1073,11 @@ final class BrowserSiteTools implements com.javaclaw.framework.spi.EffectTargetP
             SiteCredential only = matches.getFirst();
             manager.bindAccount(scopeId, url, only.getId());
             return SiteResolution.selected(only);
+        }
+
+        if (eventDrivenInteraction) {
+            stageAccountChoice("web_navigate", url, matches);
+            return SiteResolution.failed("需要用户明确选择站点账号；导航尚未发出");
         }
 
         if (origin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {

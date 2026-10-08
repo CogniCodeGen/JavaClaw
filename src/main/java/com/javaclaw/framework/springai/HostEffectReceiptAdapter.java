@@ -5,6 +5,8 @@ import com.javaclaw.desktop.agent.DesktopSessionTools;
 import com.javaclaw.desktop.api.DesktopActionResult;
 import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.framework.spi.EffectTargetProvider;
+import com.javaclaw.framework.spi.BrowserObservationEvidenceProvider;
+import com.javaclaw.framework.spi.BrowserReceiptProof;
 import com.javaclaw.framework.spi.FileContentProof;
 import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.framework.spi.ToolExecutionContext;
@@ -29,6 +31,9 @@ final class HostEffectReceiptAdapter {
             "com.javaclaw.browser.BrowserReadTools",
             "com.javaclaw.browser.BrowserSessionTools",
             "com.javaclaw.browser.BrowserSiteTools");
+    private static final Set<String> BROWSER_PAGE_INPUT_TOOLS = Set.of(
+            "web_click", "web_dblclick", "web_fill", "web_select", "web_check", "web_upload",
+            "web_type", "web_press_key", "web_drag", "web_hover", "web_scroll");
 
     private HostEffectReceiptAdapter() { }
 
@@ -76,11 +81,11 @@ final class HostEffectReceiptAdapter {
             if (tool.equals("desktop_session_snapshot")) {
                 return desktopSnapshot(tool, arguments, rawOutput, signal, context, at, evidence);
             }
-            return desktop((DesktopSessionTools) source, tool, arguments, signal, context, at, evidence);
+            return desktop((DesktopSessionTools) source, tool, arguments, signal, context, at, evidence, rawOutput);
         }
         if (source.getClass().getClassLoader() == HostEffectReceiptAdapter.class.getClassLoader()
                 && BROWSER_TYPES.contains(type) && source instanceof EffectTargetProvider page) {
-            return browser(page, tool, signal, context, at, evidence);
+            return browser(page, tool, signal, context, at, evidence, establishedTarget);
         }
         if (source.getClass() == com.javaclaw.system.SystemTools.class && tool.startsWith("sys_file_")) {
             return file(tool, arguments, signal, context, at, evidence);
@@ -261,7 +266,8 @@ final class HostEffectReceiptAdapter {
     }
 
     private static EffectReceiptV1 desktop(DesktopSessionTools source, String tool, JsonNode args,
-            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence) {
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence,
+            JsonNode rawOutput) {
         String operation = switch (tool) {
             case "desktop_session_probe" -> "probe";
             case "desktop_session_targets" -> "targets";
@@ -458,6 +464,8 @@ final class HostEffectReceiptAdapter {
             if (!viewEvidence.isBlank()) metadata.put("viewEvidence", viewEvidence);
             String conditions = conditionEvidence(observed);
             if (!conditions.isBlank()) metadata.put("conditionEvidence", conditions);
+            String stage = desktopStageEvidence(rawOutput, observed);
+            if (!stage.isBlank()) metadata.put("interactionStage", stage);
             return new EffectReceiptV1(context.invocationId(), tool, operation,
                     bounded(target), status, at, evidence, "live owned desktop frame observed",
                     subject, metadata);
@@ -468,10 +476,11 @@ final class HostEffectReceiptAdapter {
     }
 
     private static String conditionEvidence(DesktopSessionTools.ObservationProof observed) {
-        if (observed.conditionEvidence().isEmpty() || observed.frameWidth() < 1
-                || observed.frameHeight() < 1) return "";
+        if (observed.conditionEvidence().isEmpty() || observed.conditionEvidence().size() > 12
+                || observed.conditionResults().isEmpty() || observed.conditionResults().size() > 12
+                || observed.frameWidth() < 1 || observed.frameHeight() < 1) return "";
         var proof = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
-                .put("schemaVersion", 1).put("sessionId", observed.sessionId())
+                .put("schemaVersion", 2).put("sessionId", observed.sessionId())
                 .put("targetId", observed.targetId()).put("observationId", observed.observationId())
                 .put("windowGeneration", observed.windowGeneration())
                 .put("contentRevision", observed.contentRevision())
@@ -479,15 +488,97 @@ final class HostEffectReceiptAdapter {
                 .put("frameWidth", observed.frameWidth()).put("frameHeight", observed.frameHeight());
         var conditions = proof.putArray("conditions");
         for (var evidence : observed.conditionEvidence()) {
+            if (evidence.criterionId() == null || evidence.criterionId().isBlank()
+                    || evidence.subject() == null || evidence.subject().isBlank()
+                    || !conditionConfidence(evidence.confidence())
+                    || SensitiveDataRedactor.redactTextWithStatus(evidence.subject()).redacted()
+                    || observed.conditionEvidence().stream().filter(other ->
+                        evidence.criterionId().equals(other.criterionId())).count() != 1) continue;
+            var decisions = observed.conditionResults().stream().filter(decision ->
+                    evidence.criterionId().equals(decision.criterionId())).toList();
+            if (decisions.size() != 1) continue;
+            var decision = decisions.getFirst();
+            var target = evidence.content();
+            if (!evidence.subject().equals(decision.subject())
+                    || decision.outcome() != com.javaclaw.agent.vision.DesktopVisualConditionResult.Outcome.TRUE
+                    || !decision.complete() || !conditionConfidence(decision.confidence())
+                    || !conditionContent(target, observed.frameWidth(), observed.frameHeight())
+                    || !conditionContent(decision.content(), observed.frameWidth(), observed.frameHeight())
+                    || !sameConditionContent(target, decision.content())) continue;
             var condition = conditions.addObject().put("criterionId", evidence.criterionId())
                     .put("subject", evidence.subject()).put("confidence", evidence.confidence())
                     .put("region", "main-content");
-            var target = evidence.content();
             condition.putObject("content").put("label", target.label()).put("role", target.role())
                     .put("x", target.x()).put("y", target.y()).put("width", target.width())
                     .put("height", target.height()).put("confidence", target.confidence());
+            var accepted = condition.putObject("decision").put("outcome", decision.outcome().name())
+                    .put("complete", decision.complete()).put("confidence", decision.confidence())
+                    .put("region", "main-content");
+            var content = decision.content();
+            accepted.putObject("content").put("label", content.label()).put("role", content.role())
+                    .put("x", content.x()).put("y", content.y()).put("width", content.width())
+                    .put("height", content.height()).put("confidence", content.confidence());
         }
-        return proof.toString();
+        String encoded = proof.toString();
+        return conditions.isEmpty() || encoded.length() > EffectReceiptV1.MAX_CONDITION_EVIDENCE_CHARACTERS
+                ? "" : encoded;
+    }
+
+    private static boolean conditionContent(com.javaclaw.agent.vision.DesktopVisualTarget content,
+            int width, int height) {
+        return content != null && content.label() != null && !content.label().isBlank()
+                && content.label().length() <= 500 && content.role() != null
+                && Set.of("content", "list", "table", "empty-state")
+                    .contains(content.role().toLowerCase(java.util.Locale.ROOT))
+                && !SensitiveDataRedactor.redactTextWithStatus(content.label()).redacted()
+                && conditionConfidence(content.confidence())
+                && content.x() >= 0 && content.y() >= 0 && content.width() > 0 && content.height() > 0
+                && (long) content.x() + content.width() <= width
+                && (long) content.y() + content.height() <= height;
+    }
+
+    private static boolean sameConditionContent(com.javaclaw.agent.vision.DesktopVisualTarget first,
+            com.javaclaw.agent.vision.DesktopVisualTarget second) {
+        return first.label().equals(second.label()) && first.role().equalsIgnoreCase(second.role())
+                && first.x() == second.x() && first.y() == second.y()
+                && first.width() == second.width() && first.height() == second.height();
+    }
+
+    private static boolean conditionConfidence(double confidence) {
+        return Double.isFinite(confidence) && confidence >= 0.85 && confidence <= 1;
+    }
+
+    private static String desktopStageEvidence(JsonNode raw, DesktopSessionTools.ObservationProof observed) {
+        if (raw == null || !raw.isObject() || !"desktop.observation".equals(raw.path("kind").asText())
+                || !"computer-use".equals(raw.path("protocol").asText())) return "";
+        JsonNode stage = raw.path("interactionStage");
+        if (!stage.isObject() || stage.path("schemaVersion").asInt() != 1
+                || !"observation".equals(stage.path("kind").asText())
+                || !"DESKTOP".equals(stage.path("mode").asText())
+                || !stage.path("complete").isBoolean() || !stage.path("complete").booleanValue()
+                || !stage.path("contractSequence").isIntegralNumber() || stage.path("contractSequence").asLong() < 1
+                || !stage.path("contractSha256").asText().matches("[0-9a-f]{64}")
+                || stage.path("runtimeId").asText().isBlank() || stage.path("surfaceId").asText().isBlank()
+                || !observed.sessionId().equals(stage.path("contextId").asText())
+                || !observed.sessionId().equals(raw.path("sessionId").asText())
+                || !observed.targetId().equals(stage.path("targetId").asText())
+                || !observed.targetId().equals(raw.path("targetId").asText())
+                || !observed.applicationId().equals(stage.path("applicationId").asText())
+                || !observed.applicationId().equals(raw.path("applicationId").asText())
+                || !observed.observationId().equals(stage.path("observationId").asText())
+                || !observed.observationId().equals(raw.path("observationId").asText())
+                || observed.windowGeneration() != stage.path("generation").asLong(-1)
+                || observed.windowGeneration() != raw.path("windowGeneration").asLong(-1)
+                || observed.contentRevision() != stage.path("contentRevision").asLong(-1)
+                || observed.contentRevision() != raw.path("contentRevision").asLong(-1)
+                || observed.capturedAtMillis() != stage.path("capturedAtMillis").asLong(-1)
+                || observed.capturedAtMillis() != raw.path("capturedAtMillis").asLong(-1)
+                || observed.frameWidth() != stage.path("frameWidth").asInt(-1)
+                || observed.frameHeight() != stage.path("frameHeight").asInt(-1)
+                || !stage.path("conditions").isArray() || stage.path("conditions").isEmpty()
+                || stage.path("conditions").size() > 12) return "";
+        String value = stage.toString();
+        return value.length() <= 32_000 ? value : "";
     }
 
     private static String viewEvidence(com.javaclaw.agent.vision.DesktopVisualActiveView view) {
@@ -501,8 +592,20 @@ final class HostEffectReceiptAdapter {
 
     static EffectReceiptV1 browser(EffectTargetProvider page, String tool,
             ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence) {
+        return browser(page, tool, signal, context, at, evidence, null);
+    }
+
+    private static EffectReceiptV1 browser(EffectTargetProvider page, String tool,
+            ToolEffectCapture.Signal signal, ToolExecutionContext context, Instant at, String evidence,
+            String establishedTarget) {
         String operation = tool.startsWith("web_") ? tool.substring(4) : tool;
-        String target = safeUrl(page.effectTarget());
+        boolean pageInput = page.getClass().getClassLoader() == HostEffectReceiptAdapter.class.getClassLoader()
+                && page.getClass().getName().equals("com.javaclaw.browser.BrowserPageTools")
+                && BROWSER_PAGE_INPUT_TOOLS.contains(tool);
+        // The public target retains its historical returned-page meaning. New contracts
+        // explicitly opt into separate host-captured input-page proof.
+        String observedUrl = pageInput || establishedTarget == null ? page.effectTarget() : establishedTarget;
+        String target = safeUrl(observedUrl);
         if (operation.startsWith("get_") || operation.startsWith("is_")
                 || operation.startsWith("wait_for_") || operation.equals("snapshot")
                 || operation.equals("screenshot") || operation.equals("screenshot_annotated")) {
@@ -512,9 +615,21 @@ final class HostEffectReceiptAdapter {
         if (status == EffectReceiptV1.Status.ACCEPTED && operation.equals("observe")) {
             status = target.isBlank() ? EffectReceiptV1.Status.UNKNOWN : EffectReceiptV1.Status.OBSERVED;
         }
-        return of(context, tool, operation, target, status, at, evidence,
+        java.util.Map<String, String> observed = page instanceof BrowserObservationEvidenceProvider provider
+                ? provider.consumeBrowserObservationEvidence(tool) : java.util.Map.of();
+        java.util.Map<String, String> metadata = BrowserReceiptProof.urlMetadata(
+                signal == ToolEffectCapture.Signal.SUCCESS ? observedUrl : "");
+        if (signal == ToolEffectCapture.Signal.UNCERTAIN) metadata = java.util.Map.of("delivery", "MAYBE_SENT");
+        if (pageInput && establishedTarget != null && signal == ToolEffectCapture.Signal.SUCCESS) {
+            var withInput = new java.util.LinkedHashMap<>(metadata);
+            withInput.putAll(BrowserReceiptProof.inputUrlMetadata(establishedTarget));
+            metadata = java.util.Map.copyOf(withInput);
+        }
+        if (status == EffectReceiptV1.Status.OBSERVED && !observed.isEmpty()
+                && java.util.Set.of("web_snapshot", "web_get_text").contains(tool)) metadata = observed;
+        return new EffectReceiptV1(context.invocationId(), tool, operation, target, status, at, evidence,
                 operation.equals("click") ? "click returned; page outcome requires a later observation"
-                        : "browser tool boundary result");
+                        : "browser tool boundary result", "", metadata);
     }
 
     private static EffectReceiptV1 file(String tool, JsonNode args,

@@ -15,7 +15,7 @@ final class HostContextBlock {
 
     enum Kind {
         CONTROL, RUNTIME, APPLICATION_IDENTITY, TOOL_MANIFEST, SELECTED_CONTEXT,
-        OBSERVATION, TOOL_EXCHANGE, WARNING
+        OBSERVATION, TOOL_EXCHANGE, WARNING, INTERACTION_CHECKPOINT, INTERACTION_HISTORY
     }
 
     record Metadata(String id, Kind kind, String revision, String scope,

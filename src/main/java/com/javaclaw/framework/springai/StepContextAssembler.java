@@ -16,15 +16,22 @@ final class StepContextAssembler {
     private final String scope;
     private final StepContextProjector projector;
     private final List<Message> stableInstructions;
+    private final java.util.function.Supplier<Message> contractContext;
 
     StepContextAssembler(String scope, StepContextProjector projector) {
         this(scope, projector, null);
     }
 
     StepContextAssembler(String scope, StepContextProjector projector, List<Message> stableInstructions) {
+        this(scope, projector, stableInstructions, null);
+    }
+
+    StepContextAssembler(String scope, StepContextProjector projector, List<Message> stableInstructions,
+            java.util.function.Supplier<Message> contractContext) {
         this.scope = scope;
         this.projector = projector;
         this.stableInstructions = stableInstructions == null ? null : List.copyOf(stableInstructions);
+        this.contractContext = contractContext;
     }
 
     List<Message> base(List<Message> incoming) {
@@ -52,6 +59,7 @@ final class StepContextAssembler {
         if (messages.isEmpty()) return List.of();
         try {
             messages = ComputerUseEvidenceProjection.project(messages, projector.toolResultCharacterLimit());
+            messages = BrowserObservationProjection.project(messages, projector.toolResultCharacterLimit());
         } catch (LocalContextBudgetExceededException budget) {
             throw pause(budget.getMessage(), budget);
         }
@@ -86,10 +94,19 @@ final class StepContextAssembler {
     }
 
     List<Message> project(List<Message> assembled, List<ToolCallback> callbacks) {
-        List<Message> manifested = new ArrayList<>(ProviderToolManifest.replace(assembled, callbacks));
+        List<Message> current = assembled;
+        if (contractContext != null) {
+            current = new ArrayList<>(assembled.stream()
+                    .filter(message -> !TaskRepairContext.isContract(message, scope)).toList());
+            Message contract = contractContext.get();
+            if (contract != null) current.add(contract);
+        }
+        List<Message> manifested = new ArrayList<>(ProviderToolManifest.replace(current, callbacks));
         int last = manifested.size() - 1;
         manifested.set(last, dynamic(HostContextBlock.Kind.TOOL_MANIFEST, manifested.get(last), true, List.of()));
-        List<Message> source = normalize(manifested);
+        // 最新工具交换也可能直接加入 assembled，统一在最终入口保留有界浏览器正文。
+        List<Message> source = ComputerUseEvidenceProjection.compactForModel(BrowserObservationProjection.project(
+                normalize(manifested), projector.toolResultCharacterLimit()));
         try {
             var projected = projector.project(source);
             projector.validateRequiredEvidence(source, projected.messages());

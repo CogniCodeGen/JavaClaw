@@ -20,6 +20,75 @@ final class ComputerUseEvidenceProjection {
 
     private ComputerUseEvidenceProjection() { }
 
+    /** Lossless wire compaction at the final provider boundary, never a host observation codec. */
+    static List<Message> compactForModel(List<Message> messages) {
+        List<Message> result = new ArrayList<>(messages.size());
+        for (Message message : messages) {
+            if (!(message instanceof ToolResponseMessage response)) {
+                result.add(message);
+                continue;
+            }
+            List<ToolResponseMessage.ToolResponse> values = new ArrayList<>();
+            boolean changed = false;
+            for (var value : response.getResponses()) {
+                String raw = value.responseData();
+                String compact = compactObservation(value.name(), raw);
+                changed |= !java.util.Objects.equals(raw, compact);
+                values.add(new ToolResponseMessage.ToolResponse(value.id(), value.name(), compact));
+            }
+            if (!changed) {
+                result.add(message);
+                continue;
+            }
+            Message compact = ToolResponseMessage.builder().responses(values).metadata(response.getMetadata()).build();
+            var host = HostContextBlock.metadata(message);
+            if (host != null) {
+                ObjectNode content = StepMessageCodec.message(compact);
+                content.remove("hostContextBlock");
+                compact = HostContextBlock.mark(compact, new HostContextBlock.Metadata(host.id(), host.kind(),
+                        OnDemandContextSession.digest(content.toString()), host.scope(), host.required(), host.evidenceRefs()));
+            }
+            result.add(compact);
+        }
+        return List.copyOf(result);
+    }
+
+    private static String compactObservation(String toolName, String raw) {
+        if (!"desktop_session_observe".equals(toolName) || raw == null) return raw;
+        ObjectNode original = observationEnvelope(raw);
+        if (original == null) return raw; // Includes an already-columnar provider snapshot.
+        ObjectNode compact = original.deepCopy();
+        ObjectNode data = (ObjectNode) compact.path("data");
+        boolean changed = compactControls(data, "elements", "HOST_ACCESSIBILITY");
+        changed |= compactControls(data, "visualTargets", "HOST_INTERPRETED_VISUAL");
+        if (!changed) return raw;
+        data.put("targetEncoding", "columns-v1: each rows entry follows columns exactly; full IDs and source order are unchanged");
+        return compact.toString().length() < raw.length() ? compact.toString() : raw;
+    }
+
+    private static boolean compactControls(ObjectNode data, String field, String source) {
+        if (!(data.path(field) instanceof ArrayNode values) || values.isEmpty()) return false;
+        List<String> columns = new ArrayList<>();
+        values.get(0).fieldNames().forEachRemaining(columns::add);
+        // Uniform objects preserve absent-vs-null distinctions without adding presence masks.
+        if (columns.isEmpty()) return false;
+        for (JsonNode value : values) {
+            if (!value.isObject() || value.size() != columns.size()
+                    || columns.stream().anyMatch(name -> !value.has(name))) return false;
+        }
+        ObjectNode table = JSON.createObjectNode().put("source", source);
+        ArrayNode names = table.putArray("columns");
+        columns.forEach(names::add);
+        ArrayNode rows = table.putArray("rows");
+        for (JsonNode value : values) {
+            ArrayNode row = rows.addArray();
+            columns.forEach(name -> row.add(value.get(name).deepCopy()));
+        }
+        if (table.toString().length() >= values.toString().length()) return false;
+        data.set(field, table);
+        return true;
+    }
+
     static List<Message> project(List<Message> exchange, int maxResultCharacters) {
         if (maxResultCharacters < 1) throw new IllegalArgumentException("result budget must be positive");
         List<Message> result = new ArrayList<>(exchange.size());

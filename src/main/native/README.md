@@ -123,12 +123,23 @@ are otherwise unmodified. Review the generated Java diff and run the check
 command whenever the header or jextract version changes.
 
 The Java bridge creates a `SymbolLookup.libraryLookup` only for a verified
-absolute path under `ApplicationHome/runtime/native/<platform>/`. It then uses
-jextract's generated function wrappers. Generated code cannot select a library
+absolute path. Distributions use `ApplicationHome/runtime/native/<platform>/`.
+The bridge then uses jextract's generated function wrappers. Generated code cannot select a library
 from `PATH`, `java.library.path`, plugins, or the working directory. The source
-checkout can use `target/native/<platform>/` for local development.
+checkout also accepts precompiled libraries under the same application root:
+`data/native/<platform>/` takes priority over the legacy
+`target/native/<platform>/` fallback.
 
 Build the platform libraries with `macos/build.sh` or `windows/build.ps1`.
+For macOS source development, run this command from a project root that has
+already been initialized by starting JavaClaw:
+
+```bash
+src/main/native/macos/build.sh "$PWD/data/native/macos/libjavaclaw_desktop.dylib"
+```
+
+This explicit output path keeps the precompiled library in application data;
+the macOS script's default output remains `target/native/macos/`.
 Place the built library under the portable application's `runtime/native/`
-directory before signing the distribution. The running application does not
-download, compile, or extract a native library into a writable directory.
+directory before signing the distribution. Startup only loads a precompiled
+library; it does not download, compile, or extract one.

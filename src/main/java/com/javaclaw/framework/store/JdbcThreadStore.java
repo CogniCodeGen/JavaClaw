@@ -169,6 +169,14 @@ public final class JdbcThreadStore implements ThreadStore, com.javaclaw.framewor
     @Override public long appendOnce(RunScope scope, String mutationId, String type, JsonNode payload) {
         if (mutationId == null || mutationId.isBlank() || !type.startsWith("memory/"))
             throw new IllegalArgumentException("invalid graph mutation identity or type");
+        return appendIdempotently(scope, mutationId, type, payload);
+    }
+    @Override public long appendInteractionOnce(RunScope scope, String mutationId, String type, JsonNode payload) {
+        if (mutationId == null || mutationId.isBlank() || !type.startsWith("interaction/"))
+            throw new IllegalArgumentException("invalid interaction identity or type");
+        return appendIdempotently(scope, "interaction:" + mutationId, type, payload);
+    }
+    private long appendIdempotently(RunScope scope, String mutationId, String type, JsonNode payload) {
         return tx.execute(status -> {
             requireUsable(lock(scope));
             List<Long> existing = jdbc.queryForList("SELECT event_sequence FROM agent_thread_mutations WHERE workspace_id=? "

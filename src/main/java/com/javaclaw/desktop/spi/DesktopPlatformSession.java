@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface DesktopPlatformSession extends AutoCloseable {
     DesktopTarget currentTarget();
     Optional<DesktopFrame> pollFrame(int timeoutMillis);
+    /** Cached identity only; absent means the provider cannot prove the captured native surface. */
+    default Optional<com.javaclaw.desktop.api.DesktopSurfaceSnapshot> currentSurface() { return Optional.empty(); }
     default List<DesktopElement> elements(DesktopFrame frame) { return List.of(); }
     /** Diagnostics for the last accessibility catalog read, without field values or user text. */
     default String elementDiagnostics() { return ""; }

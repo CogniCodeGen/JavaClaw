@@ -30,11 +30,21 @@
                   visible="false" managed="false" styleClass="attachment-preview-pane">
             <padding><Insets top="8.0" right="20.0" bottom="8.0" left="20.0"/></padding>
         </FlowPane>
+        <HBox fx:id="interactionControls" alignment="CENTER_LEFT" spacing="8.0"
+              visible="false" managed="false">
+            <padding><Insets top="6.0" right="20.0" left="20.0"/></padding>
+            <children>
+                <Label fx:id="interactionCaption" wrapText="true" HBox.hgrow="ALWAYS"/>
+                <Button fx:id="interactionAnswerButton" text="回答" onAction="#answerInteractionRequested"/>
+                <Button fx:id="interactionAmendButton" text="修改要求" onAction="#amendInteractionRequested"/>
+                <Button fx:id="interactionCancelButton" text="取消子任务" onAction="#cancelInteractionRequested"/>
+            </children>
+        </HBox>
         <HBox alignment="BOTTOM_CENTER" spacing="12.0" fillHeight="false"
               styleClass="input-bar">
             <padding><Insets top="12.0" right="20.0" bottom="4.0" left="20.0"/></padding>
             <children>
-                <Button text="+" onAction="#addAttachmentRequested" styleClass="attach-button">
+                <Button fx:id="attachmentButton" text="+" onAction="#addAttachmentRequested" styleClass="attach-button">
                     <tooltip><Tooltip text="添加图片或文档附件"/></tooltip>
                 </Button>
                 <StackPane HBox.hgrow="ALWAYS">

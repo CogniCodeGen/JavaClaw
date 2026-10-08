@@ -20,8 +20,12 @@ public final class TaskEvidenceCollector {
     public static List<RunEventEnvelope> collect(RunStore runs, RunId parentId) {
         Objects.requireNonNull(runs, "runs");
         Objects.requireNonNull(parentId, "parentId");
+        InteractionAcceptanceBoundary interaction = InteractionAcceptanceBoundary.current(runs, parentId);
         List<RunEventEnvelope> events = new ArrayList<>();
-        collectDescendants(runs, parentId, true, new HashSet<>(), events);
+        collectDescendants(runs, parentId, true, new HashSet<>(), events, interaction);
+        // Unchanged file/command criteria may still use their original evidence. Amended
+        // interaction criteria accept physical receipts only from their current host child.
+        events.removeIf(event -> interaction.excludesReceipt(event));
         // Run-local sequences cannot order receipts produced by another Run. Event times
         // establish the cross-Run order; observedAt breaks millisecond timestamp ties.
         events.sort(Comparator.comparing(RunEventEnvelope::timestamp)
@@ -50,13 +54,16 @@ public final class TaskEvidenceCollector {
     }
 
     private static void collectDescendants(RunStore runs, RunId id, boolean root,
-            Set<RunId> visited, List<RunEventEnvelope> events) {
+            Set<RunId> visited, List<RunEventEnvelope> events, InteractionAcceptanceBoundary interaction) {
         if (!visited.add(id)) return;
-        if (!root && runs.find(id).map(run -> run.snapshot().state().terminal())
-                .orElse(false) == false) return;
+        if (!root) {
+            var child = runs.find(id).orElse(null);
+            if (child == null || !child.snapshot().state().terminal()
+                    || interaction.excludesChild(child)) return;
+        }
         events.addAll(runs.eventsAfter(id, 0));
         for (var child : runs.childRuns(id)) {
-            collectDescendants(runs, child.snapshot().id(), false, visited, events);
+            collectDescendants(runs, child.snapshot().id(), false, visited, events, interaction);
         }
     }
 

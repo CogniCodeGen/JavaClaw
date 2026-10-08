@@ -237,6 +237,12 @@
             <artifactId>playwright</artifactId>
             <version>1.52.0</version>
         </dependency>
+        <!-- 保留 Chrome 安装包中的执行权限与 macOS 应用包内部链接。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>1.28.0</version>
+        </dependency>
 
         <!--
             EclipseStore（Java 原生对象图持久化）+ GigaMap JVector 向量索引

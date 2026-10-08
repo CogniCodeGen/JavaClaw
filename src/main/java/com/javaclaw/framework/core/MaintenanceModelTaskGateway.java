@@ -3,8 +3,6 @@ package com.javaclaw.framework.core;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.framework.api.*;
 import com.javaclaw.framework.spi.*;
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 
@@ -23,8 +21,8 @@ public final class MaintenanceModelTaskGateway implements ModelTaskGateway {
         StoredRun origin = runs.find(request.ownerRunId()).orElseThrow(() -> new IllegalStateException("memory source turn is unavailable"));
         if (origin.request().source().kind().equals("maintenance")) return delegate.execute(request);
         RunRequest source = origin.request();
-        String id = UUID.nameUUIDFromBytes((source.scope() + ":memory-maintenance").getBytes(StandardCharsets.UTF_8)).toString();
-        RunScope scope = new RunScope(source.scope().workspaceId(), source.scope().userId(), id);
+        if (!runs.readable(source.scope())) throw new IllegalStateException("memory source turn is not readable");
+        RunScope scope = MaintenanceRunProvenance.scopeFor(source.scope());
         // Committed terminal turns are provenance, not live parents of post-turn maintenance.
         RunRequest maintenance = RunRequest.builder().agent(source.agent()).profile(source.profile())
                 .scope(scope).source(new InvocationSource("maintenance", source.scope().sessionId()))
@@ -35,7 +33,10 @@ public final class MaintenanceModelTaskGateway implements ModelTaskGateway {
                         "framework.originTurnId", JsonNodeFactory.instance.textNode(request.ownerRunId().value()),
                         "framework.targetThreadId", JsonNodeFactory.instance.textNode(source.scope().sessionId())))
                 .build();
-        ManagedTurn turn = agents.get().beginTurn(maintenance);
+        ManagedTurn turn;
+        try (var permit = MaintenanceRunProvenance.mint(origin, maintenance)) {
+            turn = agents.get().beginTurn(permit.request());
+        }
         return turn.ready().thenCompose(ignored -> delegate.execute(new ModelTaskRequest(
                 request.purpose(), request.tier(), request.input(), request.mediaInputs(), request.outputSchema(), turn.id(),
                 request.budgetAccount(), request.timeout(), request.maxRetries(),

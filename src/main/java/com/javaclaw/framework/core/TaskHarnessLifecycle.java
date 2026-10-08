@@ -1,6 +1,8 @@
 package com.javaclaw.framework.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.api.RunRequest;
@@ -23,6 +25,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /** Persists task contracts and acceptance results beside the technical Run lifecycle. */
 final class TaskHarnessLifecycle {
@@ -65,10 +71,92 @@ final class TaskHarnessLifecycle {
         if (!enabled(id)) return;
         List<RunEventEnvelope> events = runs.eventsAfter(id, 0);
         if (TaskResultEvaluator.latestContractV3(events, json).isPresent()) return;
+        JsonNode validation = request.attributes().get(TaskContractCompiler.VALIDATION_CONTRACT_REFERENCE_ATTRIBUTE);
+        if (validation != null) {
+            control.throwIfCancelled();
+            RunEventEnvelope frozen = validationContract(request, validation);
+            var provenance = JsonNodeFactory.instance.objectNode()
+                    .put("sourceRunId", frozen.runId()).put("sequence", frozen.sequence())
+                    .put("sha256", validation.path("sha256").asText())
+                    .put("planningExcluded", true).put("evidenceImported", false)
+                    .put("scopePolicy", "local-validation-same-workspace-user");
+            control.throwIfCancelled();
+            runs.appendBatch(id, Set.of(RunState.RUNNING), RunState.RUNNING, List.of(
+                    draft(request, "core.validation.contract_reused", 1, provenance),
+                    draft(request, "core.task.contract", 3, frozen.payload())))
+                    .ifPresent(batch -> batch.forEach(published));
+            return;
+        }
         TaskContractV3 contract = compiler.compileV3(id, request, control);
         runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
                 draft(request, "core.task.contract", 3, json.valueToTree(contract)), null, null)
                 .ifPresent(published);
+    }
+
+    private RunEventEnvelope validationContract(RunRequest request, JsonNode reference) {
+        String sourceId = reference.path("sourceRunId").asText("");
+        String sha256 = reference.path("sha256").asText("");
+        long sequence = reference.path("sequence").asLong(-1);
+        if (!reference.isObject() || reference.size() != 3
+                || !reference.path("sourceRunId").isTextual() || sourceId.isBlank()
+                || !reference.path("sequence").isIntegralNumber() || sequence < 1
+                || !reference.path("sha256").isTextual() || !sha256.matches("[0-9a-f]{64}")
+                || !sourceId.equals(System.getProperty(TaskContractCompiler.VALIDATION_CONTRACT_SOURCE_PROPERTY, "").strip())
+                || !Long.toString(sequence).equals(System.getProperty(TaskContractCompiler.VALIDATION_CONTRACT_SEQUENCE_PROPERTY, "").strip())
+                || !sha256.equals(System.getProperty(TaskContractCompiler.VALIDATION_CONTRACT_SHA256_PROPERTY, "").strip())
+                || !validationChat(request) || !runs.readable(request.scope())
+                || request.attributes().containsKey(TaskContractCompiler.ATTRIBUTE))
+            throw new SecurityException("local contract reference requires an explicitly configured root chat");
+        var source = runs.find(new RunId(sourceId)).orElseThrow(() ->
+                new SecurityException("local validation contract source is unavailable"));
+        if (!validationChat(source.request()) || !runs.readable(source.request().scope())
+                || !source.request().scope().workspaceId().equals(request.scope().workspaceId())
+                || !source.request().scope().userId().equals(request.scope().userId())
+                || !validationText(source.request()).equals(validationText(request)))
+            throw new SecurityException("local validation contract owner or exact input does not match");
+        // Cross-session reuse is limited to this explicitly enabled same-user local validation.
+        RunEventEnvelope frozen = runs.eventsAfter(source.snapshot().id(), sequence - 1).stream()
+                .filter(event -> event.sequence() == sequence && event.runId().equals(sourceId)
+                        && event.schemaVersion() == 3 && event.producer().equals("framework.core")
+                        && Set.of("core.task.contract", "core.task.contract_revised").contains(event.type()))
+                .findFirst().orElseThrow(() -> new SecurityException("trusted validation contract event is unavailable"));
+        try {
+            String actual = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(frozen.payload().toString().getBytes(StandardCharsets.UTF_8)));
+            if (!actual.equals(sha256)) throw new SecurityException("local validation contract SHA256 does not match");
+            TaskContractV3 contract = json.treeToValue(frozen.payload(), TaskContractV3.class);
+            if (!contract.originalRequest().equals(validationText(request)))
+                throw new SecurityException("local validation contract original request does not match exact input");
+            compiler.validateFrozenV3(request, contract);
+        } catch (SecurityException invalid) { throw invalid; }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        catch (Exception invalid) { throw new SecurityException("invalid local validation contract", invalid); }
+        if (!runs.readable(request.scope()) || !runs.readable(source.request().scope()))
+            throw new SecurityException("local validation contract scope is no longer readable");
+        return frozen;
+    }
+
+    private static boolean validationChat(RunRequest request) {
+        return request.agent().id().equals("system.default") && request.profile().id().equals("chat")
+                && request.source().kind().equals("chat") && request.source().id().equals("desktop")
+                && request.linkage().parentRunId() == null && request.linkage().workflowRunId() == null;
+    }
+
+    private static String validationText(RunRequest request) {
+        if (request.inputs().stream().anyMatch(input -> !input.type().equals("core.text")
+                && !input.type().equals("core.message")))
+            throw new SecurityException("local contract validation does not accept attachments or other input types");
+        var text = request.inputs().stream().filter(input -> input.type().equals("core.text")).toList();
+        if (text.size() != 1 || !text.getFirst().data().path("text").isTextual())
+            throw new SecurityException("local contract validation requires one exact text input");
+        String exact = text.getFirst().data().path("text").textValue();
+        for (String key : List.of(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE,
+                TaskContractCompiler.RESOLVED_REQUEST_ATTRIBUTE)) {
+            JsonNode override = request.attributes().get(key);
+            if (override != null && (!override.isTextual() || !override.textValue().equals(exact)))
+                throw new SecurityException("local contract validation cannot override the exact input");
+        }
+        return exact;
     }
 
     /** Only a new human clarification can revise an unresolved model plan on a paused Run. */
@@ -109,6 +197,47 @@ final class TaskHarnessLifecycle {
                             "core.run.resumed:" + resumed.sequence(), json.valueToTree(revised)), null, null);
         });
         revision.ifPresent(value -> { if (published != null) published.accept(value); });
+    }
+
+    TaskContractV3 amendInteraction(RunId id, RunRequest request, String goal, long revision,
+            RunControl control, Consumer<RunEventEnvelope> published) {
+        TaskContractV3 previous = TaskResultEvaluator.latestContractV3(runs.eventsAfter(id, 0), json).orElseThrow();
+        InteractionExecutionPolicy.requireContiguousInteractionBlock(previous);
+        var attrs = new LinkedHashMap<>(request.attributes());
+        attrs.remove(TaskContractCompiler.ATTRIBUTE);
+        attrs.remove(TaskContractCompiler.ORIGINAL_REQUEST_ATTRIBUTE);
+        attrs.remove(TaskContractCompiler.RESOLVED_REQUEST_ATTRIBUTE);
+        var planning = new RunRequest(request.agent(), request.profile(), request.source(), request.scope(),
+                List.of(InputBlock.text(goal)), request.linkage(), request.permissionCeiling(), request.budget(),
+                null, attrs);
+        TaskContractV3 replacement = compiler.compileV3(id, planning, control);
+        if (!replacement.reliable() || !replacement.applicable()
+                || replacement.criteria().stream().anyMatch(criterion -> !interactionCriterion(criterion)))
+            throw new IllegalArgumentException("INTERACTION_AMENDMENT_NEEDS_CLARIFICATION");
+        var revisedInteraction = replacement.criteria().stream().map(criterion -> new com.javaclaw.framework.api.TaskCriterionV3(
+                "ir" + revision + "." + criterion.id(), criterion.description(), criterion.capabilityId(),
+                criterion.targetType(), criterion.target(), criterion.requiredEvidence(), criterion.requiredSubject(),
+                criterion.requiredTextFragments(), criterion.browserTargetPhase())).toList();
+        List<com.javaclaw.framework.api.TaskCriterionV3> criteria = new ArrayList<>();
+        boolean inserted = false;
+        for (var criterion : previous.criteria()) {
+            if (interactionCriterion(criterion)) {
+                if (!inserted) { criteria.addAll(revisedInteraction); inserted = true; }
+            } else criteria.add(criterion);
+        }
+        TaskContractV3 revised = new TaskContractV3(3, previous.originalRequest() + "\n交互任务修订：" + goal,
+                criteria, true, true, "model", List.of(), List.of(),
+                replacement.desktopObservationPolicy(), replacement.intentStatus());
+        runs.append(id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                new RunEventDraft("core.task.contract_revised", 3, "framework.core",
+                        request.linkage().correlationId(), null, json.valueToTree(revised)), null, null)
+                .ifPresent(published);
+        return new TaskContractV3(3, goal, revisedInteraction, true, true, "host.interaction",
+                List.of(), List.of(), replacement.desktopObservationPolicy(), replacement.intentStatus());
+    }
+
+    private static boolean interactionCriterion(com.javaclaw.framework.api.TaskCriterionV3 criterion) {
+        return criterion.capabilityId().startsWith("browser.") || criterion.capabilityId().startsWith("desktop.");
     }
 
     private static boolean canClarify(TaskContractV3 contract) {
@@ -202,6 +331,16 @@ final class TaskHarnessLifecycle {
                               Consumer<RunEventEnvelope> published) {
         if (!enabled(id)) return;
         List<RunEventEnvelope> ownEvents = runs.eventsAfter(id, 0);
+        if (InteractionExecutionPolicy.isInteraction(request)) {
+            for (var checkpoint : BusinessEffectCheckpointVerifier.candidates(id, ownEvents, json)) {
+                var event = runs.verifyBusinessEffectCheckpoint(id, checkpoint);
+                if (published != null) event.ifPresent(published);
+            }
+            for (var proof : InteractionStageVerifier.candidates(id, runs.eventsAfter(id, 0), json)) {
+                var event = runs.verifyInteractionStage(id, proof);
+                if (published != null) event.ifPresent(published);
+            }
+        }
         TaskContractV3 contractV3 = TaskResultEvaluator.latestContractV3(ownEvents, json).orElse(null);
         TaskContractV2 contract = contractV3 == null ? null
                 : TaskResultEvaluator.desktopContract(contractV3, capabilities);
@@ -265,7 +404,17 @@ final class TaskHarnessLifecycle {
                 .anyMatch(event -> event.sequence() > latestOutcomeSequence
                         && event.type().equals("core.run.resumed")
                         && event.producer().equals("framework.core"));
-        if (existing != null && !resumedAfterOutcome) {
+        boolean acceptanceChangedAfterOutcome = latestOutcomeSequence > 0 && ownEvents.stream()
+                .anyMatch(event -> id.value().equals(event.runId())
+                        && event.sequence() > latestOutcomeSequence
+                        && event.producer().equals("framework.core")
+                        && (event.schemaVersion() == 3
+                            && (event.type().equals("core.task.contract")
+                                || event.type().equals("core.task.contract_revised"))
+                            || event.schemaVersion() == 1
+                                && event.type().equals("core.interaction.control_accepted")
+                                && event.payload().path("type").asText().equals("AMEND")));
+        if (existing != null && !resumedAfterOutcome && !acceptanceChangedAfterOutcome) {
             reconcileVerified(id, request, ownEvents, existing, published);
             return existing;
         }

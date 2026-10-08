@@ -14,6 +14,9 @@ public record ReasoningResult(RunState nextState, JsonNode output, String reason
         if (nextState != RunState.COMPLETED
                 && nextState != RunState.WAITING_INPUT
                 && nextState != RunState.WAITING_APPROVAL
+                && nextState != RunState.WAITING_CHILD
+                && nextState != RunState.WAITING_EVENT
+                && nextState != RunState.FAILED
                 && nextState != RunState.PAUSED) {
             throw new IllegalArgumentException("unsupported reasoning result state: " + nextState);
         }

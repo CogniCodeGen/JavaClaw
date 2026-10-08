@@ -89,6 +89,7 @@ public final class DefaultToolClient implements ToolClient {
                 .attributes(java.util.Map.of(ToolGroupAccess.ATTRIBUTE, allowedGroups))
                 .build();
         ManagedTurn createdTurn = null;
+        com.fasterxml.jackson.databind.JsonNode trustedDelegatableGroups = null;
         final ManagedTurn ownedTurn;
         final RunId runId;
         try {
@@ -105,6 +106,16 @@ public final class DefaultToolClient implements ToolClient {
                 }
                 if (existing.snapshot().state() != RunState.RUNNING) throw new IllegalStateException("tool owner turn is not running");
                 RunRequest parent = existing.request();
+                var parentGrant = InteractionExecutionPolicy.isMain(parent)
+                        ? parent.attributes().get(ToolGroupAccess.DELEGATABLE_ATTRIBUTE) : null;
+                if (parentGrant == null) parentGrant = parent.attributes().get(ToolGroupAccess.ATTRIBUTE);
+                if (parentGrant == null) parentGrant = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode().add("*");
+                if (!parentGrant.isArray()) throw new SecurityException("stored tool group grant must be an array");
+                var restrictedDelegation = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+                if (request.allowedToolGroups().contains("*")) parentGrant.forEach(restrictedDelegation::add);
+                else request.allowedToolGroups().stream().filter(group -> ToolGroupAccess.allowsDelegation(parent, group))
+                        .forEach(restrictedDelegation::add);
+                trustedDelegatableGroups = restrictedDelegation;
                 var restrictedGroups = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
                 var parentGroups = parent.attributes().get(ToolGroupAccess.ATTRIBUTE);
                 if (request.allowedToolGroups().contains("*") && parentGroups != null && parentGroups.isArray()) {
@@ -125,6 +136,7 @@ public final class DefaultToolClient implements ToolClient {
         }
         final String invocationId = request.invocationId() == null
                 ? UUID.randomUUID().toString() : request.invocationId();
+        AgentStep completedInputReplay = null;
         if (runs != null) {
             var persisted = new RunStepQuery(runs).step(runId, StepId.tool(runId, invocationId));
             if (persisted.isPresent()) {
@@ -136,17 +148,8 @@ public final class DefaultToolClient implements ToolClient {
                 if (step.state() != AgentStep.State.COMPLETED) {
                     return CompletableFuture.failedFuture(new ToolRecoveryRequiredException(step.id().value()));
                 }
-                List<ToolCallEvent> replay = runs.eventsAfter(runId, 0).stream()
-                        .filter(event -> invocationId.equals(event.payload().path("invocationId").asText())
-                                || step.id().value().equals(event.payload().path("stepId").asText()))
-                        .map(event -> new ToolCallEvent(event.type(), event.schemaVersion(), event.producer(), event.payload()))
-                        .toList();
-                return CompletableFuture.completedFuture(new ToolCallOutcome(step.output().path("modelOutput"),
-                        java.time.Duration.ofMillis(step.output().path("durationMillis").asLong()), replay,
-                        com.javaclaw.framework.api.ToolExecutionStatus.fromCode(
-                                step.output().path("status").asText("")),
-                        step.output().path("errorCode").asText(""),
-                        step.output().path("displayMessage").asText("")));
+                if (BrowserUserInputRecovery.candidate(owner, step)) completedInputReplay = step;
+                else return CompletableFuture.completedFuture(replayOutcome(runId, invocationId, step));
             }
         }
         ExecutionPlan plan;
@@ -156,7 +159,7 @@ public final class DefaultToolClient implements ToolClient {
             if (ownedTurn != null) ownedTurn.fail(failure);
             return CompletableFuture.failedFuture(failure);
         }
-        RunRequest effectiveOwner = plan.annotate(owner);
+        RunRequest effectiveOwner = plan.annotate(owner, trustedDelegatableGroups);
         com.javaclaw.framework.spi.CancellationToken cancellation = () -> request.cancellation().cancelled()
                 || (ownedTurn != null && ownedTurn.cancelled())
                 || (runs != null && runs.find(runId).map(value -> value.snapshot().state() != RunState.RUNNING).orElse(true));
@@ -177,6 +180,13 @@ public final class DefaultToolClient implements ToolClient {
             if (!ToolGroupAccess.allows(effectiveOwner, selected.descriptor().group())) {
                 throw new ToolPermissionDeniedException(
                         "tool group is not allowed: " + selected.descriptor().group());
+            }
+            if (completedInputReplay != null) {
+                BrowserUserInputRecovery.restore(effectiveOwner, runs, runId, completedInputReplay, selected);
+                ToolCallOutcome replay = replayOutcome(runId, invocationId, completedInputReplay);
+                RuntimeException closeFailure = closeResources(tools, plan);
+                return closeFailure == null ? CompletableFuture.completedFuture(replay)
+                        : CompletableFuture.failedFuture(closeFailure);
             }
             List<ToolCallEvent> events = new java.util.concurrent.CopyOnWriteArrayList<>();
             ReasoningEventSink durable = runs == null ? null : StepEvents.durableSink(runs, runId);
@@ -237,6 +247,17 @@ public final class DefaultToolClient implements ToolClient {
         }
     }
 
+    private ToolCallOutcome replayOutcome(RunId runId, String invocationId, AgentStep step) {
+        List<ToolCallEvent> replay = runs.eventsAfter(runId, 0).stream()
+                .filter(event -> invocationId.equals(event.payload().path("invocationId").asText())
+                        || step.id().value().equals(event.payload().path("stepId").asText()))
+                .map(event -> new ToolCallEvent(event.type(), event.schemaVersion(), event.producer(), event.payload())).toList();
+        return new ToolCallOutcome(step.output().path("modelOutput"),
+                java.time.Duration.ofMillis(step.output().path("durationMillis").asLong()), replay,
+                com.javaclaw.framework.api.ToolExecutionStatus.fromCode(step.output().path("status").asText("")),
+                step.output().path("errorCode").asText(""), step.output().path("displayMessage").asText(""));
+    }
+
     private RunControl invocationControl(RunBudget budget, RunId runId) {
         Instant deadline = clock.instant().plus(budget.timeout());
         if (runs != null) {
@@ -266,7 +287,8 @@ public final class DefaultToolClient implements ToolClient {
             PersistedRunStateRestorer.restoreToolCalls(journal, ownerControl);
             String fingerprint = started.path("fingerprint").asText("");
             ownerControl.recordToolCall(fingerprint);
-            if (agents instanceof AgentEngine engine) engine.recordDirectToolCall(runId, fingerprint);
+            if (agents instanceof AgentEngine engine) engine.recordDirectToolCall(runId, fingerprint,
+                    started.path("invocationId").asText());
             durable.toolStarted(step, started);
             return null;
         });
@@ -302,6 +324,9 @@ public final class DefaultToolClient implements ToolClient {
                     control.restoreEffectStart(invocationId, fingerprint,
                             key.isBlank() ? fingerprint : key,
                             payload.path("idempotent").asBoolean(false), policy, resourceKey);
+                    if ("web_navigate".equals(tool) && payload.path("trustedBrowserNavigation").isBoolean()
+                            && payload.path("trustedBrowserNavigation").booleanValue())
+                        control.restoreTrustedBrowserNavigationStart(invocationId);
                 }
             } else if (event.type().equals("core.tool.receipt")
                     && event.producer().equals("framework.core")) {
@@ -309,9 +334,14 @@ public final class DefaultToolClient implements ToolClient {
                         payload.path("fingerprint").asText(""));
                 if (!invocationId.isBlank()) {
                     try {
-                        control.restoreEffectReceipt(invocationId,
-                                EffectReceiptV1.Status.valueOf(payload.path("status").asText("")),
+                        EffectReceiptV1.Status status = EffectReceiptV1.Status.valueOf(
+                                payload.path("status").asText(""));
+                        control.restoreEffectReceipt(invocationId, status,
                                 payload.path("metadata").path("delivery").asText(""));
+                        control.restoreTrustedBrowserNavigationReceipt(invocationId,
+                                payload.path("tool").asText(""), payload.path("operation").asText(""), status,
+                                payload.path("metadata").path("delivery").asText(""),
+                                payload.path("target").asText(""));
                     } catch (IllegalArgumentException ignored) {
                         // Malformed or future receipt statuses do not grant retry permission.
                     }

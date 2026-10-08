@@ -77,6 +77,12 @@ public final class ExecutionPlan implements AutoCloseable {
     /** Adds only compiled, non-secret plan metadata needed by run-scoped extension adapters. */
     public com.javaclaw.framework.api.RunRequest annotate(
             com.javaclaw.framework.api.RunRequest request) {
+        return annotate(request, null);
+    }
+
+    /** The optional grant must come from a scope-checked stored owner, never caller attributes. */
+    com.javaclaw.framework.api.RunRequest annotate(
+            com.javaclaw.framework.api.RunRequest request, JsonNode trustedDelegatableGroups) {
         var capabilities = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         descriptor.compiledCapabilities().keySet().stream().sorted()
                 .forEach(id -> capabilities.add(id.value()));
@@ -87,9 +93,30 @@ public final class ExecutionPlan implements AutoCloseable {
         var effective = new com.javaclaw.framework.api.RunRequest(request.agent(), request.profile(), request.source(),
                 request.scope(), request.inputs(), request.linkage(), descriptor.permissions(), descriptor.budget(),
                 request.idempotencyKey(), request.attributes());
-        return effective.withAttribute("framework.capabilities", capabilities)
+        effective = effective.withAttribute("framework.capabilities", capabilities)
                 .withAttribute("framework.modelPolicyRef", com.fasterxml.jackson.databind.node.TextNode.valueOf(descriptor.modelPolicyRef()))
                 .withAttribute("framework.compiledCapabilities", configurations);
+        if (!InteractionExecutionPolicy.isMain(effective)) return effective;
+
+        JsonNode configured = request.attributes().get(ToolGroupAccess.ATTRIBUTE);
+        JsonNode delegatable = trustedDelegatableGroups != null ? trustedDelegatableGroups : configured;
+        if (delegatable == null) delegatable = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode().add("*");
+        // Ordinary annotation replaces any caller-supplied delegation attribute with this host grant.
+        effective = effective.withAttribute(ToolGroupAccess.DELEGATABLE_ATTRIBUTE, delegatable);
+        boolean hasBackend = ToolGroupAccess.allowsDelegation(effective, "web")
+                || ToolGroupAccess.allowsDelegation(effective, "desktop-session");
+        if (configured != null && !configured.isArray())
+            throw new SecurityException(ToolGroupAccess.ATTRIBUTE + " must be an array");
+        var direct = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        boolean hasInteraction = false;
+        if (configured == null) direct.add("*");
+        else for (JsonNode group : configured) {
+            if (group.isTextual() && (group.asText().equals("web") || group.asText().equals("desktop-session"))) continue;
+            direct.add(group);
+            if (group.isTextual() && group.asText().equals(InteractionExecutionPolicy.TOOL_GROUP)) hasInteraction = true;
+        }
+        if (hasBackend && !hasInteraction) direct.add(InteractionExecutionPolicy.TOOL_GROUP);
+        return effective.withAttribute(ToolGroupAccess.ATTRIBUTE, direct);
     }
 
     /**

@@ -32,6 +32,7 @@ public final class ChatHeaderController implements AutoCloseable {
     private final ChatHeaderViewModel viewModel = new ChatHeaderViewModel();
     private Runnable toggleSidebar = () -> { };
     private Runnable openTasks = () -> { };
+    private Runnable inspectSession = () -> { };
     private Runnable openSettings = () -> { };
     private Runnable clearHistory = () -> { };
 
@@ -78,6 +79,8 @@ public final class ChatHeaderController implements AutoCloseable {
         settingsButton.setTooltip(new Tooltip("设置（" + modifier + " + ,）"));
     }
 
+    void setOnInspectSession(Runnable value) { inspectSession = action(value); }
+
     void showTitle(String title, String metadata) {
         String fullTitle = title == null || title.isBlank() ? "JavaClaw 工作区" : title;
         viewModel.showTitle(fullTitle.replaceAll("(?U)\\s+", " ").strip(), metadata);
@@ -110,6 +113,7 @@ public final class ChatHeaderController implements AutoCloseable {
 
     @FXML private void toggleSidebarRequested() { toggleSidebar.run(); }
     @FXML private void openTasksRequested() { openTasks.run(); }
+    @FXML private void inspectSessionRequested() { inspectSession.run(); }
     @FXML private void openSettingsRequested() { openSettings.run(); }
     @FXML private void clearHistoryRequested() { clearHistory.run(); }
 
@@ -127,6 +131,7 @@ public final class ChatHeaderController implements AutoCloseable {
         sidebarToggleButton.managedProperty().unbind();
         toggleSidebar = () -> { };
         openTasks = () -> { };
+        inspectSession = () -> { };
         openSettings = () -> { };
         clearHistory = () -> { };
     }

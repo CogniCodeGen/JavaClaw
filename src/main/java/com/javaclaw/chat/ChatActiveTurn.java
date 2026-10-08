@@ -12,6 +12,11 @@ final class ChatActiveTurn {
     long outputTokens;
     DeliveryState deliveryState = DeliveryState.COMPLETE;
     volatile ConversationHandle handle;
+    boolean interactionWaiting;
+    boolean interactionNeedsAnswer;
+    long interactionRevision;
+    long interactionChildEventSequence;
+    boolean interactionCommandPending;
 
     ChatActiveTurn(int generation, String modeId) {
         this.generation = generation;

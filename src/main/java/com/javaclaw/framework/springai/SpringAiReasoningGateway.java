@@ -88,6 +88,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     private final CancellableTaskExecutor executor;
     private final ObservationRegistry observations;
     private final SpringAiPromptFactory prompts;
+    private final com.javaclaw.framework.api.InteractionHistoryClient interactionHistory;
     private final TrustedCapabilityRegistry capabilities = TrustedCapabilityRegistry.builtins();
 
     public SpringAiReasoningGateway(
@@ -101,6 +102,14 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             ObjectMapper json,
             CancellableTaskExecutor executor,
             ObservationRegistry observations) {
+        this(models, advisorRegistry, tools, extensionState, usageLedger, modelTasks, runStore, json,
+                executor, observations, null);
+    }
+
+    public SpringAiReasoningGateway(SpringAiModelRegistry models, SpringAiAdvisorRegistry advisorRegistry,
+            ToolInvocationGateway tools, ExtensionStateStore extensionState, RunUsageLedger usageLedger,
+            ModelTaskGateway modelTasks, RunStore runStore, ObjectMapper json, CancellableTaskExecutor executor,
+            ObservationRegistry observations, com.javaclaw.framework.api.InteractionHistoryClient interactionHistory) {
         this.models = Objects.requireNonNull(models, "models");
         this.advisorRegistry = Objects.requireNonNull(advisorRegistry, "advisorRegistry");
         this.tools = Objects.requireNonNull(tools, "tools");
@@ -112,6 +121,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         this.executor = Objects.requireNonNull(executor, "executor");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.prompts = new SpringAiPromptFactory(extensionState);
+        this.interactionHistory = interactionHistory;
     }
 
     @Override
@@ -183,7 +193,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     }
                     onDemand = new OnDemandContextSession(request, catalog, modelTasks,
                             tools, runStore, json, originalHistory, decisionCallback,
-                            List.of(new SystemMessage(stablePrompt)), capabilities);
+                            List.of(new SystemMessage(stablePrompt)), capabilities, interactionHistory);
                     if (recovered != null) onDemand.replayOnce(recovered);
                 }
                 if (recovered == null && request.approvedToolInvocation() != null
@@ -348,6 +358,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             return ReasoningResult.completed(guarded);
         } catch (Throwable failure) {
             Throwable cause = unwrap(failure);
+            if (cause instanceof com.javaclaw.framework.core.InteractionWaitRequiredException wait) {
+                return new ReasoningResult(RunState.WAITING_CHILD, wait.context(), wait.getMessage());
+            }
+            if (cause instanceof com.javaclaw.framework.core.InteractionEventWaitRequiredException wait) {
+                return new ReasoningResult(RunState.WAITING_EVENT, wait.context(), wait.getMessage());
+            }
             if (cause instanceof GuardedToolCallingManager.ProtocolBatchException batch) {
                 if (!batch.recoverable()) {
                     return protocolPause(request, "MODEL_DECISION_MULTIPLE_GENERATIONS",
@@ -366,6 +382,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             }
             if (cause instanceof ToolInputRequiredException input) {
                 return ReasoningResult.waitingForInput(input.context(), input.getMessage());
+            }
+            if (cause instanceof com.javaclaw.framework.core.CrossModeBusinessEffectUnverifiedException business) {
+                request.events().emit("core.interaction.business_fence_blocked", 1, "framework.core", business.context());
+                return new ReasoningResult(RunState.PAUSED, business.context(), "CROSS_MODE_BUSINESS_UNVERIFIED");
             }
             if (cause instanceof PendingEffectObservationRequiredException pending) {
                 ObjectNode paused = JsonNodeFactory.instance.objectNode()
@@ -698,9 +718,12 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             } catch (Throwable failure) {
                 Throwable cause = unwrap(failure);
                 if (cause instanceof ToolApprovalRequiredException
+                        || cause instanceof com.javaclaw.framework.core.InteractionWaitRequiredException
+                        || cause instanceof com.javaclaw.framework.core.InteractionEventWaitRequiredException
                         || cause instanceof ToolInputRequiredException
                         || cause instanceof ToolRecoveryRequiredException
                         || cause instanceof PendingEffectObservationRequiredException
+                        || cause instanceof com.javaclaw.framework.core.CrossModeBusinessEffectUnverifiedException
                         || cause instanceof ContextPlanningRequiredException
                         || cause instanceof TurnPausedException
                         || cause instanceof BudgetExceededException

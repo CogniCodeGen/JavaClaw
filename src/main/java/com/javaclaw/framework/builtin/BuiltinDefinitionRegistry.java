@@ -37,7 +37,7 @@ public final class BuiltinDefinitionRegistry implements DefinitionProvisioner {
     public boolean ensureAgent(String workspaceId, AgentDefinitionRef reference) {
         Objects.requireNonNull(reference, "reference");
         if (reference.version() != null
-                || !BuiltinDefinitionBootstrap.SYSTEM_AGENT_ID.equals(reference.id())) {
+                || !BuiltinDefinitionBootstrap.SYSTEM_AGENT_IDS.contains(reference.id())) {
             return false;
         }
         return ensure(requireWorkspace(workspaceId));

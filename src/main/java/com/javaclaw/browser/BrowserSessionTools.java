@@ -21,7 +21,19 @@ import java.util.stream.Collectors;
 
 /** Tab, JavaScript, cookie and document-export tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserSessionTools implements com.javaclaw.framework.spi.EffectTargetProvider {
+final class BrowserSessionTools implements com.javaclaw.framework.spi.EffectTargetProvider,
+        com.javaclaw.framework.spi.InteractionSurfaceProvider, com.javaclaw.framework.spi.ToolRuntimeContextProvider {
+
+    @Override public java.util.List<com.fasterxml.jackson.databind.JsonNode> currentContext() {
+        return BrowserInteractionContext.current(browserManager);
+    }
+
+    @Override public void bindInteractionObserver(java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        browserManager.bindInteractionObserver(observer);
+    }
+    @Override public java.util.List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
+        return browserManager.interactionSurfaces();
+    }
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSessionTools.class);
     private static final DateTimeFormatter TIMESTAMP_FMT =
@@ -186,6 +198,7 @@ final class BrowserSessionTools implements com.javaclaw.framework.spi.EffectTarg
                     return ToolResponse.error("web_eval_js", "用户取消了操作");
                 }
 
+                browserManager.noteInteractionInput(page);
                 Object result = page.evaluate(script);
                 String resultStr = (result != null) ? result.toString() : "(undefined)";
                 // 截断过长的结果

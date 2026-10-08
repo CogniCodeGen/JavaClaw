@@ -34,7 +34,11 @@ final class TrustedToolApprovalPolicy implements ToolApprovalPolicy {
 
     @Override public ToolApprovalDecision evaluate(
             FrameworkTool tool, JsonNode arguments, RunRequest request) {
-        return assess(tool, ToolConfirmationManager.isEnabled(), settings.getToolReviewMode()).decision();
+        ToolApprovalDecision decision = assess(tool, ToolConfirmationManager.isEnabled(),
+                settings.getToolReviewMode()).decision();
+        if (decision != ToolApprovalDecision.DENY && requiresInteractionSessionApproval(tool, request))
+            return ToolApprovalDecision.REQUIRE_HUMAN_APPROVAL;
+        return decision;
     }
 
     @Override public String approvalKind(
@@ -45,12 +49,23 @@ final class TrustedToolApprovalPolicy implements ToolApprovalPolicy {
 
     @Override public String approvalKind(
             FrameworkTool tool, JsonNode arguments, RunRequest request) {
+        if (requiresInteractionSessionApproval(tool, request)) return "CONFIRM";
         return assess(tool, ToolConfirmationManager.isEnabled(), settings.getToolReviewMode()).kind();
+    }
+
+    private static boolean requiresInteractionSessionApproval(FrameworkTool tool, RunRequest request) {
+        return com.javaclaw.framework.core.InteractionExecutionPolicy.isInteraction(request)
+                && tool.descriptor().name().equals("site_save_session")
+                && SpringAiAnnotatedToolRegistry.isExactHostTool(tool);
     }
 
     static ToolApprovalRiskPolicy.Assessment assess(
             FrameworkTool tool, boolean confirmationEnabled, ToolReviewMode reviewMode) {
         Objects.requireNonNull(tool, "tool");
+        if (com.javaclaw.framework.builtin.InteractionTools.isTrustedTool(tool)) {
+            // Delegation only narrows permissions. Actual browser/native actions keep their own approvals.
+            return new ToolApprovalRiskPolicy.Assessment(ToolApprovalDecision.ALLOW, "CONFIRM");
+        }
         if (TrustedFrameworkToolIdentity.isContextRead(tool)
                 || TrustedFrameworkToolIdentity.isToolCatalog(tool)
                 || MemoryRecallExtension.isTrustedRecallTool(tool)

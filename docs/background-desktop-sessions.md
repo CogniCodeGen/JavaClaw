@@ -6,7 +6,7 @@ JavaClaw 使用目标绑定的桌面会话观察和操作其他应用。首版�
 
 - `com.javaclaw.desktop.api.DesktopSessionService`：发现目标、打开会话、按需截图、异步操作、前台接管、帧、状态与操作事件订阅，以及关闭作用域或工作区。`actions(owner, sessionId)` 受同一会话归属约束，事件仅含动作种类、开始／结束、结果、窗口代次与时间戳；不含输入文本、键名、坐标或原生句柄。
 - `com.javaclaw.desktop.spi.DesktopPlatformProvider`：平台能力探测、目标发现、创建原生会话。Spring 根配置注册 Windows 和 macOS Provider，服务按探测结果选择可用实现。
-- `com.javaclaw.desktop.nativebridge`：从 `ApplicationHome/runtime/native/<platform>/` 中固定的绝对路径加载库，通过版本化 `desktop_bridge.h` 与 jextract 25 生成的 FFM 绑定调用。源码开发可从同一应用根内的 `target/native/<platform>/` 加载。
+- `com.javaclaw.desktop.nativebridge`：从 `ApplicationHome/runtime/native/<platform>/` 中固定的绝对路径加载库，通过版本化 `desktop_bridge.h` 与 jextract 25 生成的 FFM 绑定调用。源码开发还可加载同一应用根内的预编译库，优先使用 `data/native/<platform>/`，兼容旧的 `target/native/<platform>/`。
 - `com.javaclaw.desktop.agent.DesktopSessionTools`：新 Agent 工具；旧 `desktop_probe`、`desktop_capture`、`desktop_click` 等前台 Computer Use 工具及 CLI 适配器已删除。`sys_*` 截图和键鼠工具保留原有行为，不受新开关放宽。
 - `desktop_session_observe`：从所属会话读取最新实时帧，直接在内存中交给运行作用域内的视觉模型；返回原帧尺寸、窗口代次、内容修订、`observationId`、有界辅助功能元素及视觉目标。不接受任意图片路径。视觉识别失败时不会提交本次观察，也不会解除结果未知的输入门禁。`desktop_session_snapshot` 仍可把图片保存到应用内目录供用户查看。
 - `com.javaclaw.ui.javafx.desktop.DesktopPreviewWindow`：置顶预览窗，显示当前应用／弹窗标题、最近操作及结果、暂停原因、停止与前台接管入口。静态结构采用 FXML，颜色复用应用主题令牌；窗口支持普通、最大化和迷你悬浮三态。原始帧在 FX 线程外按视口尺寸及屏幕像素密度缩放，只保留最新帧并限制刷新频率；调整尺寸时即使没有新帧也会重新缩放，暂停或关闭时清除缓存。多个窗口错位排布，前台输入前暂时隐藏预览，避免挡住目标。
@@ -56,7 +56,15 @@ JavaClaw 使用目标绑定的桌面会话观察和操作其他应用。首版�
 
 便携应用根包含只读签名 `runtime/`、可写 `plugins/` 和 `data/`。数据、截图、日志、Playwright 资产及临时文件都在该根下；旧数据和插件经暂存、内容校验后复制迁移，原件保留。详情见 [便携应用目录](portable-layout.md)。
 
-构建和签名方式见 [原生 ABI 说明](../src/main/native/README.md) 与 `scripts/assemble-portable-macos.sh`、`scripts/assemble-portable-windows.ps1`。生产版缺少原生库、ABI 不兼容或缺少平台权限时，服务会报告不可用，不会从 `plugins/`、工作目录或系统临时目录加载替代库。
+macOS 源码开发可在已启动 JavaClaw 并完成初始化的项目根目录中手动预编译：
+
+```bash
+src/main/native/macos/build.sh "$PWD/data/native/macos/libjavaclaw_desktop.dylib"
+```
+
+该命令显式指定输出到应用数据目录；脚本默认输出仍为 `target/native/macos/`。启动时只加载预编译库，不下载、编译或提取原生库。
+
+构建和签名方式见 [原生 ABI 说明](../src/main/native/README.md) 与 `scripts/assemble-portable-macos.sh`、`scripts/assemble-portable-windows.ps1`。发行版继续将原生库放在 `runtime/native/<platform>/`，随应用签名。生产版缺少原生库、ABI 不兼容或缺少平台权限时，服务会报告不可用，不会从 `plugins/`、工作目录或系统临时目录加载替代库。
 
 ## 验证
 

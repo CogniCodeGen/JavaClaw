@@ -13,6 +13,11 @@ public interface ThreadStore {
     ThreadSnapshot configure(RunScope scope, ThreadConfiguration configuration);
     List<RunSnapshot> turns(RunScope scope);
     List<ThreadEvent> events(RunScope scope, long afterSequence);
+    /** Host interaction lifecycle can outlive its observing turn, but never its thread tombstone. */
+    default long appendInteractionOnce(RunScope scope, String mutationId, String type,
+                                       com.fasterxml.jackson.databind.JsonNode payload) {
+        throw new UnsupportedOperationException("ThreadStore has no interaction journal");
+    }
     ThreadSnapshot fork(RunScope source, TurnId throughTurn, String title);
     List<RunScope> markDeleting(RunScope root);
     void purge(RunScope scope);

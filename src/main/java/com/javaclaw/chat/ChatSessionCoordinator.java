@@ -114,16 +114,20 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 .map(ChatSessionCoordinator::sessionFrom)
                 .toList();
         sessions.clear();
+        ChatService service = chatService.get();
+        var directory = service.sessionDirectory();
+        // Old UI indexes can already contain a dedicated child. Exclude it before startSession
+        // and default selection, using the same persisted ownership view as durable chats.
         List<ChatSession> valid = new ArrayList<>(loaded.stream()
+                .filter(session -> !directory.internalInteractionSessionIds().contains(session.getId()))
                 .filter(session -> history.hasMessages(workspace, session.getId()))
                 .toList());
-        ChatService service = chatService.get();
         // Chat history created before the thread journal still needs a durable thread identity.
         // startSession is idempotent and keeps the existing title and messages in chat history.
         for (ChatSession session : valid) {
             service.startSession(session.getId(), session.getTitle());
         }
-        var durable = service.sessions();
+        var durable = directory.sessions();
         for (var thread : durable) {
             if (valid.stream().noneMatch(session -> session.getId().equals(thread.scope().sessionId()))) {
                 valid.add(recoverDurableSession(thread.scope().sessionId(), thread.title(),
@@ -163,6 +167,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         if (currentSession.isArchived()) newSession();
         else service.startSession(currentSession.getId(), currentSession.getTitle());
+        turns.refreshInteractionControls();
         status.refreshTitle();
     }
 
@@ -190,6 +195,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         composer.clearAttachments();
         if (!(turns.isStreaming() && turns.streamingSession() != null)) thinking.reset();
         addWelcomeMessage();
+        turns.refreshInteractionControls();
         status.refreshTitle();
         history.saveSessions(currentWorkspaceId(), sessionSnapshots(sessions));
     }
@@ -218,6 +224,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         currentSession = target;
         transcript.enterAtTail();
         enterTargetSession(target, running, activeStream);
+        turns.refreshInteractionControls();
         status.refreshTitle();
     }
 

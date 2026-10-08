@@ -23,7 +23,11 @@ public interface RunStore {
         return findByIdempotencyKey(scope.workspaceId(), key).filter(run -> run.request().scope().equals(scope));
     }
     default RunRequest prepare(RunRequest request) { return request; }
-    /** Hold the parent Run's state fence through evidence evaluation and outcome persistence. */
+    /**
+     * Hold the owning Run and thread state fence through evidence acceptance or native
+     * rediscovery reservation. Reads and durable writes in work must share this atomic
+     * fence; implementations without it fail closed rather than allowing duplicate dispatch.
+     */
     default <T> T withRunAcceptanceLock(RunId id, Supplier<T> work) {
         throw new UnsupportedOperationException("RunStore has no atomic task acceptance fence");
     }
@@ -93,6 +97,17 @@ public interface RunStore {
     /** Commit a verifier-derived local V2 checkpoint before releasing an uncertain input. */
     default Optional<RunEventEnvelope> verifyEffectCheckpoint(
             RunId id, EffectCheckpointV1 checkpoint) {
+        return Optional.empty();
+    }
+
+    /** Independently verifies an accepted desktop click's predeclared business result on its source Run. */
+    default Optional<RunEventEnvelope> verifyBusinessEffectCheckpoint(
+            RunId sourceRunId, EffectCheckpointV1 checkpoint) {
+        return Optional.empty();
+    }
+
+    /** Verify one original-contract stage, without changing delivery receipts or run state. */
+    default Optional<RunEventEnvelope> verifyInteractionStage(RunId sourceRunId, InteractionStageProofV1 proof) {
         return Optional.empty();
     }
 }

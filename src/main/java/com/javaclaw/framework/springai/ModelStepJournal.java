@@ -10,6 +10,7 @@ import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.StepId;
 import com.javaclaw.framework.api.ToolExecutionStatus;
 import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.InteractionHumanAmendment;
 import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.StepEvents;
 import com.javaclaw.framework.core.ToolArgumentValidationException;
@@ -61,6 +62,7 @@ final class ModelStepJournal {
     private final HarnessDecisionToolCallback decisionCallback;
     private final LegacyDesktopBatchRecovery legacyDesktopRecovery;
     private final BatchObservationReuse observationReuse;
+    private final BrowserNavigationFeedback navigationFeedback;
     private StepId currentModel;
     private final List<AssistantMessage.ToolCall> pendingCalls = new ArrayList<>();
 
@@ -76,6 +78,7 @@ final class ModelStepJournal {
         this.legacyDesktopRecovery = new LegacyDesktopBatchRecovery(
                 request, steps, providerTools, json);
         this.observationReuse = new BatchObservationReuse(request, steps, json);
+        this.navigationFeedback = new BrowserNavigationFeedback(request, steps, json);
     }
     HarnessDecisionToolCallback decisionCallback() { return decisionCallback; }
     ObjectMapper json() { return json; }
@@ -128,7 +131,11 @@ final class ModelStepJournal {
     synchronized String invocationId(String name, JsonNode arguments) {
         for (int index = 0; index < pendingCalls.size(); index++) {
             var call = pendingCalls.get(index);
-            if (call.name().equals(name) && parse(call.arguments()).equals(arguments)) {
+            if (!call.name().equals(name)) continue;
+            JsonNode candidate;
+            try { candidate = SpringAiToolCallback.parseArguments(json, call.arguments()); }
+            catch (ToolArgumentValidationException malformed) { continue; }
+            if (candidate.equals(arguments)) {
                 pendingCalls.remove(index);
                 return invocationId(currentModel, call);
             }
@@ -575,6 +582,22 @@ final class ModelStepJournal {
         return SpringAiToolCallback.modelVisibleResult(
                 result, runs, request.runId(), observationReuse.evidenceInvocation(invocation));
     }
+
+    /** An invalid raw call has an exact durable identity, but no parsed arguments or dispatch. */
+    synchronized ObjectNode rejectMalformedArgumentsForModel(FrameworkTool tool, String rawArguments,
+            ToolArgumentValidationException invalid) {
+        for (int index = 0; index < pendingCalls.size(); index++) {
+            var call = pendingCalls.get(index);
+            if (!call.name().equals(tool.descriptor().name())
+                    || !java.util.Objects.equals(call.arguments(), rawArguments)) continue;
+            pendingCalls.remove(index);
+            String invocation = invocationId(currentModel, call);
+            return SpringAiToolCallback.modelVisibleResult(rejectInvalidArguments(tool,
+                    JsonNodeFactory.instance.nullNode(), invocation, currentModel, invalid, callFingerprint(call)));
+        }
+        throw new IllegalStateException("invalid tool JSON is not associated with a durable model response: "
+                + tool.descriptor().name());
+    }
     private ToolInvocationResult invoke(FrameworkTool tool, JsonNode arguments,
                                         ToolInvocationGateway gateway, String invocation, StepId modelStep) {
         StepId id = StepId.tool(request.runId(), invocation);
@@ -584,10 +607,15 @@ final class ModelStepJournal {
             if (BatchObservationReuse.isAlias(step)) {
                 return observationReuse.reuse(tool, arguments, invocation, modelStep, step);
             }
+            if (BrowserNavigationFeedback.isFeedback(step)) {
+                return navigationFeedback.replay(tool, arguments, invocation, modelStep, step);
+            }
             if (step.kind() != AgentStep.Kind.TOOL
                     || step.state() != AgentStep.State.COMPLETED) {
                 throw new ToolRecoveryRequiredException(id.value());
             }
+            com.javaclaw.framework.core.BrowserUserInputRecovery.restore(
+                    request.runRequest(), runs, request.runId(), step, tool);
             return replay(step);
         }
         ToolInvocationResult reused = observationReuse.reuse(tool, arguments, invocation, modelStep, null);
@@ -595,13 +623,15 @@ final class ModelStepJournal {
         try {
             return SpringAiToolCallback.invoke(tool, arguments, request, gateway, invocation);
         } catch (ToolArgumentValidationException invalid) {
-            return rejectInvalidArguments(tool, arguments, invocation, invalid);
+            return rejectInvalidArguments(tool, arguments, invocation, modelStep, invalid, null);
+        } catch (com.javaclaw.framework.core.PendingEffectObservationRequiredException pending) {
+            return navigationFeedback.reject(tool, arguments, invocation, modelStep, pending);
         }
     }
 
     private ToolInvocationResult rejectInvalidArguments(
             FrameworkTool tool, JsonNode arguments, String invocation,
-            ToolArgumentValidationException invalid) {
+            StepId modelStep, ToolArgumentValidationException invalid, String malformedCallFingerprint) {
         long rejected = steps.steps(request.runId()).stream()
                 .filter(step -> step.kind() == AgentStep.Kind.TOOL
                         && step.state() == AgentStep.State.COMPLETED
@@ -624,8 +654,10 @@ final class ModelStepJournal {
                 .put("fingerprint", ToolInvocationFingerprint.create(
                         descriptor.name(), arguments));
         input.set("arguments", arguments);
+        if (malformedCallFingerprint != null) input.put("argumentJsonInvalid", true)
+                .put("callFingerprint", malformedCallFingerprint);
         StepEvents.started(request.events(), id, AgentStep.Kind.TOOL, input,
-                currentModel == null ? null : currentModel.value());
+                modelStep == null ? null : modelStep.value());
         var output = JsonNodeFactory.instance.objectNode()
                 .put("validationRejected", true)
                 .put("durationMillis", 0)
@@ -645,6 +677,8 @@ final class ModelStepJournal {
 
     /** Uses the latest actual provider request, including all preceding tool response messages. */
     private boolean humanContractRevisionAfter(long modelSequence) {
+        if (InteractionHumanAmendment.latest(runs, json, request.runId())
+                .filter(revision -> revision.contractSequence() > modelSequence).isPresent()) return true;
         List<RunEventEnvelope> events = runs.eventsAfter(request.runId(), modelSequence);
         for (RunEventEnvelope revision : events) {
             if (!revision.type().equals("core.task.contract_revised") || revision.schemaVersion() != 3
@@ -675,6 +709,12 @@ final class ModelStepJournal {
         AgentStep last = null;
         for (AgentStep step : history) if (step.kind() == AgentStep.Kind.MODEL) last = step;
         if (last == null) return null;
+        long lastModelSequence = last.lastSequence();
+        if (InteractionHumanAmendment.acceptedAfter(runs, request.runId(), lastModelSequence)
+                && InteractionHumanAmendment.latest(runs, json, request.runId())
+                    .filter(revision -> revision.contractSequence() > lastModelSequence).isEmpty()) {
+            throw recoveryRequired(last, "interaction amendment provenance is incomplete; old task cannot be replayed");
+        }
         if (humanContractRevisionAfter(last.lastSequence())) {
             // Keep durable receipts and effect fences, but do not dispatch the old goal's batch.
             return null;
@@ -772,6 +812,7 @@ final class ModelStepJournal {
                         if (!rejected && !rejectedLegacy
                                 && persisted.get().kind() != AgentStep.Kind.TOOL
                                 && !BatchObservationReuse.isAlias(persisted.get())
+                                && !BrowserNavigationFeedback.isFeedback(persisted.get())
                                 && !(HarnessDecisionToolCallback.NAME.equals(call.name())
                                     && persisted.get().kind() == AgentStep.Kind.ORCHESTRATION))
                             throw new ToolRecoveryRequiredException(toolStep.value());
@@ -784,8 +825,20 @@ final class ModelStepJournal {
                                     new ToolRecoveryRequiredException(toolStep.value()));
                             result = observationReuse.reuse(tool, parse(call.arguments()),
                                     invocation, last.id(), persisted.get());
+                        } else if (BrowserNavigationFeedback.isFeedback(persisted.get())) {
+                            FrameworkTool tool = tools.stream().filter(candidate ->
+                                    candidate.descriptor().name().equals(call.name())).findFirst().orElseThrow(() ->
+                                    new ToolRecoveryRequiredException(toolStep.value()));
+                            result = navigationFeedback.replay(tool, parse(call.arguments()),
+                                    invocation, last.id(), persisted.get());
                         } else {
                             // Completed work needs only its processed result, never the original credentials.
+                            if (com.javaclaw.framework.core.BrowserUserInputRecovery.candidate(request.runRequest(), persisted.get())) {
+                                FrameworkTool tool = tools.stream().filter(candidate -> candidate.descriptor().name().equals(call.name()))
+                                        .findFirst().orElseThrow(() -> new ToolRecoveryRequiredException(toolStep.value()));
+                                com.javaclaw.framework.core.BrowserUserInputRecovery.restore(
+                                        request.runRequest(), runs, request.runId(), persisted.get(), tool);
+                            }
                             result = replay(persisted.get());
                         }
                     } else {
@@ -797,7 +850,17 @@ final class ModelStepJournal {
                             FrameworkTool tool = tools.stream().filter(candidate ->
                                     candidate.descriptor().name().equals(call.name())).findFirst().orElseThrow(() ->
                                     new IllegalStateException("persisted tool no longer exists: " + call.name()));
-                            result = invoke(tool, parse(call.arguments()), gateway, invocation, last.id());
+                            JsonNode arguments;
+                            try {
+                                arguments = SpringAiToolCallback.parseArguments(json, call.arguments());
+                            } catch (ToolArgumentValidationException invalid) {
+                                result = rejectInvalidArguments(tool, JsonNodeFactory.instance.nullNode(),
+                                        invocation, last.id(), invalid, callFingerprint(call));
+                                responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(),
+                                        SpringAiToolCallback.modelVisibleResult(result).toString()));
+                                continue;
+                            }
+                            result = invoke(tool, arguments, gateway, invocation, last.id());
                         }
                     }
                     String visible = HarnessDecisionToolCallback.NAME.equals(call.name())

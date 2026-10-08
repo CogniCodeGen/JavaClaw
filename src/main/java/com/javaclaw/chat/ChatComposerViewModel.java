@@ -16,6 +16,10 @@ final class ChatComposerViewModel {
 
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
     private final BooleanProperty blocked = new SimpleBooleanProperty(false);
+    private final BooleanProperty interactionWaiting = new SimpleBooleanProperty(false);
+    private final BooleanProperty interactionAnswerEnabled = new SimpleBooleanProperty(false);
+    private final BooleanProperty interactionCommandPending = new SimpleBooleanProperty(false);
+    private final StringProperty interactionCaption = new SimpleStringProperty("");
     private final BooleanProperty thinking = new SimpleBooleanProperty(false);
     private final StringProperty thinkingText =
             new SimpleStringProperty("助手正在思考中...");
@@ -28,6 +32,11 @@ final class ChatComposerViewModel {
     BooleanProperty blockedProperty() {
         return blocked;
     }
+
+    BooleanProperty interactionWaitingProperty() { return interactionWaiting; }
+    BooleanProperty interactionAnswerEnabledProperty() { return interactionAnswerEnabled; }
+    BooleanProperty interactionCommandPendingProperty() { return interactionCommandPending; }
+    StringProperty interactionCaptionProperty() { return interactionCaption; }
 
     BooleanProperty thinkingProperty() {
         return thinking;

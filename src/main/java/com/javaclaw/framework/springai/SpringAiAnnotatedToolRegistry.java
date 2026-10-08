@@ -37,10 +37,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory {
     private final ObjectMapper json;
+    private final com.javaclaw.framework.core.InteractionJournal interactionJournal;
+    private final com.javaclaw.framework.spi.RunStore runStore;
     private final Map<String, ToolObjectFactory> workspaces = new ConcurrentHashMap<>();
 
     public SpringAiAnnotatedToolRegistry(ObjectMapper json) {
+        this(json, null);
+    }
+
+    public SpringAiAnnotatedToolRegistry(ObjectMapper json, com.javaclaw.framework.core.InteractionJournal interactionJournal) {
+        this(json, interactionJournal, null);
+    }
+
+    public SpringAiAnnotatedToolRegistry(ObjectMapper json, com.javaclaw.framework.core.InteractionJournal interactionJournal,
+                                         com.javaclaw.framework.spi.RunStore runStore) {
         this.json = Objects.requireNonNull(json, "json");
+        this.interactionJournal = interactionJournal;
+        this.runStore = runStore;
     }
 
     /** The gateway accepts elevated receipts only from this host-owned callback wrapper. */
@@ -55,6 +68,51 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
                 && annotated.source != null
                 && com.javaclaw.agent.ToolRiskRegistry.matchesHostImplementation(
                         annotated.descriptor.name(), annotated.source.getClass());
+    }
+
+    /** Only this exact host implementation can suspend after a normally established result. */
+    public static boolean isTrustedUserInputSource(FrameworkTool tool) {
+        return isExactHostTool(tool) && tool instanceof AnnotatedFrameworkTool annotated
+                && annotated.source.getClass().getClassLoader() == SpringAiAnnotatedToolRegistry.class.getClassLoader()
+                && annotated.source.getClass().getName().equals("com.javaclaw.browser.BrowserSiteTools")
+                && annotated.source instanceof com.javaclaw.framework.spi.ToolUserInputProvider;
+    }
+
+    /** A plugin claiming the provider interface cannot acquire this host-only read path. */
+    public static java.util.Optional<com.javaclaw.framework.spi.BrowserNavigationNoOpProvider.Prepared>
+            prepareBrowserNavigationNoOp(FrameworkTool tool, JsonNode arguments,
+                    ToolExecutionContext context, JsonNode observedIdentity) {
+        if (!isExactHostTool(tool) || !(tool instanceof AnnotatedFrameworkTool annotated)
+                || !annotated.descriptor.name().equals("web_navigate")
+                || annotated.source.getClass().getClassLoader() != SpringAiAnnotatedToolRegistry.class.getClassLoader()
+                || !annotated.source.getClass().getName().equals("com.javaclaw.browser.BrowserSiteTools")
+                || !(annotated.source instanceof com.javaclaw.framework.spi.BrowserNavigationNoOpProvider provider))
+            return java.util.Optional.empty();
+        return provider.prepareNavigationNoOp(arguments, context, observedIdentity);
+    }
+
+    /** Only successful physical input from the exact page facade gets child business uncertainty. */
+    public static boolean isExactBrowserPageInputTool(FrameworkTool tool) {
+        return isExactHostTool(tool) && tool instanceof AnnotatedFrameworkTool annotated
+                && annotated.source.getClass().getClassLoader() == SpringAiAnnotatedToolRegistry.class.getClassLoader()
+                && annotated.source.getClass().getName().equals("com.javaclaw.browser.BrowserPageTools")
+                && !annotated.descriptor.idempotent()
+                && com.javaclaw.framework.core.CrossModeBusinessFence.BROWSER_PAGE_INPUTS.contains(annotated.descriptor.name());
+    }
+
+    /** Credentials and arbitrary page scripts can perform input outside the page facade. */
+    public static boolean isExactBrowserBusinessInputTool(FrameworkTool tool) {
+        if (isExactBrowserPageInputTool(tool)) return true;
+        if (!isExactHostTool(tool) || !(tool instanceof AnnotatedFrameworkTool annotated)
+                || annotated.descriptor.idempotent()
+                || annotated.source.getClass().getClassLoader() != SpringAiAnnotatedToolRegistry.class.getClassLoader())
+            return false;
+        String type = annotated.source.getClass().getName();
+        String name = annotated.descriptor.name();
+        return type.equals("com.javaclaw.browser.BrowserSiteTools")
+                    && com.javaclaw.framework.core.CrossModeBusinessFence.BROWSER_SITE_INPUTS.contains(name)
+                || type.equals("com.javaclaw.browser.BrowserSessionTools")
+                    && com.javaclaw.framework.core.CrossModeBusinessFence.BROWSER_SCRIPT_INPUTS.contains(name);
     }
 
     public Registration register(String workspaceId, ToolObjectFactory factory) {
@@ -95,7 +153,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             List<FrameworkTool> tools = new ArrayList<>(callbacks.size());
             for (ContractedCallback callback : callbacks) {
                 tools.add(new AnnotatedFrameworkTool(
-                        callback.callback(), callback.contract(), callback.source(), lifecycle, json));
+                        callback.callback(), callback.contract(), callback.source(), lifecycle, json, interactionJournal, runStore));
             }
             assertUnique(tools);
             return List.copyOf(tools);
@@ -124,6 +182,12 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
     private List<ContractedCallback> callbacks(List<Object> objects) {
         List<ContractedCallback> callbacks = new ArrayList<>();
         for (Object object : objects) {
+            Set<String> selectedNames = null;
+            if (object instanceof com.javaclaw.framework.spi.ToolObjectSelection selection) {
+                object = selection.source();
+                selectedNames = selection.toolNames();
+                if (!hasToolMethod(object)) throw new IllegalArgumentException("tool selection requires an annotated host object");
+            }
             if (object instanceof ToolCallback callback) {
                 rejectHostNameFromExternalCallback(callback.getToolDefinition().name());
                 callbacks.add(new ContractedCallback(callback, externalContract(), null));
@@ -138,6 +202,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
                 for (ToolCallback callback : MethodToolCallbackProvider.builder()
                         .toolObjects(object).build().getToolCallbacks()) {
                     String name = callback.getToolDefinition().name();
+                    if (selectedNames != null && !selectedNames.contains(name)) continue;
                     var contract = contracts.get(name);
                     if (contract == null) {
                         throw new IllegalStateException(
@@ -268,9 +333,13 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
         private final ObjectMapper json;
         private final ToolDescriptor descriptor;
         private final Object source;
+        private final com.javaclaw.framework.core.InteractionJournal interactionJournal;
+        private final com.javaclaw.framework.spi.RunStore runStore;
+        private final ThreadLocal<com.javaclaw.framework.spi.ToolUserInputCheckpoint> userInput = new ThreadLocal<>();
         private final ThreadLocal<ToolEffectCapture.Signal> effectSignal = new ThreadLocal<>();
         private final ThreadLocal<String> effectTarget = new ThreadLocal<>();
         private final ThreadLocal<JsonNode> structuredData = new ThreadLocal<>();
+        private final ThreadLocal<JsonNode> interactionStage = new ThreadLocal<>();
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private AnnotatedFrameworkTool(
@@ -278,11 +347,14 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
                 com.javaclaw.framework.spi.ToolContract contract,
                 Object source,
                 SharedLifecycle lifecycle,
-                ObjectMapper json) {
+                ObjectMapper json, com.javaclaw.framework.core.InteractionJournal interactionJournal,
+                com.javaclaw.framework.spi.RunStore runStore) {
             this.callback = callback;
             this.source = source;
             this.lifecycle = lifecycle;
             this.json = json;
+            this.interactionJournal = interactionJournal;
+            this.runStore = runStore;
             var definition = callback.getToolDefinition();
             JsonNode schema;
             try {
@@ -341,12 +413,53 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             effectSignal.remove();
             effectTarget.remove();
             structuredData.remove();
+            interactionStage.remove();
+            userInput.remove();
+            com.javaclaw.framework.spi.ToolUserInputProvider inputProvider = source != null && isExactHostTool(this)
+                    && source.getClass().getClassLoader() == SpringAiAnnotatedToolRegistry.class.getClassLoader()
+                    && source.getClass().getName().equals("com.javaclaw.browser.BrowserSiteTools")
+                    && source instanceof com.javaclaw.framework.spi.ToolUserInputProvider provider ? provider : null;
+            if (inputProvider != null) {
+                inputProvider.bindUserInputRun(context.runId().value());
+                prepareUserAnswer(inputProvider, context);
+            }
             String result;
-            try (ToolEffectCapture.Scope capture = ToolEffectCapture.begin(descriptor.name())) {
-                result = callback.call(json.writeValueAsString(arguments));
-                if (capture.signal() != null) effectSignal.set(capture.signal());
-                if (capture.target() != null) effectTarget.set(capture.target());
-                if (capture.data() != null) structuredData.set(capture.data());
+            com.javaclaw.framework.spi.InteractionSurfaceProvider surfaces = interactionJournal != null
+                    && isExactHostTool(this) && source instanceof com.javaclaw.framework.spi.InteractionSurfaceProvider provider
+                    ? provider : null;
+            if (surfaces != null) surfaces.bindInteractionObserver(event -> interactionJournal.record(context.runId(), event));
+            try (var stage = beginInteractionStage(context);
+                 var observed = com.javaclaw.framework.spi.InteractionInvocation.begin(context.runId(), context.invocationId(), descriptor.name());
+                 ToolEffectCapture.Scope capture = ToolEffectCapture.begin(descriptor.name())) {
+                try {
+                    result = callback.call(json.writeValueAsString(arguments));
+                    if (capture.signal() != null) effectSignal.set(capture.signal());
+                    if (capture.target() != null) effectTarget.set(capture.target());
+                    if (capture.data() != null) structuredData.set(capture.data());
+                    com.javaclaw.framework.spi.InteractionStageContext.current().ifPresent(binding -> {
+                        JsonNode proof = binding.evidence();
+                        if (proof == null && isExactBrowserBusinessInputTool(this)) {
+                            var before = binding.browserBefore().orElse(null);
+                            if (before != null) proof = com.javaclaw.framework.spi.BrowserStagePredicateProof.identity(
+                                    binding, before, "input", before.observedAt().toEpochMilli());
+                        }
+                        if (proof != null && proof.path("mode").asText().equals("BROWSER")) interactionStage.set(proof);
+                    });
+                    if (inputProvider != null) {
+                        var checkpoint = inputProvider.consumeUserInputCheckpoint(descriptor.name());
+                        if (checkpoint != null) userInput.set(checkpoint);
+                    }
+                } finally {
+                    if (surfaces != null) {
+                        try {
+                            for (var surface : surfaces.currentInteractionSurfaces()) interactionJournal.record(context.runId(), surface);
+                        } catch (RuntimeException unavailable) {
+                            // A supplemental identity projection cannot change dispatch/delivery semantics.
+                            org.slf4j.LoggerFactory.getLogger(SpringAiAnnotatedToolRegistry.class)
+                                    .warn("Interaction surface journal unavailable ({})", unavailable.getClass().getSimpleName());
+                        }
+                    }
+                }
             }
             if (result == null) return TextNode.valueOf("");
             try {
@@ -388,8 +501,80 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             String target = effectTarget.get();
             effectSignal.remove();
             effectTarget.remove();
-            return HostEffectReceiptAdapter.receipt(
+            EffectReceiptV1 receipt = HostEffectReceiptAdapter.receipt(
                     source, descriptor.name(), arguments, signal, context, observedAt, target, rawOutput);
+            JsonNode stage = interactionStage.get();
+            interactionStage.remove();
+            if (stage != null && (receipt.status() == EffectReceiptV1.Status.OBSERVED
+                    || receipt.status() == EffectReceiptV1.Status.ACCEPTED)) {
+                var metadata = new java.util.LinkedHashMap<>(receipt.metadata());
+                metadata.put("interactionStage", stage.toString());
+                receipt = new EffectReceiptV1(receipt.invocationId(), receipt.tool(), receipt.operation(), receipt.target(),
+                        receipt.status(), receipt.observedAt(), receipt.evidenceRef(), receipt.reason(), receipt.subject(), metadata);
+            }
+            var checkpoint = userInput.get();
+            if (checkpoint != null && checkpoint.phase() == com.javaclaw.framework.spi.ToolUserInputCheckpoint.Phase.NOT_SENT) {
+                var metadata = new java.util.LinkedHashMap<>(receipt.metadata());
+                metadata.put("delivery", "NOT_SENT");
+                return new EffectReceiptV1(receipt.invocationId(), receipt.tool(), receipt.operation(), receipt.target(),
+                        EffectReceiptV1.Status.FAILED, receipt.observedAt(), receipt.evidenceRef(),
+                        "host input required before dispatch", receipt.subject(), metadata);
+            }
+            return receipt;
+        }
+
+        private com.javaclaw.framework.spi.InteractionStageContext.Scope beginInteractionStage(ToolExecutionContext context) {
+            if (runStore == null || !isExactHostTool(this)) return () -> { };
+            var stored = runStore.find(context.runId()).orElse(null);
+            if (stored == null || !runStore.readable(stored.request().scope())
+                    || !com.javaclaw.framework.core.InteractionExecutionPolicy.isInteraction(stored.request())) return () -> { };
+            var frozen = runStore.eventsAfter(context.runId(), 0).stream().filter(event -> event.runId().equals(context.runId().value())
+                    && event.schemaVersion() == 3 && event.producer().equals("framework.core")
+                    && java.util.Set.of("core.task.contract", "core.task.contract_revised").contains(event.type()))
+                    .max(java.util.Comparator.comparingLong(com.javaclaw.framework.api.RunEventEnvelope::sequence)).orElse(null);
+            if (frozen == null) return () -> { };
+            try {
+                var contract = json.treeToValue(frozen.payload(), com.javaclaw.framework.api.TaskContractV3.class);
+                if (!contract.applicable() || !contract.reliable() || !contract.desktopObservationSubjectsValid()
+                        || contract.criteria().stream().anyMatch(criterion ->
+                            !com.javaclaw.framework.core.TrustedCapabilityRegistry.builtins().supports(criterion))) return () -> { };
+                return com.javaclaw.framework.spi.InteractionStageContext.begin(frozen.sequence(), frozen.payload(),
+                        isExactBrowserBusinessInputTool(this));
+            } catch (Exception malformed) { return () -> { }; }
+        }
+
+        @Override public com.javaclaw.framework.spi.ToolUserInputCheckpoint userInputCheckpoint() {
+            var checkpoint = userInput.get();
+            userInput.remove();
+            return checkpoint;
+        }
+
+        private void prepareUserAnswer(com.javaclaw.framework.spi.ToolUserInputProvider provider, ToolExecutionContext context) {
+            if (runStore == null) return;
+            var events = runStore.eventsAfter(context.runId(), 0);
+            var question = events.stream().filter(event -> event.schemaVersion() == 1
+                    && event.producer().equals("framework.core") && event.type().equals("core.run.waiting_input"))
+                    .max(java.util.Comparator.comparingLong(com.javaclaw.framework.api.RunEventEnvelope::sequence)).orElse(null);
+            if (question == null) return;
+            JsonNode output = question.payload().path("output");
+            if (!java.util.Set.of("browser.account_selection_required", "browser.authentication_required")
+                    .contains(output.path("kind").asText())) return;
+            var answer = events.stream().filter(event -> event.sequence() > question.sequence() && event.schemaVersion() == 1
+                    && event.producer().equals("framework.core") && event.type().equals("core.run.resumed")
+                    && event.payload().path("commandType").asText().equals("input"))
+                    .min(java.util.Comparator.comparingLong(com.javaclaw.framework.api.RunEventEnvelope::sequence)).orElse(null);
+            if (answer == null) return;
+            String continuation = output.path("kind").asText().equals("browser.account_selection_required")
+                    ? "site_select_account" : "site_auth_check";
+            boolean consumed = events.stream().anyMatch(event -> event.sequence() > answer.sequence()
+                    && event.schemaVersion() == 2 && event.producer().equals("framework.core")
+                    && event.type().equals("core.tool.completed")
+                    && event.payload().path("tool").asText().equals(continuation)
+                    && event.payload().path("status").asText().equals("SUCCEEDED")
+                    && (continuation.equals("site_select_account")
+                        || event.payload().path("output").path("authVerified").asBoolean(false)));
+            if (!consumed) provider.prepareUserInputAnswer(output, answer.payload().path("command"),
+                    question.sequence(), answer.sequence());
         }
 
         @Override

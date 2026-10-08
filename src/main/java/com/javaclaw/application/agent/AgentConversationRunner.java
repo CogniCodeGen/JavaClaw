@@ -61,6 +61,16 @@ public final class AgentConversationRunner implements AutoCloseable {
         final RunHandle handle;
         long afterSequence = 0;
         try {
+            JsonNode interactionCommand = request.attributes().get(com.javaclaw.framework.api.InteractionControlCommand.ATTRIBUTE);
+            if (interactionCommand != null) {
+                var parent = agents.activeTurn(request.scope()).orElseThrow(() ->
+                        new IllegalStateException("没有正在等待的交互子任务"));
+                var command = new com.fasterxml.jackson.databind.ObjectMapper().treeToValue(interactionCommand,
+                        com.javaclaw.framework.api.InteractionControlCommand.class);
+                agents.controlInteraction(parent.id(), command);
+                guarded.onTerminal(ConversationOutcome.completed(TaskResult.notApplicable()));
+                return new DefaultConversationHandle(guarded, ignored -> false);
+            }
             boolean resumeSchedule = request.source().kind().equals("schedule")
                     && request.attributes().getOrDefault("framework.resumeSafeSchedule",
                     com.fasterxml.jackson.databind.node.BooleanNode.FALSE).asBoolean();
@@ -116,6 +126,7 @@ public final class AgentConversationRunner implements AutoCloseable {
             handle.completion().whenCompleteAsync((outcome, failure) -> {
                 runs.remove(handle.id(), current);
                 current.disposeEvents();
+                if (current.shutdownDetached.get()) return;
                 if (failure != null) {
                     guarded.onTerminal(ConversationOutcome.failed(unwrap(failure)));
                     return;
@@ -143,15 +154,14 @@ public final class AgentConversationRunner implements AutoCloseable {
                     "ADAPTER_START_FAILED", "failed to attach conversation adapter"));
             guarded.onTerminal(ConversationOutcome.failed(failure));
         }
-        return new DefaultConversationHandle(guarded, reason ->
-                agents.cancel(handle.id(), cancelReason(reason)));
+        return new DefaultConversationHandle(guarded, reason -> cancelActive(current, reason));
     }
 
-    /** Cancels all active runs during product shutdown or runtime replacement. */
+    /** Interactive shutdown releases this adapter; the owning kernel checkpoints durable execution. */
     public boolean cancel(CancellationReason reason) {
         boolean accepted = false;
         for (Active current : runs.values()) {
-            accepted |= agents.cancel(current.handle.id(), cancelReason(reason));
+            accepted |= cancelActive(current, reason);
         }
         return accepted;
     }
@@ -161,7 +171,7 @@ public final class AgentConversationRunner implements AutoCloseable {
         boolean accepted = false;
         for (Active current : runs.values()) {
             if (sessionId.equals(current.sessionId)) {
-                accepted |= agents.cancel(current.handle.id(), cancelReason(reason));
+                accepted |= cancelActive(current, reason);
             }
         }
         return accepted;
@@ -169,6 +179,19 @@ public final class AgentConversationRunner implements AutoCloseable {
 
     public boolean isRunning() {
         return !runs.isEmpty();
+    }
+
+    private boolean cancelActive(Active current, CancellationReason reason) {
+        Objects.requireNonNull(reason, "reason");
+        if (reason == CancellationReason.SHUTDOWN && current.interactive) {
+            // Never terminal-cancel durable human work before AgentEngine.close can pause it.
+            // This includes a parent waiting on a child question, approval or event subscription.
+            boolean detached = current.shutdownDetached.compareAndSet(false, true);
+            runs.remove(current.handle.id(), current);
+            current.disposeEvents();
+            return detached;
+        }
+        return agents.cancel(current.handle.id(), cancelReason(reason));
     }
 
     private static CancelReason cancelReason(CancellationReason reason) {
@@ -189,6 +212,7 @@ public final class AgentConversationRunner implements AutoCloseable {
             ToolCallOrigin origin,
             ConversationCallbacks callbacks,
             RunEventEnvelope event) {
+        if (current.shutdownDetached.get()) return;
         JsonNode payload = event.payload();
         if (current.reply.onEvent(event, callbacks)) return;
         switch (event.type()) {
@@ -214,6 +238,30 @@ public final class AgentConversationRunner implements AutoCloseable {
                     payload.path("invocationId").asText(""),
                     payload.path("message").asText("unknown error")));
             case "core.run.waiting_input" -> waitingForInput(current, callbacks, payload);
+            case "core.run.waiting_child" -> {
+                callbacks.onEvent(new ConversationEvent.Hint("交互子 agent 正在执行任务…"));
+                callbacks.onEvent(new ConversationEvent.Custom(event.type(), payload.path("output")));
+                if (payload.path("output").path("needsAnswer").asBoolean(false))
+                    emitInteractionQuestion(callbacks, payload.path("output").path("currentChallenge"));
+            }
+            case "core.run.waiting_event" -> callbacks.onEvent(new ConversationEvent.Hint("等待界面变化…"));
+            case "core.interaction.child_waiting_input" -> {
+                callbacks.onEvent(new ConversationEvent.Custom(event.type(), payload));
+                String question = payload.path("output").path("text").asText("");
+                if (!question.isBlank()) callbacks.onEvent(new ConversationEvent.Hint(question));
+                if ("clarify_request".equals(payload.path("output").path("kind").asText()))
+                    callbacks.onEvent(new ConversationEvent.Custom("clarify_request", payload.path("output").path("payload")));
+            }
+            case "core.interaction.control_applied" -> {
+                callbacks.onEvent(new ConversationEvent.Custom(event.type(), payload));
+                if (payload.path("delivery").asText().equals("REJECTED")
+                        && payload.path("needsAnswer").asBoolean(false)) {
+                    emitInteractionQuestion(callbacks, payload.path("currentChallenge"));
+                }
+            }
+            case "core.interaction.child_waiting_approval", "core.interaction.control_accepted",
+                    "core.interaction.amending", "core.interaction.child_completed", "core.run.resumed" ->
+                    callbacks.onEvent(new ConversationEvent.Custom(event.type(), payload));
             case "core.run.paused" -> {
                 runs.remove(current.handle.id(), current);
                 current.disposeEvents();
@@ -240,6 +288,13 @@ public final class AgentConversationRunner implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private static void emitInteractionQuestion(ConversationCallbacks callbacks, JsonNode challenge) {
+        String question = challenge.path("text").asText("");
+        if (!question.isBlank()) callbacks.onEvent(new ConversationEvent.Hint(question));
+        if ("clarify_request".equals(challenge.path("kind").asText()))
+            callbacks.onEvent(new ConversationEvent.Custom("clarify_request", challenge.path("payload")));
     }
 
     private void waitingForInput(
@@ -457,13 +512,7 @@ public final class AgentConversationRunner implements AutoCloseable {
     }
 
     private void closeActive(Active current) {
-        if (current.interactive && agents.get(current.handle.id()).state() == RunState.WAITING_APPROVAL) {
-            // The kernel checkpoints this unresolved challenge; the product only releases its UI.
-            runs.remove(current.handle.id(), current);
-            current.disposeEvents();
-            return;
-        }
-        agents.cancel(current.handle.id(), cancelReason(CancellationReason.SHUTDOWN));
+        cancelActive(current, CancellationReason.SHUTDOWN);
     }
 
     private static final class Active {
@@ -471,6 +520,7 @@ public final class AgentConversationRunner implements AutoCloseable {
         private final String sessionId;
         private final TerminalCallbackGuard callbacks;
         private final boolean interactive;
+        private final AtomicBoolean shutdownDetached = new AtomicBoolean();
         private final ConversationReplyProjection reply;
         private volatile Disposable events;
         private volatile Throwable terminalFailure;

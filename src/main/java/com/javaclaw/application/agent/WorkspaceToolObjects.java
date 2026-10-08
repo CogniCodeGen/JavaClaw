@@ -18,6 +18,9 @@ import com.javaclaw.email.EmailTools;
 import com.javaclaw.framework.spi.ToolContext;
 import com.javaclaw.framework.spi.ModelTaskGateway;
 import com.javaclaw.framework.spi.ToolObjectBundle;
+import com.javaclaw.framework.spi.ToolObjectSelection;
+import com.javaclaw.framework.api.InteractionMode;
+import com.javaclaw.framework.core.InteractionExecutionPolicy;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.notification.NotificationTools;
@@ -115,6 +118,10 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
         VisionPreprocessor vision = new VisionPreprocessor(modelTasks, context.runId(), context.cancellation());
         Map<String, Object> capabilityTools = createCapabilityTools(origin, context, vision);
         List<Object> objects = new ArrayList<>(capabilityTools.values());
+        if (InteractionExecutionPolicy.isInteraction(context.request())) {
+            objects.add(Objects.requireNonNull(clarificationTools.get(), "clarification tools"));
+            return new ToolObjectBundle(objects, () -> closeOwned(capabilityTools.values()));
+        }
         if (context.request().source().kind().equals("chat")
                 || context.request().source().kind().equals("plan")) {
             objects.add(Objects.requireNonNull(
@@ -179,23 +186,50 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
     private Map<String, Object> createCapabilityTools(ToolCallOrigin origin, ToolContext context,
                                                        VisionPreprocessor vision) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("web", new PlaywrightBrowserTools(threadBrowsers.acquire(context.scope()),
-                siteCredentials, origin, json, false, ThreadBrowserRuntimes.scopeId(context.scope())));
+        if (InteractionExecutionPolicy.isInteraction(context.request())) {
+            Set<InteractionMode> modes = InteractionExecutionPolicy.allowedModes(context.request());
+            if (modes.contains(InteractionMode.BROWSER)) {
+                ThreadBrowserRuntimes.BrowserRuntime browser = threadBrowsers.acquireRuntime(context.scope());
+                result.put("web", new PlaywrightBrowserTools(browser.manager(),
+                        siteCredentials, origin, json, false, ThreadBrowserRuntimes.scopeId(context.scope()),
+                        browser.interaction(), true));
+            }
+            if (modes.contains(InteractionMode.DESKTOP)) {
+                result.put("desktop-session", desktopTools(context, vision));
+            }
+            return result;
+        }
+        if (!InteractionExecutionPolicy.isMain(context.request())) {
+            ThreadBrowserRuntimes.BrowserRuntime browser = threadBrowsers.acquireRuntime(context.scope());
+            result.put("web", new PlaywrightBrowserTools(browser.manager(), siteCredentials, origin, json,
+                    false, ThreadBrowserRuntimes.scopeId(context.scope()), browser.interaction()));
+            result.put("desktop-session", desktopTools(context, vision));
+        }
         result.put("email", new EmailTools(origin, emailSettings));
-        result.put("system", new SystemTools(origin, workspace.screenshotsDir()));
-        result.put("desktop-session", new DesktopSessionTools(desktopSessions,
-                new DesktopSessionOwner(workspace.workspaceId(), context.scope().sessionId(),
-                        context.request().source().kind(), context.request().source().id()),
-                workspace.screenshotsDir(),
-                new com.javaclaw.platform.data.DataRoot(workspace.globalDataRoot()), vision,
-                new com.javaclaw.framework.core.TaskAcceptanceContext(context.request(),
-                        new com.javaclaw.desktop.agent.DesktopCapabilityContext(settings))));
+        Set<String> systemNames = java.util.Arrays.stream(SystemTools.class.getDeclaredMethods())
+                .map(method -> method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class))
+                .filter(Objects::nonNull).map(org.springframework.ai.tool.annotation.Tool::name)
+                .filter(name -> name.startsWith("sys_file_") || name.startsWith("sys_get_"))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        SystemTools system = new SystemTools(origin, workspace.screenshotsDir());
+        result.put("system", InteractionExecutionPolicy.isMain(context.request())
+                ? new ToolObjectSelection(system, systemNames) : system);
         result.put("notification", new NotificationTools(
                 origin, notificationSettings, emailSettings));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
             result.put("command", commandTools.create(origin));
         }
         return result;
+    }
+
+    private DesktopSessionTools desktopTools(ToolContext context, VisionPreprocessor vision) {
+        return new DesktopSessionTools(desktopSessions,
+                new DesktopSessionOwner(workspace.workspaceId(), context.scope().sessionId(),
+                        context.request().source().kind(), context.request().source().id()),
+                workspace.screenshotsDir(),
+                new com.javaclaw.platform.data.DataRoot(workspace.globalDataRoot()), vision,
+                new com.javaclaw.framework.core.TaskAcceptanceContext(context.request(),
+                        new com.javaclaw.desktop.agent.DesktopCapabilityContext(settings)));
     }
 
     @Override public boolean accepts(com.javaclaw.framework.api.RunScope scope) { return threadBrowsers.accepts(scope); }
@@ -211,6 +245,23 @@ public final class WorkspaceToolObjects implements AutoCloseable, com.javaclaw.f
     private static ToolCallOrigin origin(ToolContext context) {
         String kind = context.request().source().kind();
         String id = context.request().source().id();
+        if (InteractionExecutionPolicy.isInteraction(context.request())) {
+            var parent = context.request().attributes().get(InteractionExecutionPolicy.PARENT_SOURCE_ATTRIBUTE);
+            var scope = context.request().attributes().get(InteractionExecutionPolicy.PARENT_SCOPE_ATTRIBUTE);
+            if (context.request().linkage().parentRunId() == null || parent == null || !parent.isObject()
+                    || scope == null || !scope.isObject()
+                    || !scope.path("workspaceId").asText().equals(context.scope().workspaceId())
+                    || !scope.path("userId").asText().equals(context.scope().userId())
+                    || scope.path("sessionId").asText().isBlank()) {
+                return ToolCallOrigin.UNKNOWN;
+            }
+            var parentScope = new com.javaclaw.framework.api.RunScope(scope.path("workspaceId").asText(),
+                    scope.path("userId").asText(), scope.path("sessionId").asText());
+            if (!com.javaclaw.framework.core.InteractionDelegateCoordinator.childScope(parentScope)
+                    .equals(context.scope())) return ToolCallOrigin.UNKNOWN;
+            kind = parent.path("kind").asText("");
+            id = parent.path("id").asText("");
+        }
         if (kind.equals("chat") || kind.equals("plan")) return ToolCallOrigin.INTERACTIVE;
         if (kind.equals("schedule")) return ToolCallOrigin.scheduled(id);
         if (kind.equals("loop") || kind.equals("sdd") || kind.equals("workflow")) {

@@ -3,6 +3,8 @@ package com.javaclaw.framework.store;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.framework.api.*;
+import com.javaclaw.framework.core.BusinessEffectCheckpointVerifier;
+import com.javaclaw.framework.core.InteractionStageVerifier;
 import com.javaclaw.framework.core.TaskResultEvaluator;
 import com.javaclaw.framework.core.TrustedCapabilityRegistry;
 import com.javaclaw.framework.core.DesktopObservationBaseline;
@@ -451,6 +453,95 @@ public final class JdbcRunStore implements RunStore {
         }));
     }
 
+    @Override
+    public Optional<RunEventEnvelope> verifyBusinessEffectCheckpoint(RunId id, EffectCheckpointV1 checkpoint) {
+        Objects.requireNonNull(id, "sourceRunId");
+        Objects.requireNonNull(checkpoint, "checkpoint");
+        return Optional.ofNullable(transactions.execute(status -> {
+            StoredRun stored = find(id).orElse(null);
+            if (stored == null) return null;
+            if (threads.lock(stored.request().scope()).status() != ThreadStatus.ACTIVE) return null;
+            List<LockedRun> rows = jdbc.query(
+                    "SELECT state,last_sequence,version FROM agent_runs WHERE run_id=? FOR UPDATE",
+                    (row, index) -> new LockedRun(RunState.valueOf(row.getString("state")),
+                            row.getLong("last_sequence"), row.getLong("version")), id.value());
+            if (rows.isEmpty()) return null;
+            // Re-read only the source Run after acquiring its sequence fence. A late original
+            // receipt may settle a terminal Run, but another Run cannot supply this proof.
+            List<RunEventEnvelope> events = eventsAfter(id, 0);
+            for (RunEventEnvelope event : events) {
+                if (!event.type().equals(BusinessEffectCheckpointVerifier.EVENT_TYPE)
+                        || event.schemaVersion() != 1 || !event.producer().equals("framework.core")
+                        || !event.payload().path("actionInvocationId").asText("")
+                                .equals(checkpoint.effect().actionInvocationId())) continue;
+                return event.payload().path("sourceRunId").asText("").equals(id.value())
+                        && checkpointMatches(event.payload(), checkpoint) ? event : null;
+            }
+            if (!BusinessEffectCheckpointVerifier.verifies(id, events, checkpoint, json)) return null;
+            LockedRun current = rows.getFirst();
+            long now = clock.millis(), next = current.lastSequence() + 1;
+            // Preserve state, output and error, including an already terminal source Run.
+            if (jdbc.update("UPDATE agent_runs SET last_sequence=?,version=version+1,updated_at=? WHERE run_id=? AND version=?",
+                    next, now, id.value(), current.version()) != 1)
+                throw new IllegalStateException("concurrent business effect checkpoint: " + id);
+            EffectReconciliationV1 effect = checkpoint.effect();
+            var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            payload.put("sourceRunId", id.value());
+            payload.put("actionInvocationId", effect.actionInvocationId());
+            payload.put("sessionId", effect.sessionId());
+            payload.put("targetId", effect.targetId());
+            payload.put("actionObservationId", effect.actionObservationId());
+            payload.put("evidenceObservationId", effect.evidenceObservationId());
+            payload.put("contractSequence", checkpoint.contractSequence());
+            payload.put("clickCriterionId", checkpoint.clickCriterionId());
+            payload.put("viewCriterionId", checkpoint.viewCriterionId());
+            payload.put("requiredSubject", checkpoint.requiredSubject());
+            payload.put("observationEvidenceRef", checkpoint.observationEvidenceRef());
+            payload.put("outcome", "SATISFIED");
+            RunEventEnvelope value = envelope(id, next, now, new RunEventDraft(
+                    BusinessEffectCheckpointVerifier.EVENT_TYPE, 1, "framework.core",
+                    stored.request().linkage().correlationId(), effect.actionInvocationId(), payload));
+            insertEventAndOutbox(value);
+            threads.appendRun(stored.request().scope(), value, null);
+            return value;
+        }));
+    }
+
+    @Override
+    public Optional<RunEventEnvelope> verifyInteractionStage(RunId id, InteractionStageProofV1 proof) {
+        Objects.requireNonNull(id, "sourceRunId");
+        Objects.requireNonNull(proof, "proof");
+        return Optional.ofNullable(transactions.execute(status -> {
+            StoredRun stored = find(id).orElse(null);
+            if (stored == null || !com.javaclaw.framework.core.InteractionExecutionPolicy.isInteraction(stored.request())
+                    || threads.lock(stored.request().scope()).status() != ThreadStatus.ACTIVE) return null;
+            List<LockedRun> rows = jdbc.query("SELECT state,last_sequence,version FROM agent_runs WHERE run_id=? FOR UPDATE",
+                    (row, index) -> new LockedRun(RunState.valueOf(row.getString("state")), row.getLong("last_sequence"),
+                            row.getLong("version")), id.value());
+            if (rows.isEmpty()) return null;
+            List<RunEventEnvelope> events = eventsAfter(id, 0);
+            JsonNode encoded = json.valueToTree(proof);
+            for (var event : events) if (event.type().equals(InteractionStageVerifier.EVENT_TYPE)
+                    && event.schemaVersion() == 1 && event.producer().equals("framework.core")
+                    && event.payload().path("sourceRunId").asText().equals(id.value())
+                    && event.payload().path("proof").equals(encoded)
+                    && event.payload().path("outcome").asText().equals("SATISFIED")) return event;
+            if (!InteractionStageVerifier.verifies(id, events, proof, json)) return null;
+            LockedRun current = rows.getFirst();
+            long now = clock.millis(), next = current.lastSequence() + 1;
+            if (jdbc.update("UPDATE agent_runs SET last_sequence=?,version=version+1,updated_at=? WHERE run_id=? AND version=?",
+                    next, now, id.value(), current.version()) != 1) throw new IllegalStateException("concurrent interaction stage: " + id);
+            var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                    .put("sourceRunId", id.value()).put("outcome", "SATISFIED");
+            payload.set("proof", encoded);
+            RunEventEnvelope value = envelope(id, next, now, new RunEventDraft(InteractionStageVerifier.EVENT_TYPE, 1,
+                    "framework.core", stored.request().linkage().correlationId(), proof.afterInvocationId(), payload));
+            insertEventAndOutbox(value);
+            threads.appendRun(stored.request().scope(), value, null);
+            return value;
+        }));
+    }
+
     private boolean validCheckpointEvidence(List<RunEventEnvelope> events,
                                             EffectCheckpointV1 checkpoint) {
         EffectReconciliationV1 effect = checkpoint.effect();
@@ -568,7 +659,9 @@ public final class JdbcRunStore implements RunStore {
 
     private static void rejectVerifierOnlyEvent(String type) {
         if (type.equals("core.effect.reconciled")
-                || type.equals("core.task.checkpoint_verified"))
+                || type.equals("core.task.checkpoint_verified")
+                || type.equals(BusinessEffectCheckpointVerifier.EVENT_TYPE)
+                || type.equals(InteractionStageVerifier.EVENT_TYPE))
             throw new IllegalArgumentException("effect verification requires verifier proof");
     }
 

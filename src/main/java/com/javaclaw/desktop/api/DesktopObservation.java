@@ -6,7 +6,8 @@ import java.util.List;
 public record DesktopObservation(String sessionId, String observationId,
                                  DesktopFrame frame, List<DesktopElement> elements,
                                  List<DesktopVisualRegion> visualRegions,
-                                 String elementDiagnostics) {
+                                 String elementDiagnostics,
+                                 DesktopSurfaceSnapshot capturedSurface) {
     public DesktopObservation {
         if (sessionId == null || sessionId.isBlank() || observationId == null
                 || observationId.isBlank() || frame == null)
@@ -14,6 +15,13 @@ public record DesktopObservation(String sessionId, String observationId,
         elements = elements == null ? List.of() : List.copyOf(elements);
         visualRegions = visualRegions == null ? List.of() : List.copyOf(visualRegions);
         elementDiagnostics = elementDiagnostics == null ? "" : elementDiagnostics;
+    }
+
+    public DesktopObservation(String sessionId, String observationId,
+                              DesktopFrame frame, List<DesktopElement> elements,
+                              List<DesktopVisualRegion> visualRegions,
+                              String elementDiagnostics) {
+        this(sessionId, observationId, frame, elements, visualRegions, elementDiagnostics, null);
     }
 
     public DesktopObservation(String sessionId, String observationId,

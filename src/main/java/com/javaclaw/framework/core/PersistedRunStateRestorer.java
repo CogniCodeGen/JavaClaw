@@ -79,6 +79,11 @@ final class PersistedRunStateRestorer {
      * A terminal Run's cancellation is not evidence that its external effect did not occur.
      */
     static void restoreUnresolvedEffects(List<RunEventEnvelope> events, RunControl target) {
+        restoreUnresolvedEffects(events, target, false);
+    }
+
+    static void restoreUnresolvedEffects(List<RunEventEnvelope> events, RunControl target,
+            boolean allowCompletedBrowserNavigation) {
         java.util.Objects.requireNonNull(events, "events");
         java.util.Objects.requireNonNull(target, "target");
         if (events.isEmpty()) return;
@@ -89,7 +94,12 @@ final class PersistedRunStateRestorer {
                 java.time.Clock.systemUTC());
         EffectReplay replay = effectReplay(events, effects);
         for (RunEventEnvelope event : events) restoreEffectEvent(event, effects, replay);
-        target.inheritUnresolvedEffects(effects, sourceRunId);
+        // Only the caller's existing distinct-host-human-intent gate may release a settled no-op.
+        // Ordinary restore, same-root AMEND and default inheritance keep their original fences.
+        Set<String> settledNavigationNoOps = allowCompletedBrowserNavigation
+                ? BrowserNavigationNoOpProof.completed(events) : Set.of();
+        target.inheritUnresolvedEffects(effects, sourceRunId, allowCompletedBrowserNavigation,
+                settledNavigationNoOps);
     }
 
     /** Shared parsing never imports usage or approval state. */
@@ -133,6 +143,9 @@ final class PersistedRunStateRestorer {
                     && isDesktopInput(tool)) resourceKey = "desktop:unknown";
             control.restoreEffectStart(invocationId, fingerprint, effectKey,
                     payload.path("idempotent").asBoolean(false), policy, resourceKey);
+            if ("web_navigate".equals(tool) && payload.path("trustedBrowserNavigation").isBoolean()
+                    && payload.path("trustedBrowserNavigation").booleanValue())
+                control.restoreTrustedBrowserNavigationStart(invocationId);
             if (isDesktopInput(tool) && (!payload.has("trustedDesktopTool")
                     || payload.path("trustedDesktopTool").isBoolean()
                         && payload.path("trustedDesktopTool").booleanValue()))
@@ -161,6 +174,10 @@ final class PersistedRunStateRestorer {
                     }
                     control.restoreEffectReceipt(invocationId, status,
                             payload.path("metadata").path("delivery").asText(""));
+                    control.restoreTrustedBrowserNavigationReceipt(invocationId,
+                            payload.path("tool").asText(""), payload.path("operation").asText(""), status,
+                            payload.path("metadata").path("delivery").asText(""),
+                            payload.path("target").asText(""));
                     if (isDesktopInput(startedTool) && startedTool.equals(payload.path("tool").asText(""))) {
                         control.restoreDesktopInputReceiptTime(invocationId, event.timestamp());
                         Map<String, String> metadata = new HashMap<>();

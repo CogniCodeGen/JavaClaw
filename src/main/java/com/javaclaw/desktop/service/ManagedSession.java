@@ -33,6 +33,7 @@ final class ManagedSession implements AutoCloseable {
     final LatestPublisher<DesktopSessionState> states;
     final BoundedPublisher<DesktopActionEvent> actions;
     volatile DesktopFrame latest;
+    private DesktopSurfaceSnapshot latestSurface;
     volatile boolean capturedAnyFrame;
     volatile DesktopSessionState.Kind stateKind = DesktopSessionState.Kind.PAUSED;
     volatile String stateDetail = "等待目标窗口的首帧画面";
@@ -141,7 +142,7 @@ final class ManagedSession implements AutoCloseable {
                         element.width(), element.height(), element.actions()))
                 .toList();
         pendingObservation = new DesktopObservation(id, observationId, frame, elements,
-                List.of(), elementDiagnostics);
+                List.of(), elementDiagnostics, latestSurface);
         pendingActionEpoch = coordinator.actionEpoch;
         return Optional.of(pendingObservation);
     }
@@ -175,7 +176,7 @@ final class ManagedSession implements AutoCloseable {
         // checks the selected region against these captured pixels instead.
         committedObservation = new DesktopObservation(id, observationId,
                 pending.frame(), pending.elements(), visualRegions,
-                pending.elementDiagnostics());
+                pending.elementDiagnostics(), pending.capturedSurface());
         committedActionEpoch = coordinator.actionEpoch;
         committedObservationAtMillis = service.clock.millis();
         pendingObservation = null;
@@ -286,6 +287,7 @@ final class ManagedSession implements AutoCloseable {
     private synchronized void invalidatePreview(String reason) {
         if (closed) return;
         latest = null;
+        latestSurface = null;
         pendingObservation = null;
         committedObservation = null;
         String detail = reason;
@@ -332,7 +334,23 @@ final class ManagedSession implements AutoCloseable {
                     Thread.sleep(250);
                     continue;
                 }
-                Optional<DesktopFrame> frame = platform.pollFrame(200);
+                Optional<DesktopFrame> frame;
+                DesktopSurfaceSnapshot capturedSurface = null;
+                // Native polling updates currentSurface together with its returned frame.
+                // Release the platform monitor before taking the session lock below;
+                // observation and action paths acquire these locks in the other order.
+                synchronized (platform) {
+                    frame = platform.pollFrame(200);
+                    if (frame.isPresent()) {
+                        try {
+                            DesktopSurfaceSnapshot candidate = platform.currentSurface().orElse(null);
+                            if (matchesCapture(candidate, frame.get())) capturedSurface = candidate;
+                        } catch (RuntimeException unavailable) {
+                            // Providers without a capture-bound surface remain usable,
+                            // but cannot supply native stage identity evidence.
+                        }
+                    }
+                }
                 if (frame.isPresent()) {
                     DesktopFrame value = frame.get();
                     synchronized (this) {
@@ -353,6 +371,7 @@ final class ManagedSession implements AutoCloseable {
                             }
                         }
                         latest = value;
+                        latestSurface = capturedSurface;
                         capturedAnyFrame = true;
                         lastFrameAt = service.clock.millis();
                         if (!service.pendingInputs.containsKey(targetKey)) frames.submit(value);
@@ -376,6 +395,18 @@ final class ManagedSession implements AutoCloseable {
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
             }
         }
+    }
+
+    private boolean matchesCapture(DesktopSurfaceSnapshot surface, DesktopFrame frame) {
+        return surface != null && !surface.runtimeId().isBlank() && !surface.surfaceId().isBlank()
+                && surface.providerId().equals(target.providerId())
+                && surface.logicalTargetId().equals(target.id())
+                && surface.logicalTargetId().equals(frame.targetId())
+                && !surface.applicationId().isBlank()
+                && surface.applicationId().equals(target.applicationId())
+                && surface.generation() == frame.windowGeneration()
+                && surface.contentRevision() == frame.contentRevision()
+                && surface.observedAtMillis() == frame.capturedAtMillis();
     }
 
     synchronized void rejected(DesktopAction action) {
@@ -580,6 +611,7 @@ final class ManagedSession implements AutoCloseable {
             coordinator.actionEpoch++;
             coordinator.lastDispatchAtMillis = service.clock.millis();
             latest = null;
+            latestSurface = null;
         }
         if (result.status() == DesktopActionResult.Status.UNSUPPORTED && !foregroundGranted) {
             boolean allowed;
@@ -629,6 +661,7 @@ final class ManagedSession implements AutoCloseable {
         if (closed) return;
         closed = true;
         latest = null;
+        latestSurface = null;
         state(DesktopSessionState.Kind.CLOSED, "会话已关闭");
         try { endForegroundLease(); }
         finally {

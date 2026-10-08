@@ -13,6 +13,8 @@ import com.javaclaw.framework.core.ReasoningRequest;
 import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.ToolInvocationGateway;
 import com.javaclaw.framework.core.TrustedCapabilityRegistry;
+import com.javaclaw.framework.core.InteractionExecutionPolicy;
+import com.javaclaw.framework.api.InteractionMode;
 import com.javaclaw.framework.spi.DeferredContextSource;
 import com.javaclaw.framework.spi.DeferredContextUse;
 import com.javaclaw.framework.spi.ModelTaskGateway;
@@ -61,7 +63,9 @@ final class OnDemandContextSession {
     private final FixedContextSession fixed;
     private final HarnessDecisionToolCallback decisionCallback;
     private final ComputerUseContextSelection computerUse;
+    private final InteractionContextSelection interaction;
     private final TrustedCapabilityRegistry capabilities;
+    private final com.javaclaw.framework.api.InteractionHistoryClient interactionHistory;
     private final StepContextAssembler assembler;
     private Selection replay;
 
@@ -91,14 +95,25 @@ final class OnDemandContextSession {
             ObjectMapper json, List<Message> priorHistory,
             HarnessDecisionToolCallback decisionCallback, List<Message> stableInstructions,
             TrustedCapabilityRegistry capabilities) {
+        this(request, catalog, modelTasks, tools, runs, json, priorHistory, decisionCallback,
+                stableInstructions, capabilities, null);
+    }
+
+    OnDemandContextSession(ReasoningRequest request, ToolCatalogSession catalog,
+            ModelTaskGateway modelTasks, ToolInvocationGateway tools, RunStore runs, ObjectMapper json,
+            List<Message> priorHistory, HarnessDecisionToolCallback decisionCallback,
+            List<Message> stableInstructions, TrustedCapabilityRegistry capabilities,
+            com.javaclaw.framework.api.InteractionHistoryClient interactionHistory) {
         this.request = Objects.requireNonNull(request);
         this.policy = Objects.requireNonNull(request.plan().descriptor().onDemandContextPolicy());
         this.projector = new StepContextProjector(
                 request.plan().descriptor().stepContextPolicy(), json);
-        this.assembler = new StepContextAssembler(request.runId().value(), projector, stableInstructions);
+        this.assembler = new StepContextAssembler(request.runId().value(), projector, stableInstructions,
+                () -> TaskRepairContext.currentContract(this.request, runs, json));
         this.catalog = catalog;
         this.decisionCallback = decisionCallback;
         this.capabilities = Objects.requireNonNull(capabilities);
+        this.interactionHistory = interactionHistory;
         this.runs = Objects.requireNonNull(runs);
         this.steps = new RunStepQuery(runs);
         this.json = Objects.requireNonNull(json);
@@ -114,6 +129,7 @@ final class OnDemandContextSession {
         this.selectionInputs = new OnDemandContextSelectionInputs(policy, planner, sources);
         this.computerUse = new ComputerUseContextSelection(request, catalog, planner, runs,
                 steps, historyCatalog, fixed, projector, assembler, json, capabilities);
+        this.interaction = new InteractionContextSelection(request, catalog, assembler, runs, historyCatalog);
     }
 
     Selection select(List<Message> incoming) {
@@ -123,12 +139,26 @@ final class OnDemandContextSession {
             return selectOptional(incoming);
         }
         List<Message> current = incoming.stream()
-                .filter(message -> !TaskRepairContext.isProgress(message, request.runId().value())).toList();
-        Selection selected = selectCurrent(current);
+                .filter(message -> !TaskRepairContext.isProgress(message, request.runId().value())
+                        && !TaskRepairContext.isContract(message, request.runId().value())).toList();
+        Selection selected = freezeRoleToolCandidates(selectCurrent(current));
         List<Message> clean = selected.messages().stream()
                 .filter(message -> !TaskRepairContext.isProgress(message, request.runId().value())).toList();
         if (!clean.equals(selected.messages())) {
             selected = new Selection(clean, selected.callbacks(), selected.toolCandidateStepId());
+        }
+        Message checkpoint = InteractionCheckpointContext.message(request, runs, json, capabilities);
+        Message interactionPast = InteractionHistoryContext.message(request, runs, json, interactionHistory,
+                InteractionExecutionPolicy.isInteraction(request.runRequest())
+                        ? computerUse.coveredDesktopObservation(current) : null);
+        if (checkpoint != null || interactionPast != null) {
+            List<Message> withCheckpoint = new ArrayList<>(selected.messages());
+            if (checkpoint != null) withCheckpoint.add(assembler.dynamic(HostContextBlock.Kind.INTERACTION_CHECKPOINT,
+                    checkpoint, true, List.of()));
+            if (interactionPast != null) withCheckpoint.add(assembler.dynamic(HostContextBlock.Kind.INTERACTION_HISTORY,
+                    interactionPast, false, List.of()));
+            selected = new Selection(assembler.project(withCheckpoint, selected.callbacks()),
+                    selected.callbacks(), selected.toolCandidateStepId());
         }
         Message progress = TaskRepairContext.currentProgress(request, runs, json, capabilities);
         if (progress == null) return selected;
@@ -141,13 +171,44 @@ final class OnDemandContextSession {
         return new Selection(List.copyOf(messages), selected.callbacks(), selected.toolCandidateStepId());
     }
 
+    /** Host role shortcuts still need the same durable candidate proof as planner-selected tools. */
+    private Selection freezeRoleToolCandidates(Selection selected) {
+        if (!InteractionExecutionPolicy.isMain(request.runRequest())
+                && !InteractionExecutionPolicy.isInteraction(request.runRequest())) return selected;
+        List<String> names = selected.callbacks().stream().map(callback -> callback.getToolDefinition().name())
+                .filter(name -> !name.equals(HarnessDecisionToolCallback.NAME)
+                        && !name.equals(ToolCatalogSession.NAME)).toList();
+        if (names.isEmpty()) return selected;
+        long providerSteps = steps.steps(request.runId()).stream()
+                .filter(step -> step.kind() == AgentStep.Kind.MODEL).count();
+        String key = digest("host-role-provider-tools\n" + providerSteps + "\n"
+                + StepMessageCodec.messages(selected.messages()) + "\n"
+                + selected.callbacks().stream().map(ToolCatalogSession::fingerprint).toList());
+        var selection = new OnDemandToolSelection(request, policy, catalog, runs, steps, planner::stage);
+        var snapshot = selection.retrieveExact(key, names);
+        return new Selection(selected.messages(), selected.callbacks(), snapshot.stepId());
+    }
+
     private Selection selectCurrent(List<Message> incoming) {
+        if (InteractionExecutionPolicy.isInteraction(request.runRequest())) {
+            InteractionMode mode = InteractionExecutionPolicy.activeMode(request.runRequest(),
+                    runs.eventsAfter(request.runId(), 0));
+            if (mode != InteractionMode.DESKTOP) return interaction.select(incoming, mode == InteractionMode.BROWSER);
+        } else if (InteractionExecutionPolicy.isMain(request.runRequest())) {
+            var delegated = computerUse.forInteractionDelegation(incoming);
+            if (delegated != null) return delegated;
+            return selectOptional(incoming);
+        }
         if (request.control().remainingToolCalls() == 0) {
             // An unresolved natural identity cannot be prepared without a real read budget.
             computerUse.forApplicationIdentity(incoming, computerUse.cursor(incoming));
             return selectOptional(incoming);
         }
         ComputerUseSessionCursor cursor = computerUse.cursor(incoming);
+        var requiredLaunch = computerUse.forRequiredLaunch(incoming, cursor);
+        if (requiredLaunch != null) return requiredLaunch;
+        var requiredReadOnlyOpen = computerUse.forRequiredReadOnlyOpen(incoming, cursor);
+        if (requiredReadOnlyOpen != null) return requiredReadOnlyOpen;
         if (cursor.requiresTool() || cursor.phase() == ComputerUseSessionCursor.Phase.RECONCILE) {
             return computerUse.select(incoming, cursor, false);
         }
@@ -163,6 +224,9 @@ final class OnDemandContextSession {
         }
         var taskRepair = computerUse.forTaskRepair(incoming, cursor);
         if (taskRepair != null) return taskRepair;
+        if (InteractionExecutionPolicy.isInteraction(request.runRequest())) {
+            return computerUse.select(incoming, cursor, false);
+        }
         try {
             return selectOptional(incoming);
         } catch (ContextPlanningRequiredException failure) {
@@ -221,8 +285,8 @@ final class OnDemandContextSession {
             throw pause("tool-call budget is insufficient for required fixed context reads");
         }
         List<HistoryCandidate> history = historyCatalog.candidates(planningIncoming);
-        DesktopObservation desktopObservation = historyCatalog
-                .latestDesktopObservation(planningIncoming).orElse(null);
+        DesktopObservation desktopObservation = InteractionExecutionPolicy.isMain(request.runRequest()) ? null
+                : historyCatalog.latestDesktopObservation(planningIncoming).orElse(null);
         ComputerUseSessionCursor selectionDesktop = computerUse.cursor(planningIncoming);
         var requiredRead = noBusinessBudget ? null : computerUse.requiredRead(selectionDesktop);
         if (requiredRead != null && requiredRead.tool() != null) {

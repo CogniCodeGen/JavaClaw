@@ -10,6 +10,11 @@ public interface AgentClient {
 
     RunSnapshot get(RunId runId);
 
+    /** Applies one explicit human command to a parent's currently delegated interaction task. */
+    default RunHandle controlInteraction(RunId parent, InteractionControlCommand command) {
+        throw new UnsupportedOperationException("interaction controls are not supported by this client");
+    }
+
     /** Original host request, subject to the same scope checks as get(). */
     default java.util.Optional<RunRequest> request(RunId runId) {
         return java.util.Optional.empty();

@@ -85,6 +85,25 @@ public final class SensitiveDataRedactor {
         return redactTextWithStatus(text).value();
     }
 
+    /** 保留 JSON 结构，递归沿用现有敏感字段与文本脱敏规则。 */
+    public static com.fasterxml.jackson.databind.JsonNode redactJson(com.fasterxml.jackson.databind.JsonNode value) {
+        if (value == null) return com.fasterxml.jackson.databind.node.NullNode.instance;
+        if (value.isObject()) {
+            var result = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            value.properties().forEach(entry -> result.set(entry.getKey(), isSensitiveKey(entry.getKey())
+                    || entry.getKey().matches(".*(?:密码|口令|令牌|密钥|验证码).*")
+                    ? com.fasterxml.jackson.databind.node.TextNode.valueOf(REDACTED) : redactJson(entry.getValue())));
+            return result;
+        }
+        if (value.isArray()) {
+            var result = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+            value.forEach(item -> result.add(redactJson(item)));
+            return result;
+        }
+        return value.isTextual() ? com.fasterxml.jackson.databind.node.TextNode.valueOf(redactText(value.asText()))
+                : value.deepCopy();
+    }
+
     /** Keep the redaction decision separate from the localized replacement text. */
     public record RedactedText(String value, boolean redacted) { }
 

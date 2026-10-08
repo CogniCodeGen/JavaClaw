@@ -206,10 +206,13 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.runtime.WorkspaceContext workspace,
             @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor,
             com.javaclaw.framework.api.ThreadClient threads,
-            com.javaclaw.framework.api.StepClient steps) {
+            com.javaclaw.framework.api.StepClient steps,
+            com.javaclaw.framework.api.InteractionHistoryClient interactionHistory,
+            com.javaclaw.framework.api.InteractionMetricsClient interactionMetrics) {
         return new ChatService(options.browserManager(), workflows, siteCredentials,
                 skillCurator, taskScope,
-                agents, memory, workspace, executor, threads).bindStepClient(steps);
+                agents, memory, workspace, executor, threads).bindStepClient(steps)
+                .bindInteractionHistory(interactionHistory).bindInteractionMetrics(interactionMetrics);
     }
 
     @Bean(destroyMethod = "close")

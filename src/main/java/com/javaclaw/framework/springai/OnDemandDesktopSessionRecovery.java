@@ -13,6 +13,10 @@ import java.util.Set;
 
 /** Session liveness comes from the owner-scoped host inventory, never model text. */
 final class OnDemandDesktopSessionRecovery {
+    record FrameRecovery(long failureSequence, int frameFailures, int discoveries, int failedOpens) {
+        boolean required() { return failureSequence > 0; }
+        boolean exhausted() { return frameFailures > 1 || discoveries > 1 || failedOpens > 0; }
+    }
     private static final Set<String> SESSION_TOOLS = Set.of("desktop_session_observe",
             "desktop_session_snapshot", "desktop_session_click", "desktop_session_type",
             "desktop_session_key", "desktop_session_scroll", "desktop_session_takeover",
@@ -23,6 +27,44 @@ final class OnDemandDesktopSessionRecovery {
     private OnDemandDesktopSessionRecovery() { }
 
     static boolean requiresSession(String tool) { return SESSION_TOOLS.contains(tool); }
+
+    /** A new handle or frame token never resets a failed recovery episode; only a verified frame does. */
+    static FrameRecovery frameRecovery(List<AgentStep> steps, List<RunEventEnvelope> events) {
+        if (steps.isEmpty()) return new FrameRecovery(0, 0, 0, 0);
+        String owner = steps.getFirst().turnId().value();
+        Map<String, JsonNode> receipts = new HashMap<>();
+        for (var event : events) if (event.runId().equals(owner)
+                && event.type().equals("core.tool.receipt") && event.schemaVersion() == 1
+                && event.producer().equals("framework.core"))
+            receipts.put(event.payload().path("invocationId").asText(), event.payload());
+        long failure = 0;
+        int failures = 0, discoveries = 0, failedOpens = 0;
+        for (var step : steps.stream().sorted(java.util.Comparator.comparingLong(AgentStep::startSequence)).toList()) {
+            if (!step.turnId().value().equals(owner) || step.kind() != AgentStep.Kind.TOOL
+                    || step.state() != AgentStep.State.COMPLETED || step.input() == null || step.output() == null) continue;
+            String tool = step.input().path("tool").asText();
+            JsonNode receipt = receipts.get(step.input().path("invocationId").asText());
+            if (receipt == null || !tool.equals(receipt.path("tool").asText())) continue;
+            JsonNode raw = step.output().path("rawOutput");
+            String session = step.input().path("arguments").path("sessionId").asText();
+            if (tool.equals("desktop_session_observe") && receipt.path("status").asText().equals("OBSERVED")
+                    && step.output().path("status").asText().equals("SUCCEEDED")
+                    && !session.isBlank() && session.equals(receipt.path("metadata").path("sessionId").asText())
+                    && raw.path("kind").asText().equals("desktop.observation")
+                    && !receipt.path("metadata").path("observationId").asText().isBlank()) {
+                failure = 0; failures = 0; discoveries = 0; failedOpens = 0;
+            } else if (Set.of("desktop_session_observe", "desktop_session_snapshot").contains(tool)
+                    && raw.path("schemaVersion").asInt() == 1 && raw.path("kind").asText().equals("desktop.error")
+                    && tool.equals(raw.path("tool").asText()) && !session.isBlank()
+                    && session.equals(raw.path("sessionId").asText())
+                    && Set.of("NO_FRAME", "TARGET_CHANGED").contains(raw.path("errorCode").asText())) {
+                failure = step.lastSequence(); failures++;
+            } else if (failure > 0 && tool.equals("desktop_session_targets")) discoveries++;
+            else if (failure > 0 && tool.equals("desktop_session_open")
+                    && !step.output().path("status").asText().equals("SUCCEEDED")) failedOpens++;
+        }
+        return new FrameRecovery(failure, failures, discoveries, failedOpens);
+    }
 
     static boolean noLiveSessions(List<JsonNode> context) {
         return completeInventory(context).map(Set::isEmpty).orElse(false);

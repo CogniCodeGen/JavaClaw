@@ -71,6 +71,20 @@ public final class TaskResultEvaluator {
     public static TaskResult evaluateV3(TaskContractV3 contract,
             List<RunEventEnvelope> events, String stopReason,
             TrustedCapabilityRegistry capabilities) {
+        return evaluateV3(contract, events, stopReason, capabilities, new LinkedHashMap<>());
+    }
+
+    /** Uses the same ordered acceptance pass; descriptions are never criterion identities. */
+    public static Map<String, String> criterionEvidenceV3(TaskContractV3 contract,
+            List<RunEventEnvelope> events, String stopReason, TrustedCapabilityRegistry capabilities) {
+        Map<String, String> selected = new LinkedHashMap<>();
+        evaluateV3(contract, events, stopReason, capabilities, selected);
+        return Map.copyOf(selected);
+    }
+
+    private static TaskResult evaluateV3(TaskContractV3 contract,
+            List<RunEventEnvelope> events, String stopReason,
+            TrustedCapabilityRegistry capabilities, Map<String, String> selectedEvidence) {
         if (contract == null) return TaskResult.unverified("TASK_CONTRACT_MISSING");
         if (!contract.reliable() || !contract.desktopObservationSubjectsValid())
             return TaskResult.unverified("TASK_CONTRACT_UNRELIABLE");
@@ -135,8 +149,8 @@ public final class TaskResultEvaluator {
                     // Validate this exact ordered candidate against the previously chosen
                     // desktop receipts, not an independent earlier matching view chain.
                     if (desktop.contains(criterion) && !linkedDesktopCandidate(
-                            viewContract, criterion, event, desktopEvidenceBindings,
-                            desktopEvents, stopReason, capabilities, historicalViewIds)) continue;
+                            contract, viewContract, criterion, event, desktopEvidenceBindings,
+                            desktopEvents, events, stopReason, capabilities, historicalViewIds)) continue;
                     matched = index;
                     break;
                 }
@@ -175,6 +189,7 @@ public final class TaskResultEvaluator {
                 }
             }
         }
+        selectedEvidence.putAll(evidenceByCriterion);
         List<String> completed = satisfied.stream().map(TaskCriterionV3::description).toList();
         LinkedHashSet<String> evidence = new LinkedHashSet<>(evidenceByCriterion.values());
         if (unmet.isEmpty()) return new TaskResult(TaskOutcome.VERIFIED_COMPLETE,
@@ -185,10 +200,10 @@ public final class TaskResultEvaluator {
                 unmet, reason, List.copyOf(evidence), completed);
     }
 
-    private static boolean linkedDesktopCandidate(TaskContractV2 viewContract,
+    private static boolean linkedDesktopCandidate(TaskContractV3 originalContract, TaskContractV2 viewContract,
             TaskCriterionV3 criterion, RunEventEnvelope candidate,
             Map<String, String> previousBindings, List<RunEventEnvelope> events,
-            String stopReason, TrustedCapabilityRegistry capabilities,
+            List<RunEventEnvelope> completeHistory, String stopReason, TrustedCapabilityRegistry capabilities,
             Set<String> historicalViewIds) {
         String evidenceRef = candidate.payload().path("evidenceRef").asText("");
         if (viewContract == null || evidenceRef.isBlank()) return false;
@@ -197,8 +212,22 @@ public final class TaskResultEvaluator {
         // Keep all real events: dispatched inputs and failed/uncertain actions must
         // continue to invalidate stale frames even when they are not criteria. Keep
         // future view conditions too, for the existing uncertain-click proof gate.
-        return evaluateV2(viewContract, events, stopReason, capabilities, bindings, historicalViewIds)
-                .evidenceRefs().contains(evidenceRef);
+        if (evaluateV2(viewContract, events, stopReason, capabilities, bindings, historicalViewIds)
+                .evidenceRefs().contains(evidenceRef)) return true;
+        // A process restart destroys RAM sessions. Re-link only a proved read-only recovery
+        // to the same actual native object, using the actual new open and original predicates.
+        var reopened = DesktopReadOnlySessionRecovery.reopened(originalContract, criterion,
+                candidate, previousBindings, completeHistory);
+        if (reopened.isEmpty()) return false;
+        TaskCriterion open = viewContract.criteria().getFirst();
+        TaskCriterion observation = viewContract.criteria().stream()
+                .filter(value -> value.id().equals(criterion.id())).findFirst().orElse(null);
+        if (observation == null) return false;
+        var recovered = new TaskContractV2(2, viewContract.originalRequest(), viewContract.target(),
+                List.of(open, observation), true, true, viewContract.source());
+        return evaluateV2(recovered, events, stopReason, capabilities,
+                Map.of(open.id(), reopened.get().payload().path("evidenceRef").asText(),
+                        criterion.id(), evidenceRef), Set.of()).evidenceRefs().contains(evidenceRef);
     }
 
     /** Only an explicitly ordered V3 input chain can request an earlier view as historical evidence. */
@@ -271,7 +300,7 @@ public final class TaskResultEvaluator {
                 || criterion.targetType() != CapabilityMetadata.TargetKind.valueOf(
                         descriptor.targetKind().name())
                 || !CapabilityTargetMatcher.matches(capabilities, descriptor,
-                        criterion.target(), event, identities)
+                        criterion, event, identities)
                 || (DesktopDiscoveryEvidence.supports(criterion.capabilityId())
                         ? !DesktopDiscoveryEvidence.matches(criterion, event, events)
                         : !subjectMatchesV3(criterion, receipt))) return false;
@@ -288,6 +317,14 @@ public final class TaskResultEvaluator {
         if (criterion.capabilityId().equals("mcp.secure_input.cancel")) {
             return !criterion.requiredSubject().isBlank()
                     && criterion.requiredSubject().equals(receipt.subject());
+        }
+        if (criterion.capabilityId().equals("browser.observe")) {
+            return (criterion.requiredSubject().isBlank()
+                        || com.javaclaw.framework.spi.BrowserReceiptProof.contentMatches(
+                            criterion.requiredSubject(), receipt.metadata()))
+                    && (criterion.requiredTextFragments().isEmpty()
+                        || com.javaclaw.framework.spi.BrowserReceiptProof.contentMatchesAll(
+                            criterion.requiredTextFragments(), receipt.metadata()));
         }
         if (criterion.requiredSubject().isBlank()) return true;
         if (criterion.capabilityId().equals("file.write")
@@ -821,6 +858,17 @@ public final class TaskResultEvaluator {
      */
     public static List<VerifiedCheckpointEvidence> verifiedCheckpointEvidence(
             TaskContractV2 contract, List<RunEventEnvelope> events) {
+        return verifiedCheckpointEvidence(contract, events, false);
+    }
+
+    /** Accepted delivery still needs its predeclared business postcondition; this is not reconciliation. */
+    public static List<VerifiedCheckpointEvidence> verifiedBusinessCheckpointEvidence(
+            TaskContractV2 contract, List<RunEventEnvelope> events) {
+        return verifiedCheckpointEvidence(contract, events, true);
+    }
+
+    private static List<VerifiedCheckpointEvidence> verifiedCheckpointEvidence(
+            TaskContractV2 contract, List<RunEventEnvelope> events, boolean allowAccepted) {
         if (contract == null || !contract.applicable() || !contract.reliable()) return List.of();
         DesktopApplicationIdentityBindings identities = DesktopApplicationIdentityBindings.fromEvents(events);
         List<RunEventEnvelope> receipts = events.stream()
@@ -843,8 +891,12 @@ public final class TaskResultEvaluator {
                 var actionMeta = payload.path("metadata");
                 if (!payload.path("tool").asText("").equals("desktop_session_click")
                         || !payload.path("operation").asText("").equals("click")
-                        || !payload.path("status").asText("").equals("UNKNOWN")
-                        || !actionMeta.path("delivery").asText("").equals("MAYBE_SENT")
+                        || !(allowAccepted
+                            ? payload.path("status").asText("").equals("ACCEPTED")
+                                && actionMeta.path("delivery").asText("").equals("SENT")
+                                && actionMeta.path("effect").asText("").equals("UNKNOWN")
+                            : payload.path("status").asText("").equals("UNKNOWN")
+                                && actionMeta.path("delivery").asText("").equals("MAYBE_SENT"))
                         || !actionMeta.path("dispatchAttempted").asText("").equals("true")
                         || !identities.matches(click.target(), payload.path("target").asText(""),
                                 actionMeta.path("applicationId").asText(""),

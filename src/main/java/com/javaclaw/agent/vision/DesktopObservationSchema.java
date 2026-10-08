@@ -26,6 +26,9 @@ final class DesktopObservationSchema {
         ObjectNode conditions = properties.putObject("conditionEvidence");
         conditions.put("type", "array").put("maxItems", MAX_CONDITIONS);
         conditions.set("items", conditionSchema());
+        ObjectNode results = properties.putObject("conditionResults");
+        results.put("type", "array").put("maxItems", MAX_CONDITIONS);
+        results.set("items", conditionResultSchema());
         schema.putArray("required").add("summary").add("visibleText").add("targets");
         return schema;
     }
@@ -102,6 +105,23 @@ final class DesktopObservationSchema {
         condition.putArray("required").add("criterionId").add("subject").add("region").add("content");
         candidateDescription(condition);
         return condition;
+    }
+
+    private static ObjectNode conditionResultSchema() {
+        ObjectNode result = objectSchema();
+        ObjectNode properties = result.putObject("properties");
+        properties.putObject("criterionId").put("type", "string").put("minLength", 1).put("maxLength", 120);
+        properties.putObject("subject").put("type", "string").put("minLength", 1).put("maxLength", 240);
+        properties.putObject("outcome").put("type", "string").putArray("enum")
+                .add("TRUE").add("FALSE").add("UNKNOWN");
+        properties.putObject("complete").put("type", "boolean");
+        properties.putObject("contradiction").put("type", "boolean")
+                .put("description", "仅当原帧主内容存在明确反证时为 true；未见或不清不能作为反证。");
+        properties.putObject("region").put("type", "string").putArray("enum").add("main-content");
+        properties.putObject("confidence").put("type", "number").put("description", CONFIDENCE_DESCRIPTION);
+        properties.set("content", targetSchema(true));
+        result.putArray("required").add("criterionId").add("subject").add("outcome").add("complete");
+        return result;
     }
 
     private static void candidateDescription(ObjectNode schema) {

@@ -105,7 +105,7 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
             throw new IllegalArgumentException("目标已过期，请重新发现窗口");
         DesktopBridge nativeBridge = bridge();
         MemorySegment handle = nativeBridge.open(window);
-        return new NativeSession(nativeBridge, target.id(), handle);
+        return new NativeSession(nativeBridge, target.id(), handle, window);
     }
 
     private DesktopBridge bridge() {
@@ -134,12 +134,20 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
         private final DesktopBridge bridge;
         private final String targetId;
         private final MemorySegment handle;
-        private boolean closed;
+        private final DesktopBridge.NativeWindow openedWindow;
+        private final String runtimeId;
+        private volatile com.javaclaw.desktop.api.DesktopSurfaceSnapshot lastSurface;
+        private volatile boolean closed;
 
-        NativeSession(DesktopBridge bridge, String targetId, MemorySegment handle) {
+        NativeSession(DesktopBridge bridge, String targetId, MemorySegment handle, DesktopBridge.NativeWindow openedWindow) {
             this.bridge = bridge;
             this.targetId = targetId;
             this.handle = handle;
+            this.openedWindow = openedWindow;
+            // ABI6 binds captures to this actual process instance. The desktop session
+            // remains the separate context/consent identity; this ID grants no authority.
+            this.runtimeId = "desktop:process:" + id + ":" + openedWindow.processId()
+                    + ":" + Long.toUnsignedString(openedWindow.processInstanceId());
         }
 
         @Override public synchronized DesktopTarget currentTarget() {
@@ -150,7 +158,24 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
         @Override public synchronized java.util.Optional<com.javaclaw.desktop.api.DesktopFrame> pollFrame(
                 int timeoutMillis) {
             requireOpen();
-            return bridge.poll(handle, targetId, timeoutMillis);
+            return bridge.pollCaptured(handle, targetId, timeoutMillis).map(captured -> {
+                var frame = captured.frame();
+                if (captured.windowId() != 0) {
+                    // Native session is bound to this process instance. Frame.window_id is the
+                    // actual selected window, while targetId intentionally remains consent-bound.
+                    var actual = new DesktopBridge.NativeWindow(openedWindow.processId(), captured.windowId(),
+                            openedWindow.processInstanceId(), 0, 0, 0, 0, 0, "", "", openedWindow.applicationId());
+                    lastSurface = new com.javaclaw.desktop.api.DesktopSurfaceSnapshot(id, runtimeId,
+                            opaqueId(actual), targetId, openedWindow.applicationId(), frame.windowGeneration(),
+                            frame.contentRevision(), frame.capturedAtMillis());
+                } else lastSurface = null;
+                return frame;
+            });
+        }
+
+        @Override public java.util.Optional<com.javaclaw.desktop.api.DesktopSurfaceSnapshot> currentSurface() {
+            requireOpen();
+            return java.util.Optional.ofNullable(lastSurface);
         }
 
         @Override public synchronized java.util.List<com.javaclaw.desktop.api.DesktopElement> elements(

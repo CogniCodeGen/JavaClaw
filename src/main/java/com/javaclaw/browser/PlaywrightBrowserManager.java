@@ -1,7 +1,6 @@
 package com.javaclaw.browser;
 
 import com.javaclaw.platform.data.ApplicationHome;
-import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 import org.slf4j.Logger;
@@ -48,6 +47,7 @@ public class PlaywrightBrowserManager {
     private Browser browser;
     private BrowserContext context;
     private final List<Page> pages = new ArrayList<>();
+    private final BrowserSurfaceTracker surfaceTracker = new BrowserSurfaceTracker();
     private int activePageIndex = 0;
 
     /**
@@ -96,7 +96,7 @@ public class PlaywrightBrowserManager {
 
     /**
      * 确保浏览器已启动（懒加载）。
-     * 首次调用时启动 Playwright 和 Chromium，后续调用直接返回。
+     * 首次调用时优先启动系统 Chrome，缺少时准备应用内 Chrome；后续调用复用浏览器。
      */
     public synchronized void ensureLaunched() {
         requireOpen();
@@ -129,10 +129,11 @@ public class PlaywrightBrowserManager {
         log.info("正在启动 Playwright 浏览器（headless={}）...", launchHeadless);
 
         try {
+            ApplicationHome home;
             Path browsers;
             Path temporary;
             try {
-                ApplicationHome home = ApplicationHome.resolve().prepare();
+                home = ApplicationHome.resolve().prepare();
                 browsers = home.playwrightBrowsersDirectory();
                 temporary = home.temporaryDirectory();
                 if (browserDir.toAbsolutePath().normalize().startsWith(home.dataDirectory())) {
@@ -144,18 +145,14 @@ public class PlaywrightBrowserManager {
             } catch (IOException failure) {
                 throw new IllegalStateException("无法准备应用内浏览器资产目录", failure);
             }
-            // Playwright's Java driver otherwise extracts to java.io.tmpdir and downloads browsers
-            // to an OS user cache. Both are application-owned runtime assets.
+            // 禁止 Playwright 自动安装整套浏览器；缺少 Chrome 时由专用安装器只准备 Chrome。
             System.setProperty("playwright.driver.tmpdir", temporary.toString());
             this.playwright = Playwright.create(new Playwright.CreateOptions().setEnv(Map.of(
+                    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1",
                     "PLAYWRIGHT_BROWSERS_PATH", browsers.toString(),
                     "TMPDIR", temporary.toString(),
                     "TEMP", temporary.toString(),
                     "TMP", temporary.toString())));
-
-            // 检测系统默认浏览器并启动（无需下载 Chromium）
-            String channel = detectDefaultBrowserChannel();
-            log.info("检测到系统默认浏览器 channel: {}", channel);
 
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
                     .setHeadless(launchHeadless)
@@ -164,10 +161,8 @@ public class PlaywrightBrowserManager {
                             "--no-first-run",
                             "--no-default-browser-check"
                     ));
-            if (channel != null) {
-                launchOptions.setChannel(channel);
-            }
-            this.browser = playwright.chromium().launch(launchOptions);
+            this.browser = ChromeBrowserLauncher.launch(playwright.chromium()::launch,
+                    launchOptions, () -> new ChromeForTestingInstaller().ensureInstalled(home));
 
             this.currentHeadless = launchHeadless;
             openContext(snapshotOverride);
@@ -221,6 +216,7 @@ public class PlaywrightBrowserManager {
     private void openContext(ScopeSnapshot snapshot) {
         String storageState = snapshot == null ? null : snapshot.storageState();
         this.context = createContext(storageState);
+        surfaceTracker.attach(context);
         context.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT);
         context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT);
         pages.clear();
@@ -230,6 +226,45 @@ public class PlaywrightBrowserManager {
         userInteractionActive = false;
         userInteractionBaselineState = null;
         log.info("浏览器 Context 已激活: scope={}", activeScopeId);
+    }
+
+    /** Host journal binding survives per-invocation facades and records late popup/close events. */
+    public void bindInteractionObserver(java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        surfaceTracker.observer(observer);
+    }
+
+    /** Cached host identities only: this does not launch a browser or read page content. */
+    public synchronized List<com.javaclaw.framework.api.InteractionSurfaceEvent> interactionSurfaces() {
+        String active = activeInteractionSurfaceId();
+        return surfaceTracker.snapshots().stream().map(surface -> surface.surfaceId().equals(active)
+                ? surface : surface.withObservedDuringInvocation("")).toList();
+    }
+
+    /** Transport status observed for the actual selected document; never sends a verification navigation. */
+    synchronized int mainDocumentStatus(Page page) { return surfaceTracker.mainDocumentStatus(page); }
+
+    synchronized java.util.Optional<com.javaclaw.framework.api.InteractionSurfaceEvent> interactionSurface(Page page) {
+        return surfaceTracker.snapshot(page);
+    }
+
+    synchronized void noteInteractionInput(Page page) {
+        com.javaclaw.framework.spi.InteractionStageContext.current().ifPresent(binding ->
+                surfaceTracker.snapshot(page).ifPresent(binding::browserBefore));
+    }
+
+    public synchronized String activeInteractionSurfaceId() {
+        return activePageIndex < 0 || activePageIndex >= pages.size() ? ""
+                : surfaceTracker.pageId(pages.get(activePageIndex));
+    }
+
+    /** Called only after a popup wait registered before the click returns a source-owned Page. */
+    synchronized java.util.Optional<com.javaclaw.framework.api.InteractionSurfaceEvent> expectedPopup(Page source, Page popup) {
+        return surfaceTracker.expectedPopup(source, popup) ? surfaceTracker.snapshot(popup) : java.util.Optional.empty();
+    }
+
+    synchronized int pageIndex(Page page) {
+        syncContextPages();
+        return pages.indexOf(page);
     }
 
     private Browser.NewContextOptions newContextOptions() {
@@ -246,13 +281,24 @@ public class PlaywrightBrowserManager {
     public synchronized Page getActivePage() {
         ensureLaunched();
         syncContextPages();
-        if (pages.isEmpty()) {
+        if (pages.isEmpty() || activePageIndex < 0) {
             return null;
         }
         if (activePageIndex >= pages.size()) {
-            activePageIndex = pages.size() - 1;
+            activePageIndex = -1;
+            return null;
         }
         return pages.get(activePageIndex);
+    }
+
+    /** Read-only admission: never launches, switches scope, creates or selects a Page. */
+    synchronized Page existingActivePage() {
+        if (permanentlyClosed || browser == null || !browser.isConnected() || context == null
+                || !requestedScopeId.equals(activeScopeId)) return null;
+        syncContextPages();
+        Page selected = activeOpenPage();
+        return selected != null && selected.context() == context && context.pages().contains(selected)
+                ? selected : null;
     }
 
     /**
@@ -343,32 +389,24 @@ public class PlaywrightBrowserManager {
 
     /** 同步用户在可见浏览器里自行打开/关闭的 Tab（包括 SSO 弹窗）。 */
     private void syncContextPages() {
+        Page previousActive = activePageIndex >= 0 && activePageIndex < pages.size() ? pages.get(activePageIndex) : null;
         pages.removeIf(page -> page == null || page.isClosed());
         if (context == null) return;
         for (Page page : context.pages()) {
             if (!page.isClosed() && !pages.contains(page)) {
                 pages.add(page);
-                activePageIndex = pages.size() - 1;
             }
         }
-        if (!pages.isEmpty() && activePageIndex >= pages.size()) {
-            activePageIndex = pages.size() - 1;
-        }
+        int previousIndex = pages.indexOf(previousActive);
+        if (previousIndex >= 0) activePageIndex = previousIndex;
+        else activePageIndex = -1; // A new popup is a candidate, never an implicit replacement target.
     }
 
     private Page activeOpenPage() {
-        if (pages.isEmpty()) return null;
-        if (activePageIndex < 0 || activePageIndex >= pages.size()) {
-            activePageIndex = pages.size() - 1;
-        }
+        if (pages.isEmpty() || activePageIndex < 0 || activePageIndex >= pages.size()) return null;
         Page active = pages.get(activePageIndex);
         if (!active.isClosed()) return active;
-        for (int i = pages.size() - 1; i >= 0; i--) {
-            if (!pages.get(i).isClosed()) {
-                activePageIndex = i;
-                return pages.get(i);
-            }
-        }
+        activePageIndex = -1;
         return null;
     }
 
@@ -382,9 +420,12 @@ public class PlaywrightBrowserManager {
      */
     public synchronized int newTab(String url) {
         ensureLaunched();
+        syncContextPages();
+        String previousPageId = activeInteractionSurfaceId();
         Page newPage = context.newPage();
         pages.add(newPage);
         activePageIndex = pages.size() - 1;
+        surfaceTracker.directlyCreated(newPage, previousPageId);
 
         if (url != null && !url.isBlank()) {
             newPage.navigate(normalizeUrl(url));
@@ -401,6 +442,8 @@ public class PlaywrightBrowserManager {
      * @return 是否成功关闭
      */
     public synchronized boolean closeTab(int index) {
+        syncContextPages();
+        Page previousActive = activePageIndex >= 0 && activePageIndex < pages.size() ? pages.get(activePageIndex) : null;
         int targetIndex = (index == -1) ? activePageIndex : index;
 
         if (targetIndex < 0 || targetIndex >= pages.size()) {
@@ -417,9 +460,9 @@ public class PlaywrightBrowserManager {
         page.close();
 
         // 调整活跃 Tab 索引
-        if (activePageIndex >= pages.size()) {
-            activePageIndex = pages.size() - 1;
-        }
+        int preserved = pages.indexOf(previousActive);
+        activePageIndex = previousActive == null ? -1
+                : preserved >= 0 ? preserved : Math.min(targetIndex, pages.size() - 1);
 
         log.info("已关闭 Tab[{}]，剩余 {} 个 Tab，当前活跃 Tab[{}]",
                 targetIndex, pages.size(), activePageIndex);
@@ -433,6 +476,7 @@ public class PlaywrightBrowserManager {
      * @return 是否成功切换
      */
     public synchronized boolean switchTab(int index) {
+        syncContextPages();
         if (index < 0 || index >= pages.size()) {
             return false;
         }
@@ -494,82 +538,10 @@ public class PlaywrightBrowserManager {
     public synchronized void setViewport(int width, int height) {
         Page page = getActivePage();
         if (page != null) {
+            noteInteractionInput(page);
             page.setViewportSize(width, height);
             log.info("已设置视口大小: {}x{}", width, height);
         }
-    }
-
-    // ==================== 浏览器检测 ====================
-
-    /**
-     * 检测系统默认浏览器，返回 Playwright channel 名称。
-     * 支持 macOS（通过 LaunchServices）、Linux（通过 xdg-settings）、Windows（通过注册表）。
-     * 仅支持 Chromium 内核浏览器（Chrome、Edge、Chromium），不支持的浏览器返回 "chrome" 作为降级。
-     *
-     * @return Playwright channel 名称，如 "chrome"、"msedge"、"chromium"
-     */
-    private static String detectDefaultBrowserChannel() {
-        if (ProjectAccessPolicy.strictIsolationEnabled()) {
-            return "chrome";
-        }
-        try {
-            String os = System.getProperty("os.name", "").toLowerCase();
-            String bundleId = null;
-
-            if (os.contains("mac")) {
-                // macOS: 从 LaunchServices 读取 https 处理程序
-                Process process = new ProcessBuilder("defaults", "read",
-                        System.getProperty("user.home") + "/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure",
-                        "LSHandlers")
-                        .redirectErrorStream(true).start();
-                String output = new String(process.getInputStream().readAllBytes());
-                process.waitFor();
-                // 解析 plist 文本格式，查找 https 对应的 LSHandlerRoleAll
-                String[] blocks = output.split("\\{");
-                for (String block : blocks) {
-                    if (block.contains("LSHandlerURLScheme") && block.contains("https")) {
-                        for (String line : block.split("\n")) {
-                            if (line.contains("LSHandlerRoleAll")) {
-                                bundleId = line.replaceAll(".*=\\s*\"?([^\";}]+)\"?.*", "$1").trim();
-                                break;
-                            }
-                        }
-                        if (bundleId != null) break;
-                    }
-                }
-            } else if (os.contains("linux")) {
-                // Linux: xdg-settings get default-web-browser
-                Process process = new ProcessBuilder("xdg-settings", "get", "default-web-browser")
-                        .redirectErrorStream(true).start();
-                bundleId = new String(process.getInputStream().readAllBytes()).trim().toLowerCase();
-                process.waitFor();
-            } else if (os.contains("win")) {
-                // Windows: 从注册表读取默认浏览器
-                Process process = new ProcessBuilder("reg", "query",
-                        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice",
-                        "/v", "ProgId")
-                        .redirectErrorStream(true).start();
-                String output = new String(process.getInputStream().readAllBytes()).trim();
-                process.waitFor();
-                bundleId = output.toLowerCase();
-            }
-
-            if (bundleId != null) {
-                bundleId = bundleId.toLowerCase();
-                if (bundleId.contains("edge") || bundleId.contains("msedge")) {
-                    return "msedge";
-                } else if (bundleId.contains("chromium")) {
-                    return "chromium";
-                } else if (bundleId.contains("chrome") || bundleId.contains("google")) {
-                    return "chrome";
-                }
-            }
-        } catch (Exception e) {
-            log.warn("检测系统默认浏览器失败，降级使用 chrome: {}", e.getMessage());
-        }
-
-        // 默认降级到 chrome
-        return "chrome";
     }
 
     // ==================== URL 工具方法 ====================

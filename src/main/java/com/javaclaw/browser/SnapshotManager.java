@@ -67,14 +67,22 @@ public class SnapshotManager {
         public final String ariaName;
         /** 是否精确匹配名称 */
         public final boolean exact;
+        /** 名称来自占位提示时，保留明确的定位类型，不能充当 ARIA 名称。 */
+        public final String placeholder;
 
         public RefEntry(String ref, String role, String name, String ariaRole, String ariaName, boolean exact) {
+            this(ref, role, name, ariaRole, ariaName, exact, null);
+        }
+
+        private RefEntry(String ref, String role, String name, String ariaRole, String ariaName,
+                boolean exact, String placeholder) {
             this.ref = ref;
             this.role = role;
             this.name = name;
             this.ariaRole = ariaRole;
             this.ariaName = ariaName;
             this.exact = exact;
+            this.placeholder = placeholder;
         }
 
         @Override
@@ -88,6 +96,9 @@ public class SnapshotManager {
 
     /** 引用计数器 */
     private int refCounter = 0;
+    private Page snapshotPage;
+    private JSHandle snapshotDocument;
+    private String snapshotUrl;
 
     /**
      * 捕获页面无障碍树快照
@@ -99,13 +110,11 @@ public class SnapshotManager {
      * @return 格式化的无障碍树文本
      */
     public String snapshot(Page page, boolean interactiveOnly, boolean showUrls, int maxDepth) {
+        // 页面和文档身份必须随引用一起更新，不能复用另一个 Tab 或新文档的引用。
+        clearRefs();
         if (page == null || page.isClosed()) {
             return "[错误] 页面未打开";
         }
-
-        // 重置引用
-        refMap.clear();
-        refCounter = 0;
 
         try {
             // 等待页面基本加载完成
@@ -114,20 +123,28 @@ public class SnapshotManager {
             // 使用 JavaScript 获取无障碍树信息
             // Playwright 的 accessibility.snapshot() 可获取完整的无障碍树
             String snapshotJs = buildSnapshotScript(interactiveOnly, showUrls, maxDepth);
-            Object result = page.evaluate(snapshotJs);
+            snapshotDocument = page.evaluateHandle("document");
+            snapshotPage = page;
+            Object result = snapshotDocument.evaluate(snapshotJs);
 
-            if (result == null) {
+            if (!(result instanceof Map<?, ?> captured)) {
+                clearRefs();
                 return "[错误] 无法获取页面无障碍树";
             }
 
             // 解析 JavaScript 返回的无障碍树数据
             @SuppressWarnings("unchecked")
-            List<Map<String, Object>> nodes = (List<Map<String, Object>>) result;
+            List<Map<String, Object>> nodes = (List<Map<String, Object>>) captured.get("nodes");
+            if (!(captured.get("url") instanceof String url) || url.isBlank()
+                    || !(captured.get("title") instanceof String title)) {
+                throw new IllegalStateException("快照未返回完整页面身份");
+            }
+            snapshotUrl = url;
 
             // 构建格式化输出
             StringBuilder sb = new StringBuilder();
-            sb.append("页面: ").append(page.title()).append("\n");
-            sb.append("URL: ").append(page.url()).append("\n");
+            sb.append("页面: ").append(title).append("\n");
+            sb.append("URL: ").append(url).append("\n");
             sb.append("─".repeat(50)).append("\n");
 
             for (Map<String, Object> node : nodes) {
@@ -148,6 +165,7 @@ public class SnapshotManager {
             return sb.toString();
 
         } catch (Exception e) {
+            clearRefs();
             log.error("捕获无障碍树快照失败", e);
             return "[错误] 捕获快照失败: " + e.getMessage();
         }
@@ -162,6 +180,11 @@ public class SnapshotManager {
      */
     public Locator resolveRef(Page page, String ref) {
         if (ref == null || page == null) return null;
+        if (!matchesSnapshotDocument(page)) {
+            clearRefs();
+            log.warn("快照页面或文档已经变化，请重新获取快照");
+            return null;
+        }
 
         // 规范化引用格式
         String normalizedRef = normalizeRef(ref);
@@ -172,6 +195,15 @@ public class SnapshotManager {
         }
 
         try {
+            if (entry.placeholder != null) {
+                Locator locator = page.getByPlaceholder(entry.placeholder,
+                        new Page.GetByPlaceholderOptions().setExact(true));
+                // 快照引用不能在占位提示重复或已经变化时猜测目标。
+                if (locator.count() == 1 && locator.isVisible()) return locator;
+                log.warn("引用 {} 的占位提示未唯一匹配可见元素，请重新获取快照", ref);
+                return null;
+            }
+
             // 通过 ARIA role + name 定位元素
             AriaRole ariaRole = parseAriaRole(entry.ariaRole);
             if (ariaRole != null) {
@@ -240,6 +272,29 @@ public class SnapshotManager {
     public void clearRefs() {
         refMap.clear();
         refCounter = 0;
+        JSHandle previous = snapshotDocument;
+        snapshotDocument = null;
+        snapshotPage = null;
+        snapshotUrl = null;
+        if (previous != null) {
+            try {
+                previous.dispose();
+            } catch (RuntimeException unavailable) {
+                // 已销毁文档的句柄释放失败不能恢复引用，也不能阻止浏览器关闭。
+                log.debug("快照文档句柄已不可用");
+            }
+        }
+    }
+
+    private boolean matchesSnapshotDocument(Page page) {
+        try {
+            return snapshotPage == page && snapshotDocument != null && !page.isClosed()
+                    && Objects.equals(snapshotUrl, page.url())
+                    && Boolean.TRUE.equals(page.evaluate(
+                            "capturedDocument => capturedDocument === document", snapshotDocument));
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     // ==================== 内部方法 ====================
@@ -278,6 +333,7 @@ public class SnapshotManager {
     private String formatNode(Map<String, Object> node, boolean interactiveOnly, boolean showUrls) {
         String role = getString(node, "role");
         String name = getString(node, "name");
+        String nameSource = getString(node, "nameSource");
         String value = getString(node, "value");
         int depth = getInt(node, "depth", 0);
         boolean isInteractive = getBool(node, "interactive");
@@ -302,7 +358,7 @@ public class SnapshotManager {
 
         // 引用标记（仅交互元素）
         if (isInteractive) {
-            String ref = allocateRef(role, name);
+            String ref = allocateRef(role, name, nameSource);
             sb.append(ref).append(" ");
         }
 
@@ -335,10 +391,12 @@ public class SnapshotManager {
     /**
      * 为交互元素分配引用标记
      */
-    private String allocateRef(String role, String name) {
+    private String allocateRef(String role, String name, String nameSource) {
         refCounter++;
         String ref = "@e" + refCounter;
-        RefEntry entry = new RefEntry(ref, role, name, role, name, false);
+        boolean fromPlaceholder = "placeholder".equals(nameSource);
+        RefEntry entry = new RefEntry(ref, role, name, role,
+                fromPlaceholder ? null : name, false, fromPlaceholder ? name : null);
         refMap.put(ref, entry);
         return ref;
     }
@@ -348,7 +406,7 @@ public class SnapshotManager {
      */
     private String buildSnapshotScript(boolean interactiveOnly, boolean showUrls, int maxDepth) {
         return """
-                (() => {
+                (document) => {
                     const INTERACTIVE_ROLES = new Set([
                         'button', 'link', 'textbox', 'textarea', 'checkbox', 'radio',
                         'combobox', 'listbox', 'menuitem', 'searchbox', 'slider',
@@ -424,33 +482,34 @@ public class SnapshotManager {
                     function getName(el) {
                         // 按优先级获取可访问名称
                         const ariaLabel = el.getAttribute('aria-label');
-                        if (ariaLabel) return ariaLabel.trim();
+                        if (ariaLabel) return {text: ariaLabel.trim(), source: 'aria'};
 
                         const ariaLabelledBy = el.getAttribute('aria-labelledby');
                         if (ariaLabelledBy) {
                             const labelEl = document.getElementById(ariaLabelledBy);
-                            if (labelEl) return labelEl.textContent.trim();
+                            if (labelEl) return {text: labelEl.textContent.trim(), source: 'aria'};
                         }
 
-                        if (el.tagName === 'IMG') return el.alt || '';
+                        if (el.tagName === 'IMG') return {text: el.alt || '', source: 'alt'};
                         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
                             // 查找关联的 label
                             if (el.id) {
                                 const label = document.querySelector(`label[for="${el.id}"]`);
-                                if (label) return label.textContent.trim();
+                                if (label) return {text: label.textContent.trim(), source: 'label'};
                             }
                             const parentLabel = el.closest('label');
                             if (parentLabel) {
                                 const clone = parentLabel.cloneNode(true);
                                 clone.querySelector('input,textarea,select')?.remove();
-                                return clone.textContent.trim();
+                                return {text: clone.textContent.trim(), source: 'label'};
                             }
-                            return el.placeholder || el.title || el.name || '';
+                            if (el.placeholder) return {text: el.placeholder, source: 'placeholder'};
+                            return {text: el.title || el.name || '', source: 'other'};
                         }
 
                         // 按钮和链接使用文本内容
                         const text = el.textContent || '';
-                        return text.trim().substring(0, 200);
+                        return {text: text.trim().substring(0, 200), source: 'text'};
                     }
 
                     function getValue(el) {
@@ -517,7 +576,8 @@ public class SnapshotManager {
                         if (shouldOutput) {
                             const node = {
                                 role: role,
-                                name: name,
+                                name: name.text,
+                                nameSource: name.source,
                                 depth: depth,
                                 interactive: interactive
                             };
@@ -542,8 +602,8 @@ public class SnapshotManager {
                     }
 
                     walk(document.body, 0);
-                    return results;
-                })()
+                    return {nodes: results, url: document.location.href, title: document.title};
+                }
                 """.formatted(interactiveOnly, showUrls, maxDepth);
     }
 

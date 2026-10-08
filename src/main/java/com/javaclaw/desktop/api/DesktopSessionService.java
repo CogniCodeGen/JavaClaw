@@ -72,6 +72,10 @@ public interface DesktopSessionService extends AutoCloseable {
     Flow.Publisher<DesktopSessionState> states(DesktopSessionOwner owner, String sessionId);
     Flow.Publisher<DesktopActionEvent> actions(DesktopSessionOwner owner, String sessionId);
     DesktopSessionInfo info(DesktopSessionOwner owner, String sessionId);
+    /** Supplemental identity history; does not capture or authorize input. */
+    default Optional<DesktopSurfaceSnapshot> surface(DesktopSessionOwner owner, String sessionId) {
+        return Optional.empty();
+    }
     void closeSession(DesktopSessionOwner owner, String sessionId);
     void closeScope(String workspaceId, String scopeId);
     void closeWorkspace(String workspaceId);

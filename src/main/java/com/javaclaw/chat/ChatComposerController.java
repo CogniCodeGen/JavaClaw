@@ -1,6 +1,7 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.app.UIHelper;
+import com.javaclaw.framework.api.InteractionControlCommand;
 import com.javaclaw.platform.desktop.ProjectAttachmentPicker;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.function.Consumer;
 
 /** 输入、附件与发送状态的 FXML Controller；业务发送仍由父 Chat Controller 协调。 */
 public final class ChatComposerController implements AutoCloseable {
@@ -52,6 +54,12 @@ public final class ChatComposerController implements AutoCloseable {
     @FXML private InlineCssTextArea inputField;
     @FXML private Label inputPlaceholder;
     @FXML private Button sendButton;
+    @FXML private Button attachmentButton;
+    @FXML private HBox interactionControls;
+    @FXML private Label interactionCaption;
+    @FXML private Button interactionAnswerButton;
+    @FXML private Button interactionAmendButton;
+    @FXML private Button interactionCancelButton;
 
     private final SpringFxmlLoader loader;
     private final ProjectAttachmentPicker attachmentPicker;
@@ -60,6 +68,7 @@ public final class ChatComposerController implements AutoCloseable {
     private final List<ViewHandle<StackPane>> attachmentViews = new ArrayList<>();
     private Runnable sendAction = () -> { };
     private Runnable stopAction = () -> { };
+    private Consumer<InteractionControlCommand.Type> interactionControlAction = ignored -> { };
     private Supplier<String> recallPrevious = () -> null;
     private Timeline typingAnimation;
     private boolean closed;
@@ -92,6 +101,13 @@ public final class ChatComposerController implements AutoCloseable {
                 (observable, previous, streaming) -> renderInteractionState());
         viewModel.blockedProperty().addListener(
                 (observable, previous, blocked) -> renderInteractionState());
+        viewModel.interactionWaitingProperty().addListener(
+                (observable, previous, waiting) -> renderInteractionState());
+        viewModel.interactionAnswerEnabledProperty().addListener(
+                (observable, previous, enabled) -> renderInteractionState());
+        viewModel.interactionCommandPendingProperty().addListener(
+                (observable, previous, pending) -> renderInteractionState());
+        interactionCaption.textProperty().bind(viewModel.interactionCaptionProperty());
         viewModel.attachments().addListener(
                 (javafx.collections.ListChangeListener<File>) change -> refreshAttachmentViews());
         ui.addPressEffect(sendButton);
@@ -104,6 +120,10 @@ public final class ChatComposerController implements AutoCloseable {
 
     void setOnStop(Runnable action) {
         stopAction = Objects.requireNonNull(action, "action");
+    }
+
+    void setOnInteractionControl(Consumer<InteractionControlCommand.Type> action) {
+        interactionControlAction = Objects.requireNonNull(action, "action");
     }
 
     void setRecallPrevious(Supplier<String> recall) {
@@ -165,8 +185,22 @@ public final class ChatComposerController implements AutoCloseable {
     }
 
     void setStreaming(boolean streaming) {
+        if (!streaming) setInteractionWaiting(false, false, "");
         viewModel.streamingProperty().set(streaming);
     }
+
+    void setInteractionWaiting(boolean waiting, boolean answerEnabled, String caption) {
+        viewModel.interactionWaitingProperty().set(waiting);
+        viewModel.interactionAnswerEnabledProperty().set(waiting && answerEnabled);
+        viewModel.interactionCaptionProperty().set(Objects.requireNonNullElse(caption, ""));
+        if (!waiting) viewModel.interactionCommandPendingProperty().set(false);
+    }
+
+    void setInteractionCommandPending(boolean pending) {
+        viewModel.interactionCommandPendingProperty().set(pending);
+    }
+
+    boolean isInteractionWaiting() { return viewModel.interactionWaitingProperty().get(); }
 
     void setBlocked(boolean blocked) {
         viewModel.blockedProperty().set(blocked);
@@ -178,6 +212,7 @@ public final class ChatComposerController implements AutoCloseable {
 
     @FXML
     private void addAttachmentRequested() {
+        if (viewModel.streamingProperty().get() || viewModel.blockedProperty().get()) return;
         Window owner = root.getScene() == null ? null : root.getScene().getWindow();
         ProjectAttachmentPicker.Selection selection = attachmentPicker.select(owner);
         viewModel.addAttachments(selection.files());
@@ -190,10 +225,24 @@ public final class ChatComposerController implements AutoCloseable {
         else sendAction.run();
     }
 
+    @FXML private void answerInteractionRequested() {
+        interactionControlAction.accept(InteractionControlCommand.Type.ANSWER);
+    }
+
+    @FXML private void amendInteractionRequested() {
+        interactionControlAction.accept(InteractionControlCommand.Type.AMEND);
+    }
+
+    @FXML private void cancelInteractionRequested() {
+        interactionControlAction.accept(InteractionControlCommand.Type.CANCEL);
+    }
+
     private void onInputKeyPressed(KeyEvent event) {
         if (event.getCode() == KeyCode.ENTER) {
             if (event.isShiftDown() || event.isShortcutDown()) {
                 inputField.insertText(inputField.getCaretPosition(), "\n");
+            } else if (viewModel.interactionWaitingProperty().get()) {
+                showInputError();
             } else {
                 sendAction.run();
             }
@@ -234,7 +283,18 @@ public final class ChatComposerController implements AutoCloseable {
     private void renderInteractionState() {
         boolean streaming = viewModel.streamingProperty().get();
         boolean blocked = viewModel.blockedProperty().get();
-        inputField.setDisable(streaming || blocked);
+        boolean waiting = viewModel.interactionWaitingProperty().get() && streaming;
+        boolean pending = viewModel.interactionCommandPendingProperty().get();
+        inputField.setDisable(blocked || streaming && !waiting || pending);
+        attachmentButton.setDisable(streaming || blocked);
+        interactionControls.setVisible(waiting);
+        interactionControls.setManaged(waiting);
+        interactionAnswerButton.setDisable(blocked || pending || !viewModel.interactionAnswerEnabledProperty().get());
+        interactionAmendButton.setDisable(blocked || pending);
+        interactionCancelButton.setDisable(blocked || pending);
+        inputPlaceholder.setText(waiting
+                ? "补充内容后点击“回答”或“修改要求”；Enter 不会提交"
+                : "给 JavaClaw 发消息…  按 Enter 发送，Shift+Enter 换行，Esc 取消生成");
         sendButton.setDisable(blocked);
         sendButton.setText(streaming ? "停止" : "发送");
         sendButton.getStyleClass().removeAll("send-button", "stop-button");

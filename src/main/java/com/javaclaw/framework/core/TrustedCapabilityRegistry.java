@@ -25,6 +25,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Host-owned vocabulary shared by task planning and receipt verification. */
 public final class TrustedCapabilityRegistry {
+    private static final String BROWSER_PAGE_INPUT_TARGET =
+            "; newly model-planned criteria target the current page URL immediately before input dispatch, even if the "
+                    + "input navigates. Never assume the post-input result URL as this target; "
+                    + "verify the requested resulting page or content with browser.observe. "
+                    + "Previously frozen contracts and explicit definitions retain their declared "
+                    + "target phase; a missing phase means the returned page";
+
     public enum TargetKind { FILE, URL, DESKTOP_APPLICATION, EMAIL_ADDRESS, SCHEDULE, COMMAND, RESOURCE }
     public enum VerifierPolicy {
         EXACT_HOST_RECEIPT, FILE_POSTCONDITION, DESKTOP_LINKED_FRAME,
@@ -320,35 +327,54 @@ public final class TrustedCapabilityRegistry {
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_key")
                 .add("desktop.scroll", "Scroll an observed desktop target; requiredSubject must be empty because the input receipt has no logical scroll subject. Keep the requested scroll in the criterion description and verify the outcome with an independent desktop.observe criterion", "scroll",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_scroll")
-                .add("browser.observe", "Observe a browser page", "observe", TargetKind.URL, O,
+                .add("browser.observe", "Observe actual browser-page content. The target may be an "
+                                + "exact full URL, preserving its query, or an exact bare host when "
+                                + "the requested website is known but the final result URL is not. "
+                                + "A nonempty requiredSubject is a short literal observed text fragment "
+                                + "of at most 128 characters. requiredTextFragments supports up to "
+                                + "8 independent exact human text fragments, each at most 128 "
+                                + "characters and at most 256 total, all in the same body observation; "
+                                + "do not join separated words into a nonexistent contiguous subject. "
+                                + "These prove literal text only; preserve the complete business "
+                                + "result in the criterion description and answer. "
+                                + "A search query echoed by the title, URL "
+                                + "or input field does not prove the requested result content.",
+                        "observe", TargetKind.URL, O,
                         "web_get_title", "web_get_url", "web_get_text", "web_get_html",
                         "web_get_attribute", "web_get_count", "web_get_value", "web_is_checked",
                         "web_is_enabled", "web_is_visible", "web_snapshot", "web_screenshot",
                         "web_screenshot_annotated", "web_wait_for_element", "web_wait_for_load",
                         "web_wait_for_text", "web_wait_for_url")
-                .add("browser.navigate", "Navigate a browser page", "navigate", TargetKind.URL, A,
+                .add("browser.navigate", "Navigate a browser page; requiredSubject must be empty. "
+                                + "Navigation admission does not prove page content. Use a separate "
+                                + "browser.observe criterion for a requested lookup result. Do not "
+                                + "require a homepage visit when it is only an optional path to that result. "
+                                + "Planning input criteria must declare intentBasis and humanQuote: "
+                                + "only a directly human-requested action is mandatory; a chosen "
+                                + "interaction path is IMPLEMENTATION_CHOICE.",
+                        "navigate", TargetKind.URL, A,
                         "web_navigate")
-                .add("browser.click", "Click a browser page", "click", TargetKind.URL, A,
+                .add("browser.click", "Click a browser page" + BROWSER_PAGE_INPUT_TARGET, "click", TargetKind.URL, A,
                         "web_click")
-                .add("browser.double_click", "Double click a browser page", "dblclick", TargetKind.URL, A,
+                .add("browser.double_click", "Double click a browser page" + BROWSER_PAGE_INPUT_TARGET, "dblclick", TargetKind.URL, A,
                         "web_dblclick")
-                .add("browser.fill", "Fill a browser field", "fill", TargetKind.URL, A,
+                .add("browser.fill", "Fill a browser field" + BROWSER_PAGE_INPUT_TARGET, "fill", TargetKind.URL, A,
                         "web_fill")
-                .add("browser.select", "Select a browser option", "select", TargetKind.URL, A,
+                .add("browser.select", "Select a browser option" + BROWSER_PAGE_INPUT_TARGET, "select", TargetKind.URL, A,
                         "web_select")
-                .add("browser.check", "Check a browser control", "check", TargetKind.URL, A,
+                .add("browser.check", "Check a browser control" + BROWSER_PAGE_INPUT_TARGET, "check", TargetKind.URL, A,
                         "web_check")
-                .add("browser.upload", "Upload through a browser page", "upload", TargetKind.URL, A,
+                .add("browser.upload", "Upload through a browser page" + BROWSER_PAGE_INPUT_TARGET, "upload", TargetKind.URL, A,
                         "web_upload")
-                .add("browser.type", "Type into a browser page", "type", TargetKind.URL, A,
+                .add("browser.type", "Type into a browser page" + BROWSER_PAGE_INPUT_TARGET, "type", TargetKind.URL, A,
                         "web_type")
-                .add("browser.press_key", "Press a browser key", "press_key", TargetKind.URL, A,
+                .add("browser.press_key", "Press a browser key" + BROWSER_PAGE_INPUT_TARGET, "press_key", TargetKind.URL, A,
                         "web_press_key")
-                .add("browser.drag", "Drag on a browser page", "drag", TargetKind.URL, A,
+                .add("browser.drag", "Drag on a browser page" + BROWSER_PAGE_INPUT_TARGET, "drag", TargetKind.URL, A,
                         "web_drag")
-                .add("browser.hover", "Hover over a browser target", "hover", TargetKind.URL, A,
+                .add("browser.hover", "Hover over a browser target" + BROWSER_PAGE_INPUT_TARGET, "hover", TargetKind.URL, A,
                         "web_hover")
-                .add("browser.scroll", "Scroll a browser page", "scroll", TargetKind.URL, A,
+                .add("browser.scroll", "Scroll a browser page" + BROWSER_PAGE_INPUT_TARGET, "scroll", TargetKind.URL, A,
                         "web_scroll")
                 .add("browser.tab_new", "Open a browser tab", "tab_new", TargetKind.URL, A,
                         "web_tab_new")

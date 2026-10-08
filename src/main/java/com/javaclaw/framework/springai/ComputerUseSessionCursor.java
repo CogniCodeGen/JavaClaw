@@ -220,8 +220,9 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
         String required = prerequisite == null ? "" : prerequisite;
         long invalidSessionAt = OnDemandDesktopSessionRecovery.invalidSessionFailureSequence(
                 ownedSteps, ownedEvents, runtimeContext);
+        var frameRecovery = OnDemandDesktopSessionRecovery.frameRecovery(ownedSteps, ownedEvents);
         boolean expired = OnDemandDesktopSessionRecovery.missingSession(session, runtimeContext);
-        boolean recovering = expired || invalidSessionAt > 0
+        boolean recovering = expired || invalidSessionAt > 0 || frameRecovery.required()
                 || session.isBlank() && discoveredAt > closedAt
                     && (inheritedInputNeedsObservation
                         || OnDemandDesktopSessionRecovery.noLiveSessions(runtimeContext));
@@ -234,14 +235,26 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
             // reopening never reconciles a possibly dispatched old input.
             phase = Phase.RECOVER_SESSION;
             List<JsonNode> recovered = recoveryTargets(discoveredTargets, target, applicationId);
-            required = discoveredAt > Math.max(Math.max(openedAt, closedAt), invalidSessionAt)
+            long invalidatedAt = Math.max(invalidSessionAt, frameRecovery.failureSequence());
+            long discoveryBoundary = frameRecovery.required() ? Math.max(closedAt, invalidatedAt)
+                    : Math.max(openedAt, Math.max(closedAt, invalidatedAt));
+            required = discoveredAt > discoveryBoundary
+                    && (!frameRecovery.required() || openedAt < discoveredAt)
                     && !recovered.isEmpty()
                     ? "desktop_session_open" : "desktop_session_targets";
+            if (frameRecovery.required() && openedAt > invalidatedAt && openedAt > discoveredAt) {
+                // One fresh open is followed by observation, never another discovery/reopen loop.
+                required = "desktop_session_observe";
+                recovering = false;
+                phase = Phase.OBSERVE;
+            }
             if (required.equals("desktop_session_open"))
                 target = recovered.size() == 1 ? recovered.getFirst().path("targetId").asText() : "";
             // A missing handle is diagnostic data, never an argument for the next call.
-            session = "";
-            control = ControlAccess.UNKNOWN;
+            if (recovering) {
+                session = "";
+                control = ControlAccess.UNKNOWN;
+            }
         } else if (controlUpgrade && !session.isBlank() && !target.isBlank()) {
             phase = Phase.OPEN_CONTROL;
             required = "desktop_session_open";

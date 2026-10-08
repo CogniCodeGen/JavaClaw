@@ -50,8 +50,13 @@ final class RunUsageRecovery {
                 if (value != null) budget = json.treeToValue(value, ExecutionPlanDescriptor.class).budget();
             } catch (Exception ignored) { /* Plan availability is handled separately by execution recovery. */ }
             usage.open(id, budget, run.request().scope(), budgetParent(run.request()));
-            RunUsageLedger.UsageSnapshot totals = totals(runs.eventsAfter(id, 0));
+            List<RunEventEnvelope> events = runs.eventsAfter(id, 0);
+            RunUsageLedger.UsageSnapshot totals = totals(events);
             usage.restore(id, totals.inputTokens(), totals.outputTokens(), totals.cost());
+            usage.restoreToolCalls(id, events.stream().filter(event -> event.schemaVersion() == 1
+                            && "framework.core".equals(event.producer()) && "core.tool.started".equals(event.type()))
+                    .map(event -> event.payload().path("invocationId").asText().isBlank()
+                            ? "legacy-event:" + event.sequence() : event.payload().path("invocationId").asText()).toList());
             if (run.snapshot().state().terminal()) usage.close(id);
         }
         runs.childRuns(id).forEach(child -> restoreTree(child, visited));

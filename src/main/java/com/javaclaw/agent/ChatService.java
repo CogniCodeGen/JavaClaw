@@ -35,10 +35,45 @@ public final class ChatService {
     private final com.javaclaw.framework.api.ThreadClient threads;
     private final WorkspaceContext workspace;
     private com.javaclaw.framework.api.StepClient steps;
+    private com.javaclaw.framework.api.InteractionHistoryClient interactions;
+    private com.javaclaw.framework.api.InteractionMetricsClient interactionMetrics;
 
     public ChatService bindStepClient(com.javaclaw.framework.api.StepClient stepClient) {
         steps = java.util.Objects.requireNonNull(stepClient, "stepClient");
         return this;
+    }
+
+    public ChatService bindInteractionHistory(com.javaclaw.framework.api.InteractionHistoryClient client) {
+        interactions = java.util.Objects.requireNonNull(client, "interactionHistoryClient");
+        return this;
+    }
+
+    public ChatService bindInteractionMetrics(com.javaclaw.framework.api.InteractionMetricsClient client) {
+        interactionMetrics = java.util.Objects.requireNonNull(client, "interactionMetricsClient");
+        return this;
+    }
+
+    public com.javaclaw.framework.api.InteractionMetrics sessionInteractionMetrics(String sessionId,
+            com.javaclaw.framework.api.RunId runId) {
+        boolean parentTurn = sessionTurns(sessionId).stream().anyMatch(turn -> turn.id().equals(runId));
+        if (!parentTurn && (interactions == null
+                || !interactions.history(runId, 1).logicalMainScope().equals(scope(sessionId))))
+            throw new IllegalArgumentException("指标来源不属于当前会话");
+        if (interactionMetrics == null) throw new IllegalStateException("交互指标服务未初始化");
+        return interactionMetrics.metrics(runId);
+    }
+
+    public com.javaclaw.framework.api.InteractionHistory sessionInteractionHistory(String sessionId, int limit) {
+        return interactions == null ? new com.javaclaw.framework.api.InteractionHistory(scope(sessionId), List.of(), false)
+                : interactions.history(scope(sessionId), limit);
+    }
+
+    /** Original run details are available only after its host lineage resolves to this conversation. */
+    public List<com.javaclaw.framework.api.AgentStep> sessionInteractionSteps(String sessionId,
+            com.javaclaw.framework.api.RunId runId) {
+        if (interactions == null || !interactions.history(runId, 1).logicalMainScope().equals(scope(sessionId)))
+            throw new IllegalArgumentException("交互来源不属于当前会话");
+        return steps == null ? List.of() : steps.steps(runId);
     }
 
     public java.util.List<com.javaclaw.framework.api.AgentStep> sessionSteps(
@@ -146,14 +181,42 @@ public final class ChatService {
                 com.javaclaw.framework.api.TurnId.from(last.id()), title);
     }
 
+    /** One persisted snapshot supplies both visible chats and legacy-index exclusions. */
+    public record SessionDirectory(
+            List<com.javaclaw.framework.api.ThreadSnapshot> sessions,
+            java.util.Set<String> internalInteractionSessionIds) {
+        public SessionDirectory {
+            sessions = List.copyOf(sessions);
+            internalInteractionSessionIds = java.util.Set.copyOf(internalInteractionSessionIds);
+        }
+    }
+
+    public SessionDirectory sessionDirectory() {
+        if (threads == null) return new SessionDirectory(List.of(), java.util.Set.of());
+        List<com.javaclaw.framework.api.ThreadSnapshot> visible = new java.util.ArrayList<>();
+        java.util.Set<String> internal = new java.util.HashSet<>();
+        for (var thread : threads.list(workspace.workspaceId(), "local-user", true)) {
+            var accepted = threads.events(thread.scope(), 0).stream()
+                    .filter(event -> event.payload().has("request")).findFirst()
+                    .map(event -> event.payload().path("request"));
+            boolean interactionChild = thread.parentThreadId() != null
+                    && thread.forkSourceThreadId() == null
+                    && accepted.map(request ->
+                            request.path("source").path("kind").asText().equals("interaction")
+                            && request.path("source").path("id").asText().equals("interaction-executor")
+                            && request.path("agent").path("id").asText().equals("system.interaction-executor")
+                            && request.path("profile").path("id").asText().equals("interaction-executor"))
+                            .orElse(false);
+            if (interactionChild) internal.add(thread.scope().sessionId());
+            boolean maintenance = accepted.map(request ->
+                    request.path("source").path("kind").asText().equals("maintenance")).orElse(false);
+            if (!interactionChild && !maintenance) visible.add(thread);
+        }
+        return new SessionDirectory(visible, internal);
+    }
+
     public java.util.List<com.javaclaw.framework.api.ThreadSnapshot> sessions() {
-        return threads == null ? java.util.List.of()
-                : threads.list(workspace.workspaceId(), "local-user", true).stream()
-                .filter(thread -> threads.events(thread.scope(), 0).stream()
-                        .filter(event -> event.payload().has("request")).findFirst()
-                        .map(event -> !event.payload().path("request").path("source")
-                                .path("kind").asText().equals("maintenance")).orElse(true))
-                .toList();
+        return sessionDirectory().sessions();
     }
 
     public java.util.List<com.javaclaw.framework.api.RunSnapshot> sessionTurns(String sessionId) {

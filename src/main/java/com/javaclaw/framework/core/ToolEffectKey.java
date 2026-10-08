@@ -24,6 +24,8 @@ final class ToolEffectKey {
                     + "|" + field(arguments, "x") + "|" + field(arguments, "y")
                     + "|" + field(arguments, "button") + "|" + field(arguments, "clicks");
             case "web_click", "web_dblclick" -> field(arguments, "target");
+            case "web_navigate" -> com.javaclaw.framework.spi.BrowserReceiptProof.canonicalUrl(
+                    field(arguments, "url"));
             case "cmd_execute" -> field(arguments, "command") + "|" + field(arguments, "workDir");
             case "cmd_session_exec" -> field(arguments, "sessionId") + "|" + field(arguments, "command");
             default -> "";

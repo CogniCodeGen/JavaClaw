@@ -123,6 +123,7 @@ public final class ToolRiskRegistry {
         put(levels, labels, "web_save_pdf", ToolRiskLevel.CONFIRM, "浏览器页面保存为 PDF");
         put(levels, labels, "web_dialog_handle", ToolRiskLevel.CONFIRM, "浏览器原生对话框处理");
         put(levels, labels, "site_login_interactive", ToolRiskLevel.CONFIRM, "站点交互式登录");
+        put(levels, labels, "site_auth_check", ToolRiskLevel.NOTIFY, "只读核验当前登录状态");
         put(levels, labels, "site_login_now", ToolRiskLevel.CONFIRM, "站点自动登录");
         put(levels, labels, "site_fill_password", ToolRiskLevel.CONFIRM, "站点密码填充");
         put(levels, labels, "site_save_session", ToolRiskLevel.CONFIRM, "站点会话保存");

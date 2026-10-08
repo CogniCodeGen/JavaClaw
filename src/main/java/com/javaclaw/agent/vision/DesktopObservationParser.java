@@ -41,9 +41,65 @@ final class DesktopObservationParser {
         if (summary.isBlank() && visibleText.isBlank() && targets.isEmpty()) return null;
         DesktopVisualActiveView activeView = parseActiveView(output.path("activeView"),
                 visibleText, frameWidth, frameHeight);
-        return new DesktopVisualObservation(summary, visibleText, targets, activeView,
-                parseConditionEvidence(output.path("conditionEvidence"), conditions,
+        List<DesktopVisualConditionEvidence> positive = parseConditionEvidence(
+                output.path("conditionEvidence"), output.path("conditionResults"), conditions,
+                visibleText, frameWidth, frameHeight);
+        return new DesktopVisualObservation(summary, visibleText, targets, activeView, positive,
+                parseConditionResults(output.path("conditionResults"), conditions, positive,
                         visibleText, frameWidth, frameHeight));
+    }
+
+    static List<DesktopVisualConditionResult> unknownConditionResults(
+            List<DesktopObservationCondition> conditions) {
+        return conditions.stream().map(DesktopVisualConditionResult::unknown).toList();
+    }
+
+    static List<DesktopVisualConditionResult> parseConditionResults(JsonNode nodes,
+            List<DesktopObservationCondition> conditions, List<DesktopVisualConditionEvidence> positive,
+            String visibleText, int width, int height) {
+        if (!nodes.isArray() || nodes.size() > MAX_CONDITIONS) return unknownConditionResults(conditions);
+        List<DesktopVisualConditionResult> results = new ArrayList<>();
+        for (DesktopObservationCondition condition : conditions) {
+            DesktopVisualConditionResult accepted = DesktopVisualConditionResult.unknown(condition);
+            JsonNode selected = null;
+            int count = 0;
+            for (JsonNode node : nodes) {
+                if (condition.criterionId().equals(node.path("criterionId").asText())) {
+                    selected = node;
+                    count++;
+                }
+            }
+            if (count == 1 && selected != null && selected.isObject()
+                    && selected.path("subject").isTextual()
+                    && condition.subject().equals(selected.path("subject").asText())
+                    && selected.path("outcome").isTextual()
+                    && selected.path("complete").isBoolean() && selected.path("complete").booleanValue()
+                    && "main-content".equals(selected.path("region").asText())
+                    && viewConfidence(selected.path("confidence"))) {
+                String outcome = selected.path("outcome").asText();
+                DesktopVisualTarget content = parseEvidenceTarget(selected.path("content"), visibleText, width, height);
+                boolean supported = content != null && content.confidence() >= MIN_VIEW_CONFIDENCE
+                        && !content.label().isBlank()
+                        && List.of("content", "list", "table", "empty-state")
+                                .contains(content.role().toLowerCase(java.util.Locale.ROOT))
+                        && DesktopEvidenceExcerpt.containsVisibleText(visibleText, content.label());
+                boolean hasPositive = positive.stream().anyMatch(evidence ->
+                        condition.criterionId().equals(evidence.criterionId())
+                                && condition.subject().equals(evidence.subject()));
+                boolean trueDecision = "TRUE".equals(outcome) && hasPositive;
+                boolean falseDecision = "FALSE".equals(outcome) && !hasPositive
+                        && selected.path("contradiction").isBoolean()
+                        && selected.path("contradiction").booleanValue();
+                if (supported && (trueDecision || falseDecision)) {
+                    accepted = new DesktopVisualConditionResult(condition.criterionId(), condition.subject(),
+                            trueDecision ? DesktopVisualConditionResult.Outcome.TRUE
+                                    : DesktopVisualConditionResult.Outcome.FALSE,
+                            true, selected.path("confidence").doubleValue(), content);
+                }
+            }
+            results.add(accepted);
+        }
+        return List.copyOf(results);
     }
 
     /** Diagnose only otherwise-valid exact host candidates, without inventing a confidence. */
@@ -75,7 +131,9 @@ final class DesktopObservationParser {
                     || !validGeometry(content, frameWidth, frameHeight)) continue;
             String excerpt = DesktopEvidenceExcerpt.supportedExcerpt(content.path("label").asText(), visibleText);
             if (excerpt == null || excerpt.isBlank()
-                    || !DesktopEvidenceExcerpt.containsVisibleText(visibleText, excerpt)) continue;
+                    || !DesktopEvidenceExcerpt.containsVisibleText(visibleText, excerpt)
+                    || !explicitTrueDecision(output.path("conditionResults"), id, subject,
+                            content, visibleText, frameWidth, frameHeight)) continue;
             // Present null/string/low values are not missing fields and are never repaired here.
             if ((node.has("confidence") && !viewConfidence(node.path("confidence")))
                     || (content.has("confidence") && !viewConfidence(content.path("confidence")))) continue;
@@ -88,17 +146,61 @@ final class DesktopObservationParser {
         return new ConfidenceRepair(List.copyOf(eligible), List.copyOf(paths));
     }
 
-    /** Repair candidates must match the first observation's already-accepted OCR, not new prose. */
+    /** A repair without its original decision cannot establish a positive condition. */
     static List<DesktopVisualConditionEvidence> repairedConditions(JsonNode output, String visibleText,
             int frameWidth, int frameHeight, List<DesktopObservationCondition> eligible) {
-        return parseConditionEvidence(output.path("conditionEvidence"), eligible,
+        return List.of();
+    }
+
+    /** Only missing confidence values may change; original content and TRUE decisions stay frozen. */
+    static List<DesktopVisualConditionEvidence> repairedConditions(JsonNode output, JsonNode original,
+            String visibleText, int frameWidth, int frameHeight, List<DesktopObservationCondition> eligible) {
+        if (!output.path("conditionEvidence").isArray()
+                || output.path("conditionEvidence").size() > MAX_CONDITIONS
+                || !original.path("conditionEvidence").isArray()) return List.of();
+        var patched = new ArrayList<JsonNode>();
+        for (var condition : eligible) {
+            var originals = new ArrayList<JsonNode>();
+            var corrections = new ArrayList<JsonNode>();
+            original.path("conditionEvidence").forEach(node -> {
+                if (condition.criterionId().equals(node.path("criterionId").asText())) originals.add(node);
+            });
+            output.path("conditionEvidence").forEach(node -> {
+                if (condition.criterionId().equals(node.path("criterionId").asText())) corrections.add(node);
+            });
+            if (originals.size() != 1 || corrections.size() != 1
+                    || !(originals.getFirst() instanceof ObjectNode before)
+                    || !(corrections.getFirst() instanceof ObjectNode after)
+                    || !(before.path("content") instanceof ObjectNode beforeContent)
+                    || !(after.path("content") instanceof ObjectNode afterContent)) continue;
+            ObjectNode originalShape = before.deepCopy(), correctedShape = after.deepCopy();
+            originalShape.remove("confidence"); correctedShape.remove("confidence");
+            ((ObjectNode) originalShape.path("content")).remove("confidence");
+            ((ObjectNode) correctedShape.path("content")).remove("confidence");
+            if (!originalShape.equals(correctedShape)
+                    || !repairableConfidence(before, after)
+                    || !repairableConfidence(beforeContent, afterContent)) continue;
+            ObjectNode candidate = before.deepCopy();
+            if (!before.has("confidence")) candidate.set("confidence", after.path("confidence").deepCopy());
+            if (!beforeContent.has("confidence")) ((ObjectNode) candidate.path("content"))
+                    .set("confidence", afterContent.path("confidence").deepCopy());
+            patched.add(candidate);
+        }
+        var candidates = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        patched.forEach(candidates::add);
+        return parseConditionEvidence(candidates, original.path("conditionResults"), eligible,
                 visibleText, frameWidth, frameHeight);
+    }
+
+    private static boolean repairableConfidence(JsonNode original, JsonNode corrected) {
+        return original.has("confidence") ? original.path("confidence").equals(corrected.path("confidence"))
+                : viewConfidence(corrected.path("confidence"));
     }
 
     record ConfidenceRepair(List<DesktopObservationCondition> eligible, List<String> paths) { }
 
     private static List<DesktopVisualConditionEvidence> parseConditionEvidence(
-            JsonNode nodes, List<DesktopObservationCondition> requested,
+            JsonNode nodes, JsonNode decisions, List<DesktopObservationCondition> requested,
             String visibleText, int frameWidth, int frameHeight) {
         if (!nodes.isArray() || nodes.size() > MAX_CONDITIONS || requested.isEmpty()) return List.of();
         var accepted = new java.util.LinkedHashMap<String, DesktopVisualConditionEvidence>();
@@ -121,13 +223,43 @@ final class DesktopObservationParser {
                             .contains(content.role().toLowerCase(java.util.Locale.ROOT))
                     || content.label().isBlank()
                     || redactedVisualText(node.path("content").path("label").asText())
-                    || !DesktopEvidenceExcerpt.containsVisibleText(visibleText, content.label())) continue;
+                    || !DesktopEvidenceExcerpt.containsVisibleText(visibleText, content.label())
+                    || !explicitTrueDecision(decisions, id, subject, node.path("content"),
+                            visibleText, frameWidth, frameHeight)) continue;
             // Conflicting repeated proofs are ambiguous, so none may establish that condition.
             if (accepted.containsKey(id)) duplicates.add(id);
             else accepted.put(id, new DesktopVisualConditionEvidence(id, subject, content, confidence));
         }
         duplicates.forEach(accepted::remove);
         return List.copyOf(accepted.values());
+    }
+
+    private static boolean explicitTrueDecision(JsonNode decisions, String id, String subject,
+            JsonNode evidenceContent, String visibleText, int width, int height) {
+        if (!decisions.isArray() || decisions.size() > MAX_CONDITIONS) return false;
+        JsonNode selected = null;
+        int matches = 0;
+        for (JsonNode node : decisions) {
+            if (id.equals(node.path("criterionId").asText())) { selected = node; matches++; }
+        }
+        if (matches != 1 || selected == null || !selected.isObject()
+                || !selected.path("subject").isTextual() || !subject.equals(selected.path("subject").asText())
+                || !"TRUE".equals(selected.path("outcome").asText())
+                || !selected.path("complete").isBoolean() || !selected.path("complete").booleanValue()
+                || selected.path("contradiction").asBoolean(false)
+                || !"main-content".equals(selected.path("region").asText())
+                || !viewConfidence(selected.path("confidence"))) return false;
+        DesktopVisualTarget content = parseEvidenceTarget(selected.path("content"), visibleText, width, height);
+        if (content == null || content.confidence() < MIN_VIEW_CONFIDENCE
+                || !List.of("content", "list", "table", "empty-state")
+                        .contains(content.role().toLowerCase(java.util.Locale.ROOT))
+                || !content.label().equals(DesktopEvidenceExcerpt.supportedExcerpt(
+                        evidenceContent.path("label").asText(), visibleText))
+                || !content.role().equalsIgnoreCase(evidenceContent.path("role").asText())) return false;
+        return content.x() == evidenceContent.path("x").asInt(-1)
+                && content.y() == evidenceContent.path("y").asInt(-1)
+                && content.width() == evidenceContent.path("width").asInt(-1)
+                && content.height() == evidenceContent.path("height").asInt(-1);
     }
 
     private static DesktopVisualActiveView parseActiveView(JsonNode node, String visibleText,

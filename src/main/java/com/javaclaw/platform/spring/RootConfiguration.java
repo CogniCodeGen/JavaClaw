@@ -334,8 +334,32 @@ public class RootConfiguration {
 
     @Bean
     com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry springAiAnnotatedToolRegistry(
-            ObjectMapper json) {
-        return new com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry(json);
+            ObjectMapper json, com.javaclaw.framework.core.InteractionJournal interactions,
+            com.javaclaw.framework.store.JdbcRunStore runs) {
+        return new com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry(json, interactions, runs);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.InteractionJournal interactionJournal(
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.store.JdbcThreadStore threads, ObjectMapper json) {
+        return new com.javaclaw.framework.core.InteractionJournal(runs, threads, json);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.InteractionMetricsQuery interactionMetricsQuery(
+            com.javaclaw.framework.store.JdbcRunStore runs, ObjectMapper json, Clock frameworkClock) {
+        return new com.javaclaw.framework.core.InteractionMetricsQuery(runs, json, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.InteractionDelegateCoordinator interactionDelegateCoordinator(
+            ObjectProvider<com.javaclaw.framework.api.AgentClient> agents,
+            com.javaclaw.framework.store.JdbcRunStore runs, ObjectMapper json,
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.application.agent.SubAgentApprovalObserver approvals) {
+        return new com.javaclaw.framework.core.InteractionDelegateCoordinator(
+                agents::getObject, runs, json, usage, approvals);
     }
 
     @Bean
@@ -380,7 +404,9 @@ public class RootConfiguration {
             com.javaclaw.framework.extension.TrustedExtensionInstaller installer,
             ObjectProvider<com.javaclaw.framework.api.AgentClient> agents,
             com.javaclaw.framework.store.JdbcRunStore runs,
-            com.javaclaw.application.agent.SubAgentApprovalObserver childApprovals) {
+            com.javaclaw.application.agent.SubAgentApprovalObserver childApprovals,
+            com.javaclaw.framework.core.InteractionDelegateCoordinator interactions,
+            ObjectMapper json) {
         var manager = new com.javaclaw.framework.extension.ExtensionManager(
                 new com.javaclaw.framework.spi.ExtensionContext(
                         frameworkClock, executor, modelTasks, extensionState),
@@ -392,7 +418,8 @@ public class RootConfiguration {
                         capabilities.contextSource("memory"),
                         capabilities.contextSource("knowledge"),
                         capabilities.contextSource("skills"),
-                        capabilities.fixedContextSource("memory.persona")));
+                        capabilities.fixedContextSource("memory.persona"),
+                        new com.javaclaw.framework.builtin.InteractionTools(interactions, json)));
         var restored = installer.loadAuthorized();
         artifacts.addAll(restored.artifacts());
         restored.failures().forEach(failure ->
@@ -464,9 +491,9 @@ public class RootConfiguration {
             com.javaclaw.framework.spi.ToolApprovalPolicy approvals,
             @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
             com.javaclaw.framework.spi.CancellableTaskExecutor executor,
-            Clock frameworkClock) {
+            Clock frameworkClock, com.javaclaw.framework.store.JdbcRunStore runs, ObjectMapper json) {
         return new com.javaclaw.framework.core.DefaultToolInvocationGateway(
-                approvals, executor, frameworkClock);
+                approvals, executor, frameworkClock, runs, json);
     }
 
     @Bean
@@ -536,10 +563,11 @@ public class RootConfiguration {
             ObjectMapper json,
             @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
             com.javaclaw.framework.spi.CancellableTaskExecutor executor,
-            io.micrometer.observation.ObservationRegistry observations) {
+            io.micrometer.observation.ObservationRegistry observations,
+            com.javaclaw.framework.api.InteractionHistoryClient interactionHistory) {
         return new com.javaclaw.framework.springai.SpringAiReasoningGateway(
                 models, advisors, tools, extensionState, usage, modelTasks, runs, json, executor,
-                observations);
+                observations, interactionHistory);
     }
 
     @Bean(destroyMethod = "close")
@@ -554,7 +582,8 @@ public class RootConfiguration {
             Clock frameworkClock,
             com.javaclaw.framework.core.RunUsageLedger usage,
             com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTasks,
-            DesktopSessionService desktopSessions) {
+            DesktopSessionService desktopSessions,
+            com.javaclaw.application.agent.SubAgentApprovalObserver childApprovals) {
         return new com.javaclaw.framework.core.AgentEngine(
                 compiler, runs, plans, reasoning, executor, json, frameworkClock, usage,
                 modelTasks, (request, proof) -> {
@@ -573,7 +602,7 @@ public class RootConfiguration {
                         // native session remains conservatively blocked until reopened.
                         log.warn("无法同步已核验桌面动作的会话状态: {}", proof.sessionId(), failure);
                     }
-                });
+                }, new com.javaclaw.application.agent.DesktopInteractionEventSource(desktopSessions), childApprovals);
     }
 
     @Bean

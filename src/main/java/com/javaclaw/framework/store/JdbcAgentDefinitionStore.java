@@ -116,15 +116,30 @@ public final class JdbcAgentDefinitionStore implements AgentStudioRepository {
             String workspaceId,
             List<RunProfileDraft> profiles,
             AgentDefinitionDraft agent) {
+        return installBuiltinDefinitions(workspaceId, profiles,
+                List.of(Objects.requireNonNull(agent, "agent"))).getFirst();
+    }
+
+    /** Publishes all cooperating built-in Agents and Profiles in the same transaction. */
+    public List<AgentDefinition> installBuiltinDefinitions(
+            String workspaceId,
+            List<RunProfileDraft> profiles,
+            List<AgentDefinitionDraft> agents) {
         String workspace = Objects.requireNonNull(workspaceId, "workspaceId");
         List<RunProfileDraft> checkedProfiles = List.copyOf(
                 Objects.requireNonNull(profiles, "profiles"));
-        AgentDefinitionDraft checkedAgent = Objects.requireNonNull(agent, "agent");
+        List<AgentDefinitionDraft> checkedAgents = List.copyOf(
+                Objects.requireNonNull(agents, "agents"));
+        if (checkedAgents.isEmpty()
+                || checkedAgents.stream().map(AgentDefinitionDraft::id).distinct().count() != checkedAgents.size()
+                || checkedProfiles.stream().map(RunProfileDraft::id).distinct().count() != checkedProfiles.size()) {
+            throw new IllegalArgumentException("built-in definitions require unique IDs and at least one Agent");
+        }
         return transactions.execute(status -> {
             for (RunProfileDraft profile : checkedProfiles) {
                 installBuiltinProfile(workspace, profile);
             }
-            return installBuiltinAgent(workspace, checkedAgent);
+            return checkedAgents.stream().map(agent -> installBuiltinAgent(workspace, agent)).toList();
         });
     }
 
@@ -314,10 +329,12 @@ public final class JdbcAgentDefinitionStore implements AgentStudioRepository {
             } else {
                 StudioRow current = rows.getFirst();
                 assertWritable(current, builtinWrite);
-                jdbc.update("UPDATE " + table + " SET name=?, draft_json=?, "
-                                + "draft_revision=draft_revision+1, updated_at=? "
-                                + "WHERE workspace_id=? AND id=?",
-                        name, write(document), now, workspaceId, id);
+                if (!builtinWrite || !readTree(current.document()).equals(document)) {
+                    jdbc.update("UPDATE " + table + " SET name=?, draft_json=?, "
+                                    + "draft_revision=draft_revision+1, updated_at=? "
+                                    + "WHERE workspace_id=? AND id=?",
+                            name, write(document), now, workspaceId, id);
+                }
             }
             return getDraft(table, kind, workspaceId, id);
         });

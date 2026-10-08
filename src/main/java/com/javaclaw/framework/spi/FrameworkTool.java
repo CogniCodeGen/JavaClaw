@@ -21,6 +21,9 @@ public interface FrameworkTool extends AutoCloseable {
     /** Trusted resource identity for one-shot effect admission; empty uses the legacy key. */
     default String effectResourceKey(JsonNode arguments) { return ""; }
 
+    /** Optional host-only continuation, consumed after the real execution result and receipt. */
+    default ToolUserInputCheckpoint userInputCheckpoint() { return null; }
+
     /**
      * A compatibility hook for trusted, tool-specific effect inspection. Legacy tools, MCP
      * callbacks and plugins remain executable but cannot claim a verified effect by default.

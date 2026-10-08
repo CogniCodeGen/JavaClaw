@@ -79,7 +79,13 @@ final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.Gr
     @Override
     public String call(String toolInput, ToolContext ignored) {
         try {
-            JsonNode arguments = json.readTree(toolInput);
+            JsonNode arguments;
+            try {
+                arguments = parseArguments(json, toolInput);
+            } catch (ToolArgumentValidationException invalid) {
+                return journal == null ? modelVisibleResult(invalidArgumentsResult(tool, invalid)).toString()
+                        : journal.rejectMalformedArgumentsForModel(tool, toolInput, invalid).toString();
+            }
             if (journal != null) {
                 return json.writeValueAsString(journal.invokeForModel(tool, arguments, gateway));
             }
@@ -98,6 +104,23 @@ final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.Gr
         } catch (Exception failure) {
             throw new IllegalStateException("tool callback failed", failure);
         }
+    }
+
+    /** Reject invalid JSON before the invocation boundary; never reconstruct missing arguments. */
+    static JsonNode parseArguments(ObjectMapper json, String raw) {
+        if (raw != null && !raw.isBlank()) {
+            try {
+                JsonNode parsed = json.reader().with(
+                        com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(raw);
+                if (parsed != null) return parsed;
+            } catch (com.fasterxml.jackson.core.JsonProcessingException malformed) {
+                // Parser exception messages can contain argument values; feedback is fixed host text.
+            }
+        }
+        throw new ToolArgumentValidationException(java.util.List.of(
+                new com.javaclaw.framework.api.DefinitionValidationIssue(
+                        com.javaclaw.framework.api.DefinitionValidationIssue.Severity.ERROR,
+                        "/arguments", "json", "Arguments must be one complete JSON object with no trailing content.")));
     }
 
     static ObjectNode modelVisibleResult(ToolInvocationResult result) {

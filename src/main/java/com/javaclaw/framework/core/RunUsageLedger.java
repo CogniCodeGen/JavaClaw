@@ -82,6 +82,35 @@ public final class RunUsageLedger {
         return result;
     }
 
+    /** 调用在实际派发前计入整棵预算树；同一持久化 invocation 的恢复不会再次扣除。 */
+    synchronized void recordToolCall(RunId runId, String invocationId) {
+        if (invocationId == null || invocationId.isBlank())
+            throw new IllegalArgumentException("tool invocation id is required for budget admission");
+        Account account = require(runId);
+        if (account.toolInvocations.contains(invocationId)) return;
+        for (RunId ancestorId : lineage(runId)) {
+            Account ancestor = require(ancestorId);
+            long used = aggregateToolCalls(ancestorId);
+            if (used >= ancestor.budget.maxToolCalls())
+                throw BudgetExceededException.toolCalls((int) Math.min(Integer.MAX_VALUE, used + 1),
+                        ancestor.budget.maxToolCalls());
+        }
+        account.toolInvocations.add(invocationId);
+    }
+
+    synchronized void restoreToolCalls(RunId runId, java.util.Collection<String> invocations) {
+        Account account = require(runId);
+        account.toolInvocations.clear();
+        account.toolInvocations.addAll(invocations);
+    }
+
+    private long aggregateToolCalls(RunId runId) {
+        long count = 0;
+        for (var entry : accounts.entrySet()) if (belongsTo(entry.getKey(), runId))
+            count = Math.addExact(count, entry.getValue().toolInvocations.size());
+        return count;
+    }
+
     /** Serializes physical model requests sharing a budget so siblings observe settled usage. */
     public ModelCall beginModelCall(RunId runId) {
         ReentrantLock lock;
@@ -119,7 +148,8 @@ public final class RunUsageLedger {
             UsageSnapshot used = aggregateSnapshot(current);
             remaining = remaining.restrictWith(new RunBudget(ancestor.budget.timeout(),
                     Math.max(0, ancestor.budget.maxInputTokens() - used.inputTokens()),
-                    Math.max(0, ancestor.budget.maxOutputTokens() - used.outputTokens()), ancestor.budget.maxToolCalls(),
+                    Math.max(0, ancestor.budget.maxOutputTokens() - used.outputTokens()),
+                    (int) Math.max(0, ancestor.budget.maxToolCalls() - aggregateToolCalls(current)),
                     ancestor.budget.maxCost().subtract(used.cost()).max(BigDecimal.ZERO)));
         }
         return account.budget.restrictWith(remaining);
@@ -236,6 +266,7 @@ public final class RunUsageLedger {
         private final ReentrantLock calls;
         private final AtomicInteger abandonedCalls;
         private UsageSnapshot direct = UsageSnapshot.ZERO;
+        private final java.util.Set<String> toolInvocations = new HashSet<>();
         private long closedAtNanos;
         private Account(RunBudget budget, RunScope scope, RunId parent, ReentrantLock calls,
                         AtomicInteger abandonedCalls) {

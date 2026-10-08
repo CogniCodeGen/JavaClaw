@@ -19,31 +19,113 @@ import com.javaclaw.util.ProjectAccessPolicy;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 
 /** Compiles a structured host-capability task contract before Run execution. */
 public final class TaskContractCompiler {
     public static final String ATTRIBUTE = "framework.taskContract";
     public static final String ORIGINAL_REQUEST_ATTRIBUTE = "framework.taskOriginalRequest";
     public static final String RESOLVED_REQUEST_ATTRIBUTE = "framework.taskResolvedRequest";
-    // Keep the LIGHT first attempt short, while allowing the sole NORMAL repair
-    // its own reasoning window. Both consume one shared ceiling and the owner's
+    public static final String VALIDATION_CONTRACT_REFERENCE_ATTRIBUTE = "framework.interaction.validation.contractReference";
+    public static final String VALIDATION_CONTRACT_SOURCE_PROPERTY = "javaclaw.interaction.validation.contract-source-run";
+    public static final String VALIDATION_CONTRACT_SEQUENCE_PROPERTY = "javaclaw.interaction.validation.contract-sequence";
+    public static final String VALIDATION_CONTRACT_SHA256_PROPERTY = "javaclaw.interaction.validation.contract-sha256";
+    // Give multi-stage LIGHT plans time to finish without forcing a second call.
+    // Both attempts still consume the same shared ceiling and the owner's
     // remaining deadline; a repair never restarts the turn budget.
     private static final Duration MAX_PLANNING_TIME = Duration.ofSeconds(75);
-    private static final Duration MAX_PLANNING_ATTEMPT_TIME = Duration.ofSeconds(15);
+    private static final Duration MAX_PLANNING_ATTEMPT_TIME = Duration.ofSeconds(45);
     private static final Duration MAX_PLANNING_REPAIR_TIME = Duration.ofSeconds(60);
     private static final int MAX_HISTORY_MESSAGES = 8;
     private static final int MAX_HISTORY_MESSAGE_CHARACTERS = 2_000;
+    private static final Set<String> BROWSER_INPUT_CAPABILITIES = Set.of(
+            "browser.navigate", "browser.click", "browser.double_click", "browser.fill",
+            "browser.select", "browser.check", "browser.upload", "browser.type",
+            "browser.press_key", "browser.drag", "browser.hover", "browser.scroll",
+            "browser.tab_new");
+    private static final Set<String> BROWSER_PAGE_INPUT_CAPABILITIES = Set.of(
+            "browser.click", "browser.double_click", "browser.fill", "browser.select",
+            "browser.check", "browser.upload", "browser.type", "browser.press_key",
+            "browser.drag", "browser.hover", "browser.scroll");
     private static final String DESKTOP_SUBJECT_INSTRUCTION =
             "desktop.launch and desktop.open prove only launch admission or session establishment; "
                     + "desktop.snapshot proves only this owned frame was captured and saved, never "
                     + "its logical window content. All three capabilities require an empty "
                     + "requiredSubject. Put requested window content "
                     + "in a separate desktop.observe criterion for the same application with a "
-                    + "nonblank requiredSubject. ";
+                    + "nonblank requiredSubject. When a later operation depends on values that must first "
+                    + "be read from a page or application, those values and the resulting number are "
+                    + "not known at planning time. Never fill in remembered, inferred, or guessed "
+                    + "operands, identifiers, or final results. Preserve the complete requested dependency "
+                    + "and operation in the downstream description and logical requiredSubject: the result "
+                    + "of the requested operation on the values actually read from the named sources. "
+                    + "Do not delete that dependency, omit the calculation, or replace it with a generic "
+                    + "subject such as calculation result. A semantic condition states the goal, not proof "
+                    + "that the source values or their computed relationship have been verified. Existing "
+                    + "host observation rules still apply; if the available evidence cannot establish "
+                    + "the full dependency, execution must remain unverified rather than accept a weaker "
+                    + "condition. Clarify an actual missing human choice when needed, but do not classify "
+                    + "values discoverable by observation as missing human intent. ";
+    private static final String BROWSER_OUTCOME_INSTRUCTION =
+            "For browser tasks, distinguish the requested result from a chosen interaction path. "
+                    + "Opening a search site to look up information does not require visiting its "
+                    + "homepage and typing into a field as separate acceptance criteria. A direct "
+                    + "result-page navigation is an equally valid path unless the human explicitly "
+                    + "requires those intermediate steps. Preserve explicitly requested actions and "
+                    + "their order; never remove them just because a result page is already visible. "
+                    + "For a requested lookup, include browser.observe conditions for the actual "
+                    + "requested result, not merely admission of navigation or entry of the search "
+                    + "query. If only the website is specified and the eventual result URL is not "
+                    + "known, use its exact bare host as the observation target (for example "
+                    + "www.example.com), without guessing a result path or query parameters. An "
+                    + "explicitly requested full URL remains an exact URL target; preserve its query. "
+                    + "For newly model-planned existing-page input actions (click, double_click, fill, select, check, "
+                    + "upload, type, press_key, drag, hover and scroll), target is the page URL "
+                    + "immediately before the input is dispatched, even when that input navigates. "
+                    + "Never use an assumed post-input result URL for that input criterion. Keep "
+                    + "the human-requested resulting page or content in a separate browser.observe "
+                    + "criterion. browser.navigate instead targets its requested destination URL. "
+                    + "Previously frozen contracts and explicit definitions retain their declared "
+                    + "target phase; a missing phase keeps the returned-page meaning. "
+                    + "Every browser input criterion must declare planning-only intentBasis as "
+                    + "REQUESTED_ACTION or IMPLEMENTATION_CHOICE. REQUESTED_ACTION requires humanQuote: "
+                    + "the shortest exact human wording that directly requests that action. A general "
+                    + "lookup goal or a quote of the entire task cannot ground inferred fill, click "
+                    + "or other interaction steps. IMPLEMENTATION_CHOICE requires humanQuote=\"\"; "
+                    + "the host omits it before freezing acceptance only when a separate "
+                    + "browser.observe criterion carries the requested result. Prefer omitting "
+                    + "optional steps altogether. Never mark an explicitly requested action optional. ";
+    private static final String BROWSER_SUBJECT_INSTRUCTION =
+            "Only browser.observe can prove observed page content. All other browser capabilities "
+                    + "require an empty requiredSubject; their receipts prove input admission only. "
+                    + "A browser.observe requiredSubject is at most 128 characters and must be a "
+                    + "short literal text fragment supported by the host observation, not an "
+                    + "abstract success claim or a guessed result value. For multiple independently "
+                    + "requested text fragments, use requiredTextFragments and requiredSubject=\"\". "
+                    + "Do not join separated words into a made-up contiguous phrase. All fragments "
+                    + "must appear in the same observed text; at most 8 fragments, 128 characters "
+                    + "each, 256 characters total. Copy each fragment exactly from human input; "
+                    + "never translate, concatenate or guess future result values or date formatting. "
+                    + "A single nonempty requiredSubject must likewise be an exact human text fragment. "
+                    + "If the task asks to read a value, identifier, document number, or other content "
+                    + "not supplied by the human, do not put its anticipated value into requiredSubject "
+                    + "or requiredTextFragments, even when you remember the page. Use only the human's "
+                    + "exact visible source anchors, labels, or headings as the literal fragments; "
+                    + "keep the requirement to read their actual associated values in the description. "
+                    + "Do not invent numeric fragments or a downstream numeric answer before any observation. "
+                    + "The fragments prove only literal text, never the complete business meaning. "
+                    + "Preserve the complete "
+                    + "requested outcome in their descriptions. Search-box values, a search-page "
+                    + "title, query text echoed by links, and the URL alone do not establish that "
+                    + "the requested answer or result content was read. Never replace the requested "
+                    + "result with those weaker conditions merely to obtain a matching receipt. "
+                    + "Use the supplied browserObservation date and zone to resolve relative dates "
+                    + "without inventing a page's date format or forecast values. ";
     private static final String FILE_TARGET_INSTRUCTION =
             "For FILE criteria, filePaths is the trusted host path context. Relative targets "
                     + "resolve against filePaths.workingDirectory, not projectRoot. Prefer the "
@@ -86,6 +168,13 @@ public final class TaskContractCompiler {
 
     TrustedCapabilityRegistry capabilities() { return capabilities; }
 
+    /** Local paired validation may reuse a contract only when today's validator preserves it exactly. */
+    void validateFrozenV3(RunRequest request, TaskContractV3 contract) {
+        if (!contract.applicable() || !contract.reliable() || contract.criteria().isEmpty()
+                || !validateV3(request, contract).equals(contract))
+            throw new SecurityException("validation contract is invalid or changed under the current plan");
+    }
+
     /** Compile only declared host capabilities; no localized keyword fallback can grant proof. */
     public TaskContractV3 compileV3(RunId runId, RunRequest request, CancellationToken cancellation) {
         cancellation.throwIfCancelled();
@@ -122,7 +211,7 @@ public final class TaskContractCompiler {
                     cancellation, false)).output();
             cancellation.throwIfCancelled();
             contract = validateV3(request,
-                    decodeV3(resolvedOriginalRequest(request, original, planned), planned, "model"));
+                    decodeV3(request, resolvedOriginalRequest(request, original, planned), planned, "model"));
         } catch (RunCancelledException | BudgetExceededException terminal) {
             throw terminal;
         } catch (RuntimeException failure) {
@@ -159,7 +248,8 @@ public final class TaskContractCompiler {
                 + "user asks for a particular account but does not identify it, or a needed decision "
                 + "or authorization is actually absent, preserve that ambiguity. Every desktop.observe "
                 + "criterion must specify the requested logical content in requiredSubject. "
-                + DESKTOP_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "If human "
+                + DESKTOP_SUBJECT_INSTRUCTION + BROWSER_OUTCOME_INSTRUCTION
+                + BROWSER_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "If human "
                 + "information is still missing, return intentStatus=NEEDS_HUMAN with specific "
                 + "reasonCodes and unresolvedInputs. Write each unresolvedInputs item as a specific "
                 + "clarification question in the human request's language. If required capabilities are absent, return "
@@ -172,7 +262,7 @@ public final class TaskContractCompiler {
                     cancellation, false)).output();
             cancellation.throwIfCancelled();
             TaskContractV3 result = validateV3(request,
-                    decodeV3(resolvedOriginalRequest(request, original, repaired), repaired, "model-repair"));
+                    decodeV3(request, resolvedOriginalRequest(request, original, repaired), repaired, "model-repair"));
             return result.reliable() || needsHuman(result)
                     ? result : diagnostic(result, "PLAN_REPAIR_EXHAUSTED");
         } catch (RunCancelledException | BudgetExceededException terminal) {
@@ -225,6 +315,24 @@ public final class TaskContractCompiler {
                     .add("current application session and displayed account")
                     .add("window availability and current view")
                     .add("runtime access or permission prompts");
+        }
+        if (capabilities.find("browser.observe").isPresent()) {
+            ZonedDateTime now = ZonedDateTime.now();
+            ObjectNode browser = policy.putObject("browserObservation");
+            browser.put("localDate", now.toLocalDate().toString());
+            browser.put("zoneId", now.getZone().getId());
+            browser.put("state", "NOT_OBSERVED");
+            browser.put("targetMeaning", "A full URL is exact. A bare host constrains the "
+                    + "observed page to that exact host when its final path is not known.");
+            browser.put("subjectMeaning", "A short literal fragment from actual requested "
+                    + "result content; search-query entry or echo cannot prove a lookup result.");
+            browser.put("maximumSubjectCharacters", 128);
+            browser.put("maximumTextFragments", 8);
+            browser.put("maximumFragmentCharactersTotal", 256);
+            browser.put("inputIntentMeaning", "REQUESTED_ACTION needs a shortest direct exact "
+                    + "humanQuote; a general lookup does not request inferred fill/click steps. "
+                    + "IMPLEMENTATION_CHOICE has an empty humanQuote and is omitted only when "
+                    + "independent browser.observe acceptance preserves the result.");
         }
         policy.put("unresolvedInputsMeaning", "Human information needed to define the task; "
                 + "never a fact that the supplied host observation capability can discover");
@@ -286,7 +394,8 @@ public final class TaskContractCompiler {
                     + "does not by itself make the goal ambiguous. Every desktop.observe criterion "
                     + "must include a nonblank requiredSubject for the logical requested content; "
                     + "for a window inspection, name the requested window content. "
-                    + DESKTOP_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "Use planningPolicy "
+                    + DESKTOP_SUBJECT_INSTRUCTION + BROWSER_OUTCOME_INSTRUCTION
+                    + BROWSER_SUBJECT_INSTRUCTION + FILE_TARGET_INSTRUCTION + "Use planningPolicy "
                     + "to distinguish missing human intent or authorization from runtime state that "
                     + "the host observation capability can discover. Unknown login status, an existing "
                     + "session, the current displayed account, or window availability does not by "
@@ -360,7 +469,7 @@ public final class TaskContractCompiler {
                 && (contract.source().equals("model") || contract.source().equals("model-repair"));
     }
 
-    private TaskContractV3 decodeV3(String original, JsonNode value, String source) {
+    private TaskContractV3 decodeV3(RunRequest request, String original, JsonNode value, String source) {
         if (value == null || !value.isObject()) return TaskContractV3.unknown(original, "INVALID_PLAN");
         try {
             if (!value.path("applicable").isBoolean()
@@ -374,6 +483,7 @@ public final class TaskContractCompiler {
                     ? TaskContractV3.IntentStatus.valueOf(value.path("intentStatus").asText())
                     : TaskContractV3.IntentStatus.UNKNOWN;
             List<TaskCriterionV3> criteria = new ArrayList<>();
+            boolean omittedBrowserImplementation = false;
             for (JsonNode item : value.path("criteria")) {
                 if (!item.isObject() || !item.path("id").isTextual()
                         || !item.path("description").isTextual() || !item.path("capabilityId").isTextual()
@@ -381,21 +491,85 @@ public final class TaskContractCompiler {
                         || !item.path("requiredEvidence").isTextual()
                         || item.has("requiredSubject") && !item.path("requiredSubject").isTextual())
                     return TaskContractV3.unknown(original, "INVALID_PLAN");
-                criteria.add(new TaskCriterionV3(item.path("id").asText(),
+                TaskCriterionV3 criterion = new TaskCriterionV3(item.path("id").asText(),
                         item.path("description").asText(),
                         item.path("capabilityId").asText(),
                         CapabilityMetadata.TargetKind.valueOf(item.path("targetType").asText()),
                         item.path("target").asText(),
                         com.javaclaw.framework.spi.EffectReceiptV1.Status.valueOf(
                                 item.path("requiredEvidence").asText()),
-                        item.path("requiredSubject").asText("")));
+                        item.path("requiredSubject").asText(""), textFragments(item),
+                        BROWSER_PAGE_INPUT_CAPABILITIES.contains(item.path("capabilityId").asText())
+                                ? TaskCriterionV3.BrowserTargetPhase.INPUT_PAGE
+                                : TaskCriterionV3.BrowserTargetPhase.RETURNED_PAGE);
+                if (BROWSER_INPUT_CAPABILITIES.contains(criterion.capabilityId())) {
+                    String basis = item.path("intentBasis").asText("");
+                    if (!item.path("intentBasis").isTextual()
+                            || !item.path("humanQuote").isTextual()
+                            || !(basis.equals("REQUESTED_ACTION") || basis.equals("IMPLEMENTATION_CHOICE")))
+                        return TaskContractV3.unknown(original, "MISSING_BROWSER_ACTION_INTENT");
+                    String quote = item.path("humanQuote").asText();
+                    if (basis.equals("REQUESTED_ACTION")) {
+                        if (!humanContains(request, quote) || quote.length() > 512)
+                            return TaskContractV3.unknown(original, "UNGROUNDED_BROWSER_ACTION");
+                    } else {
+                        if (!quote.isEmpty())
+                            return TaskContractV3.unknown(original, "CONFLICTING_BROWSER_ACTION_INTENT");
+                        if (!criterion.requiredSubject().isBlank()
+                                || !criterion.requiredTextFragments().isEmpty())
+                            return TaskContractV3.unknown(original, "UNSUPPORTED_RECEIPT_SUBJECT");
+                        // 只移除模型明确标记的实现选择；显式定义和冻结的旧契约不走此路径。
+                        omittedBrowserImplementation = true;
+                        continue;
+                    }
+                }
+                if (criterion.capabilityId().equals("browser.observe")
+                        && (!criterion.requiredSubject().isBlank()
+                            && !humanContains(request, criterion.requiredSubject())
+                            || criterion.requiredTextFragments().stream()
+                                    .anyMatch(fragment -> !humanContains(request, fragment))))
+                    return TaskContractV3.unknown(original, "UNGROUNDED_BROWSER_LITERAL");
+                criteria.add(criterion);
             }
+            if (omittedBrowserImplementation && criteria.stream().noneMatch(criterion ->
+                    criterion.capabilityId().equals("browser.observe")
+                            && (!criterion.requiredSubject().isBlank()
+                                || !criterion.requiredTextFragments().isEmpty())))
+                return TaskContractV3.unknown(original, "MISSING_BROWSER_RESULT_CRITERION");
             return new TaskContractV3(3, original, criteria, applicable, reliable, source,
                     diagnostics(value.path("reasonCodes")), diagnostics(value.path("unresolvedInputs")),
                     TaskContractV3.DesktopObservationPolicy.REQUIRED_SUBJECT, intentStatus);
         } catch (RuntimeException invalid) {
             return TaskContractV3.unknown(original, "INVALID_PLAN");
         }
+    }
+
+    private static List<String> textFragments(JsonNode criterion) {
+        if (!criterion.has("requiredTextFragments")) return List.of();
+        JsonNode values = criterion.path("requiredTextFragments");
+        if (!values.isArray() || values.size() > 8)
+            throw new IllegalArgumentException("invalid browser text fragments");
+        List<String> fragments = new ArrayList<>();
+        int characters = 0;
+        for (JsonNode value : values) {
+            if (!value.isTextual() || value.asText().isBlank() || value.asText().length() > 128)
+                throw new IllegalArgumentException("invalid browser text fragment");
+            String text = value.asText().strip();
+            characters += text.length();
+            if (characters > 256 || fragments.contains(text))
+                throw new IllegalArgumentException("invalid browser text fragment budget");
+            fragments.add(text);
+        }
+        return List.copyOf(fragments);
+    }
+
+    /** 精确人类原文只用于约束模型规划，不能授予工具权限或证明页面结果。 */
+    private static boolean humanContains(RunRequest request, String literal) {
+        if (literal == null || literal.isBlank()) return false;
+        List<String> inputs = new ArrayList<>(humanHistory(request));
+        inputs.add(originalRequest(request));
+        inputs.add(currentUserInput(request));
+        return inputs.stream().anyMatch(text -> text.contains(literal));
     }
 
     /** One strict intent interpretation for both contract decoding and history-based goal resolution. */
@@ -475,6 +649,9 @@ public final class TaskContractCompiler {
             if (criterion.capabilityId().equals("desktop.observe")
                     && (criterion.id().length() > 120 || criterion.requiredSubject().length() > 240))
                 invalid.add("UNVERIFIABLE_OBSERVABLE_SUBJECT");
+            if (criterion.capabilityId().equals("browser.observe")
+                    && (criterion.id().length() > 120 || criterion.requiredSubject().length() > 128))
+                invalid.add("UNVERIFIABLE_OBSERVABLE_SUBJECT");
             var descriptor = capabilities.find(criterion.capabilityId()).orElse(null);
             if (descriptor == null) invalid.add("UNSUPPORTED_CAPABILITY");
             else {
@@ -508,7 +685,8 @@ public final class TaskContractCompiler {
             normalized.add(new TaskCriterionV3(criterion.id(), criterion.description(),
                     criterion.capabilityId(), criterion.targetType(), target,
                     criterion.requiredEvidence(),
-                    receiptSubject(criterion, contract, invalid)));
+                    receiptSubject(criterion, contract, invalid), criterion.requiredTextFragments(),
+                    criterion.browserTargetPhase()));
         }
         reasons.addAll(invalid);
         return new TaskContractV3(3, contract.originalRequest(), normalized,
@@ -569,6 +747,12 @@ public final class TaskContractCompiler {
             reasons.add("UNSUPPORTED_RECEIPT_SUBJECT");
             return subject;
         }
+        if (!subject.isBlank() && BROWSER_INPUT_CAPABILITIES.contains(criterion.capabilityId())) {
+            // Browser input admission cannot establish a requested page-content condition.
+            // Reject the plan for repair rather than silently dropping the frozen requirement.
+            reasons.add("UNSUPPORTED_RECEIPT_SUBJECT");
+            return subject;
+        }
         if (subject.isBlank() || !(criterion.capabilityId().equals("desktop.launch")
                 || criterion.capabilityId().equals("desktop.open"))) return subject;
         // 启动和建立会话不证明界面内容；模型标签只能由同一应用的独立观察条件承接。
@@ -602,7 +786,27 @@ public final class TaskContractCompiler {
         fields.putObject("requiredEvidence").put("type", "string")
                 .putArray("enum").add("ACCEPTED").add("OBSERVED").add("VERIFIED");
         fields.putObject("requiredSubject").put("type", "string").put("maxLength", 240)
-                .put("description", DESKTOP_SUBJECT_INSTRUCTION);
+                .put("description", DESKTOP_SUBJECT_INSTRUCTION + BROWSER_SUBJECT_INSTRUCTION);
+        ObjectNode fragments = fields.putObject("requiredTextFragments").put("type", "array")
+                .put("maxItems", 8).put("uniqueItems", true)
+                .put("description", "browser.observe only: independent exact human text fragments "
+                        + "that must all occur in the same observed body, at most 256 characters "
+                        + "total. Use this instead of joining separated words into requiredSubject. "
+                        + "Each fragment proves literal text only; preserve the full business "
+                        + "result in description. Other capabilities must omit this field or use [].");
+        fragments.putObject("items").put("type", "string").put("minLength", 1).put("maxLength", 128);
+        fields.putObject("intentBasis").put("type", "string")
+                .put("description", "Planning-only classification. Every browser input criterion "
+                        + "must distinguish REQUESTED_ACTION, directly requested by the human, "
+                        + "from IMPLEMENTATION_CHOICE, an optional interaction path. "
+                        + "browser.observe may use REQUESTED_RESULT. This never grants authority.")
+                .putArray("enum").add("REQUESTED_ACTION").add("IMPLEMENTATION_CHOICE").add("REQUESTED_RESULT");
+        fields.putObject("humanQuote").put("type", "string").put("maxLength", 512)
+                .put("description", "For REQUESTED_ACTION browser input, the shortest exact "
+                        + "human quote directly requesting that action. A vague lookup goal cannot "
+                        + "ground inferred fill/click steps; do not quote the whole task as a "
+                        + "substitute. For IMPLEMENTATION_CHOICE this must be empty. Other "
+                        + "capabilities may omit it.");
         criterion.putArray("required").add("id").add("description")
                 .add("capabilityId").add("targetType").add("target")
                 .add("requiredEvidence").add("requiredSubject");

@@ -3,6 +3,7 @@ package com.javaclaw.browser;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.framework.spi.ToolEffectCapture;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
@@ -18,7 +19,19 @@ import java.util.List;
 
 /** Navigation history, element interaction, waiting and pointer tools. */
 @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
-final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetProvider {
+final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetProvider,
+        com.javaclaw.framework.spi.InteractionSurfaceProvider, com.javaclaw.framework.spi.ToolRuntimeContextProvider {
+
+    @Override public java.util.List<com.fasterxml.jackson.databind.JsonNode> currentContext() {
+        return BrowserInteractionContext.current(browserManager);
+    }
+
+    @Override public void bindInteractionObserver(java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        browserManager.bindInteractionObserver(observer);
+    }
+    @Override public java.util.List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
+        return browserManager.interactionSurfaces();
+    }
 
     private static final Logger log = LoggerFactory.getLogger(BrowserPageTools.class);
 
@@ -127,10 +140,14 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
     @Tool(
             name = "web_click",
             description = "点击页面元素。目标必须标明定位类型；@e1 引用来自 web_snapshot。"
+                    + "明确预期新弹窗时可设置expectPopup=true；在点击前注册等待，返回候选但不自动切换。"
+                    + "点击已返回但弹窗未到时必须先观察，不得重复点击。"
                     + BrowserTargetResolver.TOOL_FORMAT)
     public String click(
             @ToolParam( description = BrowserTargetResolver.TOOL_FORMAT)
-                    String target) {
+                    String target,
+            @ToolParam(required = false, description = "是否在点击前注册同源页面的弹窗等待；默认false") Boolean expectPopup,
+            @ToolParam(required = false, description = "弹窗等待毫秒，100至10000，默认5000；不改变点击本身超时") Integer popupTimeoutMs) {
         gate.enter();
         try {
             log.debug("工具调用: web_click({})", target);
@@ -145,6 +162,15 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_click", "未找到目标元素: " + target);
 
+                if (Boolean.TRUE.equals(expectPopup)) {
+                    int timeout = popupTimeoutMs == null ? 5_000 : popupTimeoutMs;
+                    if (timeout < 100 || timeout > 10_000)
+                        return ToolResponse.error("web_click", "popupTimeoutMs必须在100至10000之间");
+                    return clickExpectingPopup(page, locator, target, timeout);
+                }
+
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_click", page.url());
                 locator.click();
 
                 // 点击后可能页面变化，清除旧引用
@@ -156,6 +182,51 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
 
         } finally {
             gate.exit();
+        }
+    }
+
+    /** Compatibility for existing Java callers; only the structured overload is a tool. */
+    public String click(String target) { return click(target, false, null); }
+
+    private String clickExpectingPopup(Page page, Locator locator, String target, int timeout) {
+        var started = new java.util.concurrent.atomic.AtomicBoolean();
+        var returned = new java.util.concurrent.atomic.AtomicBoolean();
+        browserManager.noteInteractionInput(page);
+        ToolEffectCapture.noteTarget("web_click", page.url());
+        try {
+            Page popup = page.waitForPopup(new Page.WaitForPopupOptions().setTimeout(timeout), () -> {
+                started.set(true);
+                locator.click();
+                returned.set(true);
+            });
+            var candidate = browserManager.expectedPopup(page, popup);
+            var data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            data.put("kind", "browser_click_popup_result");
+            data.put("clickReturned", true);
+            data.put("popupMatched", candidate.isPresent());
+            data.put("selected", false);
+            candidate.ifPresent(surface -> data.put("pageId", surface.surfaceId())
+                    .put("contextId", surface.contextId()).put("origin", surface.urlOrigin())
+                    .put("tabIndex", browserManager.pageIndex(popup)));
+            ToolEffectCapture.noteData("web_click", data);
+            snapshotManager.clearRefs();
+            return ToolResponse.success("web_click", candidate.isPresent()
+                    ? "点击已返回，已捕获预先等待的弹窗候选，尚未切换。先web_tab_list核对，再显式web_tab_switch并重新web_snapshot。"
+                    : "点击已返回，弹窗已出现但来源或当前存活身份未证实。先web_tab_list/web_snapshot观察，禁止重复点击。");
+        } catch (RuntimeException failure) {
+            if (!started.get()) return ToolResponse.fromException("web_click", failure);
+            snapshotManager.clearRefs();
+            var data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            data.put("kind", "browser_click_popup_result");
+            data.put("clickReturned", returned.get());
+            data.put("popupMatched", false);
+            data.put("selected", false);
+            data.put("nextStep", "OBSERVE_WITHOUT_RECLICK");
+            ToolEffectCapture.noteData("web_click", data);
+            if (returned.get()) return ToolResponse.success("web_click",
+                    "点击已返回，但预期弹窗尚未证实（等待结束）。先web_tab_list/web_snapshot观察，不得重新点击。");
+            return ToolResponse.uncertain("web_click",
+                    "点击已开始但返回无法确认；弹窗也未证实。输入可能已发出，禁止重复点击，先重新观察。");
         }
     }
 
@@ -177,6 +248,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (locator == null)
                     return ToolResponse.error("web_dblclick", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_dblclick", page.url());
                 locator.dblclick();
                 snapshotManager.clearRefs();
                 return ToolResponse.success("web_dblclick", "已双击元素: " + target);
@@ -209,6 +282,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_fill", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_fill", page.url());
                 locator.fill(text);
                 return ToolResponse.success("web_fill", "已在 " + target + " 中填充文本: " + text);
             } catch (Exception e) {
@@ -246,9 +321,13 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                     Locator locator = targets.resolve(page, target);
                     if (locator == null)
                         return ToolResponse.error("web_type", "未找到目标元素: " + target);
+                    browserManager.noteInteractionInput(page);
+                    ToolEffectCapture.noteTarget("web_type", page.url());
                     locator.pressSequentially(
                             text, new Locator.PressSequentiallyOptions().setDelay(50));
                 } else {
+                    browserManager.noteInteractionInput(page);
+                    ToolEffectCapture.noteTarget("web_type", page.url());
                     page.keyboard().type(text, new Keyboard.TypeOptions().setDelay(50));
                 }
                 return ToolResponse.success("web_type", "已输入文本: " + text);
@@ -278,6 +357,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_hover", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_hover", page.url());
                 locator.hover();
                 return ToolResponse.success("web_hover", "已悬停在元素: " + target);
             } catch (Exception e) {
@@ -308,6 +389,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (locator == null) return ToolResponse.error("web_select", "未找到目标元素: " + target);
 
                 // 先尝试按 value 选择，再尝试按 label 选择
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_select", page.url());
                 try {
                     locator.selectOption(new SelectOption().setValue(value));
                 } catch (PlaywrightException e1) {
@@ -345,6 +428,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_check", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_check", page.url());
                 locator.setChecked(checked);
                 return ToolResponse.success(
                         "web_check", (checked ? "已勾选" : "已取消勾选") + "元素: " + target);
@@ -374,6 +459,7 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_focus", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
                 locator.focus();
                 return ToolResponse.success("web_focus", "已聚焦到元素: " + target);
             } catch (Exception e) {
@@ -407,6 +493,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 Locator locator = targets.resolve(page, target);
                 if (locator == null) return ToolResponse.error("web_upload", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_upload", page.url());
                 locator.setInputFiles(uploadPath);
                 return ToolResponse.success("web_upload", "已上传项目内文件: " + uploadPath.getFileName());
             } catch (Exception e) {
@@ -440,6 +528,8 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (tgtLocator == null)
                     return ToolResponse.error("web_drag", "未找到目标元素: " + targetElement);
 
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_drag", page.url());
                 srcLocator.dragTo(tgtLocator);
                 snapshotManager.clearRefs();
                 return ToolResponse.success("web_drag", "已将 " + source + " 拖拽到 " + targetElement);
@@ -474,6 +564,9 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                     return ToolResponse.error("web_press_key", "用户取消了操作");
                 }
 
+                // 输入回执记录按键发生的页面；Enter 导航后的结果由后续观察单独证明。
+                browserManager.noteInteractionInput(page);
+                ToolEffectCapture.noteTarget("web_press_key", page.url());
                 page.keyboard().press(key);
                 return ToolResponse.success("web_press_key", "已按下按键: " + key);
             } catch (Exception e) {
@@ -526,12 +619,16 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (target != null && !target.isBlank()) {
                     Locator locator = targets.resolve(page, target);
                     if (locator != null) {
+                        browserManager.noteInteractionInput(page);
+                        ToolEffectCapture.noteTarget("web_scroll", page.url());
                         locator.evaluate(
                                 "(el, [dx, dy]) => el.scrollBy(dx, dy)", List.of(deltaX, deltaY));
                     } else {
                         return ToolResponse.error("web_scroll", "未找到滚动目标元素: " + target);
                     }
                 } else {
+                    browserManager.noteInteractionInput(page);
+                    ToolEffectCapture.noteTarget("web_scroll", page.url());
                     page.mouse().wheel(deltaX, deltaY);
                 }
 
@@ -564,6 +661,7 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 if (locator == null)
                     return ToolResponse.error("web_scroll_to_element", "未找到目标元素: " + target);
 
+                browserManager.noteInteractionInput(page);
                 locator.scrollIntoViewIfNeeded();
                 return ToolResponse.success("web_scroll_to_element", "已滚动到元素: " + target);
             } catch (Exception e) {
@@ -715,6 +813,7 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                     return ToolResponse.error("web_mouse_move", "用户取消了操作");
                 }
 
+                browserManager.noteInteractionInput(page);
                 page.mouse().move(x, y);
                 return ToolResponse.success(
                         "web_mouse_move", String.format("鼠标已移动到 (%d, %d)", x, y));
@@ -742,6 +841,7 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                     return ToolResponse.error("web_mouse_click_at", "用户取消了操作");
                 }
 
+                browserManager.noteInteractionInput(page);
                 page.mouse().click(x, y);
                 snapshotManager.clearRefs();
                 return ToolResponse.success(
@@ -785,6 +885,7 @@ final class BrowserPageTools implements com.javaclaw.framework.spi.EffectTargetP
                 }
 
                 // 注册一次性对话框处理器
+                browserManager.noteInteractionInput(page);
                 page.onceDialog(
                         dialog -> {
                             log.info("处理对话框: type={}, message={}", dialog.type(), dialog.message());

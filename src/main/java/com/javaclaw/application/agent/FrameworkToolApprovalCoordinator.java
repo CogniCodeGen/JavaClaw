@@ -63,7 +63,7 @@ public final class FrameworkToolApprovalCoordinator {
         if (inactive.getAsBoolean()) return;
         if (!outcome.isAllow()) {
             agents.cancel(handle.id(), new CancelReason(
-                    "TOOL_APPROVAL_DENIED", "user denied " + challenge.tool()));
+                    "TOOL_APPROVAL_DENIED", "tool approval was not granted for " + challenge.tool()));
             return;
         }
         ObjectNode command = JsonNodeFactory.instance.objectNode();

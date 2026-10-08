@@ -187,6 +187,10 @@ public class ChatViewController implements AutoCloseable {
                 runtimeCoordinator::knowledgeMenuSnapshot,
                 runtimeCoordinator::applyKnowledgeSelection,
                 navigation::openKnowledge);
+        headerController.setOnInspectSession(() -> {
+            ChatSession session = currentSession();
+            if (session != null) sessionCoordinator.inspectSession(session.getId());
+        });
         headerController.setShortcutHints(shell.shortcutHint());
         status = new ChatStatusController(
                 applicationKernel,

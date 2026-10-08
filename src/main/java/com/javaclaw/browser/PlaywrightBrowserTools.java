@@ -18,26 +18,54 @@ import java.util.Objects;
 public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectProvider {
 
     private final PlaywrightBrowserManager browserManager;
+    private final BrowserInteractionState interaction;
     private final boolean ownsBrowserManager;
+    private final boolean ownsInteractionState;
     private final List<Object> toolObjects;
 
     public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager,
             SiteCredentialManager siteCredentials, ToolCallOrigin origin, JsonCodec json,
             boolean ownsBrowserManager, String threadBrowserScope) {
+        this(browserManager, siteCredentials, origin, json, ownsBrowserManager,
+                threadBrowserScope, new BrowserInteractionState(), true, false);
+    }
+
+    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials, ToolCallOrigin origin, JsonCodec json,
+            boolean ownsBrowserManager, String threadBrowserScope, BrowserInteractionState interaction) {
+        this(browserManager, siteCredentials, origin, json, ownsBrowserManager,
+                threadBrowserScope, interaction, ownsBrowserManager, false);
+    }
+
+    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials, ToolCallOrigin origin, JsonCodec json,
+            boolean ownsBrowserManager, String threadBrowserScope, BrowserInteractionState interaction,
+            boolean eventDrivenInteraction) {
+        this(browserManager, siteCredentials, origin, json, ownsBrowserManager,
+                threadBrowserScope, interaction, ownsBrowserManager, eventDrivenInteraction);
+    }
+
+    private PlaywrightBrowserTools(PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials, ToolCallOrigin origin, JsonCodec json,
+            boolean ownsBrowserManager, String threadBrowserScope, BrowserInteractionState interaction,
+            boolean ownsInteractionState, boolean eventDrivenInteraction) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
+        this.interaction = Objects.requireNonNull(interaction, "interaction");
         SiteCredentialManager checkedCredentials =
                 Objects.requireNonNull(siteCredentials, "siteCredentials");
         ToolCallOrigin checkedOrigin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
-        SnapshotManager snapshots = new SnapshotManager();
-        BrowserOperationGate gate = new BrowserOperationGate();
+        SnapshotManager snapshots = interaction.snapshots();
+        BrowserOperationGate gate = interaction.gate();
         BrowserSiteTools site =
                 new BrowserSiteTools(
-                        browserManager, checkedCredentials, snapshots, checkedOrigin, gate, json);
+                        browserManager, checkedCredentials, snapshots, checkedOrigin, gate, json,
+                        interaction, eventDrivenInteraction);
         BrowserPageTools page = new BrowserPageTools(browserManager, snapshots, checkedOrigin, gate);
         BrowserReadTools read = new BrowserReadTools(browserManager, snapshots, gate);
         BrowserSessionTools session = new BrowserSessionTools(browserManager, snapshots, checkedOrigin, gate);
         this.toolObjects = List.of(site, page, read, session);
         this.ownsBrowserManager = ownsBrowserManager;
+        this.ownsInteractionState = ownsInteractionState;
         if (threadBrowserScope != null) {
             browserManager.activateScope(threadBrowserScope);
         } else if (checkedOrigin.kind() != ToolCallOrigin.Kind.INTERACTIVE) {
@@ -62,8 +90,10 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
 
     @Override
     public void close() {
-        if (ownsBrowserManager) {
-            browserManager.shutdown();
+        try {
+            if (ownsInteractionState) interaction.close();
+        } finally {
+            if (ownsBrowserManager) browserManager.shutdown();
         }
     }
 }

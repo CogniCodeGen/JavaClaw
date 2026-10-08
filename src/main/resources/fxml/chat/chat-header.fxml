@@ -42,6 +42,10 @@
                        accessibleText="嵌入服务健康状态" styleClass="local-mode-badge"/>
                 <fx:include fx:id="knowledgeMenu" source="knowledge-menu.fxml"/>
                 <fx:include fx:id="themeMenu" source="theme-menu.fxml"/>
+                <Button text="执行记录" onAction="#inspectSessionRequested"
+                        accessibleText="执行记录" styleClass="clear-button">
+                    <tooltip><Tooltip text="查看当前会话的执行记录、交互历史和指标"/></tooltip>
+                </Button>
                 <Button text="▦" onAction="#openTasksRequested" styleClass="top-icon-btn">
                     <tooltip><Tooltip text="托管任务"/></tooltip>
                 </Button>

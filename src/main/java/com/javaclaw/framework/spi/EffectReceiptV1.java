@@ -36,12 +36,17 @@ public record EffectReceiptV1(
         if (target.length() > 512 || reason.length() > 512 || subject.length() > 128) {
             throw new IllegalArgumentException("receipt metadata exceeds bound");
         }
-        if (metadata.size() > 12) throw new IllegalArgumentException("receipt metadata exceeds bound");
+        boolean stageAllowed = tool.equals("desktop_session_observe") && operation.equals("observe") && status == Status.OBSERVED
+                || (tool.equals("web_snapshot") || tool.equals("web_get_text")) && operation.equals("observe") && status == Status.OBSERVED
+                || com.javaclaw.framework.core.CrossModeBusinessFence.isBrowserBusinessInput(tool) && status == Status.ACCEPTED;
+        if (metadata.size() > (stageAllowed && metadata.containsKey("interactionStage") ? 13 : 12))
+            throw new IllegalArgumentException("receipt metadata exceeds bound");
         for (var entry : metadata.entrySet()) {
             // Only a committed desktop observation may carry bounded structured content proof.
             int limit = entry.getKey().equals("conditionEvidence")
                     && tool.equals("desktop_session_observe") && operation.equals("observe")
                     && status == Status.OBSERVED ? MAX_CONDITION_EVIDENCE_CHARACTERS : 512;
+            if (entry.getKey().equals("interactionStage") && stageAllowed) limit = MAX_CONDITION_EVIDENCE_CHARACTERS;
             if (entry.getKey().length() > 64 || entry.getValue().length() > limit)
                 throw new IllegalArgumentException("receipt metadata exceeds bound");
         }

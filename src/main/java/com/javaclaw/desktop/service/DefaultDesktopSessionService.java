@@ -653,6 +653,11 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         return owned(owner, sessionId).info();
     }
 
+    @Override public Optional<DesktopSurfaceSnapshot> surface(DesktopSessionOwner owner, String sessionId) {
+        requireEnabled();
+        return owned(owner, sessionId).platform.currentSurface();
+    }
+
     @Override public synchronized void closeSession(DesktopSessionOwner owner, String sessionId) {
         ManagedSession session = owned(owner, sessionId);
         if (sessions.remove(session.id, session)) session.close();

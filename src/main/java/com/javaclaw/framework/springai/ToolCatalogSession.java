@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.core.ReasoningRequest;
+import com.javaclaw.framework.core.InteractionExecutionPolicy;
+import com.javaclaw.framework.core.InteractionModeFreshness;
 import com.javaclaw.framework.core.StepContextPolicy;
 import com.javaclaw.framework.core.ToolRecoveryRequiredException;
 import com.javaclaw.framework.spi.FrameworkTool;
@@ -178,13 +180,20 @@ final class ToolCatalogSession implements FrameworkTool {
     }
 
     private JsonNode activate(JsonNode arguments) {
-        int capacity = policy.maxTools();
-        if (request.plan().descriptor().onDemandContextPolicy() != null) {
-            capacity = Math.min(capacity,
-                    request.plan().descriptor().onDemandContextPolicy().selectedTools());
+        int selectedLimit = request.plan().descriptor().onDemandContextPolicy() == null
+                ? policy.maxTools() : request.plan().descriptor().onDemandContextPolicy().selectedTools();
+        int capacity = selectedBusinessToolLimit(selectedLimit);
+        Map<String, ToolCallback> current = new LinkedHashMap<>();
+        authorized.forEach((name, callback) -> { if (roleAllowed(name)) current.put(name, callback); });
+        ObjectNode result = activateSelection(arguments, current, capacity,
+                businessSchemaLimit(), policy.maxToolResultCharacters());
+        if (InteractionExecutionPolicy.isInteraction(request.runRequest())
+                && result.path("success").asBoolean(false)) {
+            putIfFits(result, "note", "Activation remains pending until the tool is actually exposed in a frozen "
+                    + "provider directory. Current host lifecycle and required observation take priority; "
+                    + "tools deferred by capacity remain activated for a later step.", policy.maxToolResultCharacters());
         }
-        return activateSelection(arguments, authorized, capacity,
-                policy.maxToolSchemaCharacters(), policy.maxToolResultCharacters());
+        return result;
     }
 
     /** Validate a complete activation before any durable completion can make it visible. */
@@ -411,6 +420,30 @@ final class ToolCatalogSession implements FrameworkTool {
         return projectPlanned(names, maxSelectedTools, mode, false);
     }
 
+    /** 角色路由只投影本步精确接口，不恢复另一后端的历史激活。 */
+    synchronized ToolCatalogProjection projectExactRole(List<String> names, int maxSelectedTools,
+            CatalogMode mode) {
+        refresh();
+        List<ToolCallback> selected = new ArrayList<>();
+        int characters = 0;
+        if (request.control().remainingToolCalls() > 0) {
+            for (String name : new LinkedHashSet<>(names)) {
+                if (!roleAllowed(name)) throw new IllegalStateException("tool is outside the active role: " + name);
+                if (roleControlNames().contains(name)) continue;
+                if (selected.size() >= maxSelectedTools)
+                    throw new ToolCountBudgetExceededException(selected.size() + 1, maxSelectedTools, name);
+                ToolCallback callback = authorized.get(name);
+                if (callback == null) throw new IllegalStateException("role tool is not authorized: " + name);
+                characters = addRequired(selected, characters, callback);
+            }
+            if (mode != CatalogMode.NONE && catalogCallback != null && allowedByToolPolicy(this)
+                    && request.control().remainingToolCalls() >= 2) {
+                characters = addRequired(selected, characters, catalogCallback);
+            }
+        }
+        return withControl(selected, characters, authorizedNames.size());
+    }
+
     /** A required host stage defers launch activation until identities or uncertain delivery are observed. */
     synchronized ToolCatalogProjection projectComputerUseStage(List<String> names, int maxSelectedTools) {
         return projectComputerUseStage(names, maxSelectedTools, false);
@@ -461,6 +494,55 @@ final class ToolCatalogSession implements FrameworkTool {
         }
         List<ToolCallback> selected = new ArrayList<>();
         int characters = addRequired(selected, 0, authorized.get(name));
+        return withControl(selected, characters, authorizedNames.size());
+    }
+
+    /** READY schemas mask preparation activations without consuming their durable authorization. */
+    synchronized ToolCatalogProjection projectReadyDesktop(List<String> names, int maxSelectedTools,
+            ComputerUseSessionCursor cursor) {
+        refresh();
+        if (cursor.requiresTool() || !cursor.inputAllowed() || !cursor.pendingInvocationIds().isEmpty()
+                || !request.control().pendingInteractionEffects().isEmpty())
+            throw new IllegalStateException("desktop READY projection lacks a grounded input baseline");
+        if (names.size() > desktopReadyToolLimit(maxSelectedTools)
+                || names.stream().distinct().count() != names.size())
+            throw new IllegalStateException("desktop READY schemas exceed the current selection limit");
+        for (String name : names) {
+            boolean observation = name.equals("desktop_session_observe") && trustedReadOnlyTool(name);
+            if (!observation && !trustedDesktopInputTool(name))
+                throw new IllegalStateException("desktop READY interface is not currently authorized: " + name);
+        }
+        if (request.control().remainingToolCalls() == 0)
+            return withControl(List.of(), 0, authorizedNames.size());
+        List<ToolCallback> selected = new ArrayList<>();
+        int characters = 0;
+        for (String name : names) characters = addRequired(selected, characters, authorized.get(name));
+        return withControl(selected, characters, authorizedNames.size());
+    }
+
+    /** Business schemas share the provider limit with permanent interaction controls. */
+    synchronized int selectedBusinessToolLimit(int maxSelectedTools) {
+        return Math.max(0, Math.min(maxSelectedTools, businessToolLimit()));
+    }
+
+    synchronized int desktopReadyToolLimit(int maxSelectedTools) {
+        return selectedBusinessToolLimit(maxSelectedTools);
+    }
+
+    /** An original launch requirement projects its actual callback, never an open-session substitute. */
+    synchronized ToolCatalogProjection projectRequiredLaunch(int maxSelectedTools,
+            ComputerUseSessionCursor cursor) {
+        refresh();
+        if (desktopReadyToolLimit(maxSelectedTools) < 1
+                || !trustedHostTool(OnDemandApplicationRecovery.LAUNCH)
+                || cursor.phase() == ComputerUseSessionCursor.Phase.RECONCILE
+                || !cursor.pendingInvocationIds().isEmpty()
+                || !request.control().pendingInteractionEffects().isEmpty())
+            throw new IllegalStateException("required frozen launch is not currently authorized and delivery-safe");
+        if (request.control().remainingToolCalls() == 0)
+            return withControl(List.of(), 0, authorizedNames.size());
+        List<ToolCallback> selected = new ArrayList<>();
+        int characters = addRequired(selected, 0, authorized.get(OnDemandApplicationRecovery.LAUNCH));
         return withControl(selected, characters, authorizedNames.size());
     }
 
@@ -529,6 +611,7 @@ final class ToolCatalogSession implements FrameworkTool {
             throw new IllegalStateException("tool discovery was requested but the Run has no authorized tools");
         }
         Set<String> unique = new LinkedHashSet<>(activeNames);
+        unique.removeIf(name -> !roleAllowed(name) || roleControlNames().contains(name));
         if (deferLaunch) unique.remove(OnDemandApplicationRecovery.LAUNCH);
         if (recoveringSession) unique.removeIf(OnDemandDesktopSessionRecovery::requiresSession);
         if (deferDesktopInput) unique.removeIf(OnDemandDesktopPrerequisites::desktopFrameAction);
@@ -536,9 +619,11 @@ final class ToolCatalogSession implements FrameworkTool {
             throw new IllegalStateException("duplicate planned tool name");
         }
         unique.addAll(names);
+        unique.removeIf(name -> !roleAllowed(name) || roleControlNames().contains(name));
         if (deferDesktopInput) unique.removeIf(OnDemandDesktopPrerequisites::desktopFrameAction);
         if (unique.size() > maxSelectedTools) {
-            throw new IllegalStateException("planned and activated tools exceed on-demand selection limit");
+            throw new ToolCountBudgetExceededException(unique.size(), maxSelectedTools,
+                    "planned and activated tools");
         }
         int remaining = request.control().remainingToolCalls();
         if (remaining == 0) {
@@ -574,6 +659,7 @@ final class ToolCatalogSession implements FrameworkTool {
     synchronized List<ToolSummary> summaries() {
         if (callbacks.isEmpty()) throw new IllegalStateException("tool catalog callbacks are not bound");
         return authorizedNames.stream().map(authorized::get).filter(Objects::nonNull)
+                .filter(callback -> roleAllowed(callback.getToolDefinition().name()))
                 .map(callback -> new ToolSummary(callback.getToolDefinition().name(),
                         group(callback), callback.getToolDefinition().description()))
                 .toList();
@@ -595,7 +681,7 @@ final class ToolCatalogSession implements FrameworkTool {
     }
 
     synchronized boolean trustedHostTool(String name, ToolCallback callback) {
-        return callback == authorized.get(name) && callback instanceof SpringAiToolCallback
+        return roleAllowed(name) && callback == authorized.get(name) && callback instanceof SpringAiToolCallback
                 && authorizedTools.stream()
                 .filter(tool -> tool.descriptor().name().equals(name))
                 .anyMatch(tool -> SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)
@@ -615,16 +701,21 @@ final class ToolCatalogSession implements FrameworkTool {
     synchronized List<JsonNode> currentRuntimeContext() {
         Set<com.javaclaw.framework.spi.ToolRuntimeContextProvider> seen =
                 java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Set<JsonNode> snapshots = new HashSet<>();
         List<JsonNode> context = new ArrayList<>();
         int characters = 0;
+        int limit = InteractionExecutionPolicy.activeMode(request.runRequest(),
+                runs.eventsAfter(request.runId(), 0)) == com.javaclaw.framework.api.InteractionMode.BROWSER ? 4_000 : 800;
         for (FrameworkTool tool : authorizedTools) {
+            if (!roleAllowed(tool.descriptor().name())) continue;
             if (!SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)) continue;
             var provider = tool.runtimeContextProvider();
             if (provider == null || !seen.add(provider)) continue;
             for (JsonNode value : provider.currentContext()) {
                 if (value == null || !value.isObject()) continue;
+                if (!snapshots.add(value)) continue;
                 int size = value.toString().length();
-                if (characters + size > 800) continue;
+                if (characters + size > limit) continue;
                 context.add(value.deepCopy());
                 characters += size;
             }
@@ -660,7 +751,8 @@ final class ToolCatalogSession implements FrameworkTool {
 
     private List<ToolCallback> authorizedCallbacks() {
         if (callbacks.isEmpty()) throw new IllegalStateException("tool catalog callbacks are not bound");
-        return authorizedNames.stream().map(authorized::get).filter(Objects::nonNull).toList();
+        return authorizedNames.stream().filter(this::roleAllowed)
+                .map(authorized::get).filter(Objects::nonNull).toList();
     }
 
     static List<ToolGroupSummary> groupDirectory(List<ToolCallback> allowed) {
@@ -832,7 +924,8 @@ final class ToolCatalogSession implements FrameworkTool {
 
     synchronized List<String> activeNames() {
         refresh();
-        return activeNames;
+        return activeNames.stream().filter(this::roleAllowed)
+                .filter(name -> !roleControlNames().contains(name)).toList();
     }
 
     synchronized List<ToolCallback> restoreProviderTools(List<String> names) {
@@ -885,8 +978,8 @@ final class ToolCatalogSession implements FrameworkTool {
     private int addRequired(List<ToolCallback> selected, int characters, ToolCallback callback) {
         int next = SpringAiToolCatalog.schemaCharacters(callback);
         if (selected.size() >= businessToolLimit()) {
-            throw new IllegalStateException("planned tool count exceeds maxTools="
-                    + policy.maxTools() + " when adding " + callback.getToolDefinition().name());
+            throw new ToolCountBudgetExceededException(selected.size() + 1, businessToolLimit(),
+                    callback.getToolDefinition().name());
         }
         if ((long) characters + next > businessSchemaLimit()) {
             throw new ToolSchemaBudgetExceededException((long) characters + next,
@@ -900,21 +993,57 @@ final class ToolCatalogSession implements FrameworkTool {
         return SpringAiToolCatalog.schemaCharacters(decisionCallback);
     }
 
-    private int businessToolLimit() { return policy.maxTools(); }
+    private int businessToolLimit() {
+        int limit = policy.maxTools();
+        if (InteractionExecutionPolicy.isInteraction(request.runRequest())
+                && request.plan().descriptor().onDemandContextPolicy() != null) {
+            limit = Math.min(limit, request.plan().descriptor().onDemandContextPolicy().selectedTools());
+        }
+        return limit - roleControlNames().size();
+    }
 
     private int businessSchemaLimit() {
-        return policy.maxToolSchemaCharacters();
+        return policy.maxToolSchemaCharacters() - roleControlNames().stream().map(authorized::get)
+                .filter(Objects::nonNull).mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
+    }
+
+    private boolean roleAllowed(String name) {
+        ToolCallback callback = authorized.get(name);
+        if (callback == null) return false;
+        var events = runs.eventsAfter(request.runId(), 0);
+        return InteractionExecutionPolicy.allowsTool(request.runRequest(), events, name, group(callback))
+                && (!InteractionExecutionPolicy.isInteraction(request.runRequest())
+                    || !InteractionExecutionPolicy.WAIT_EVENT_TOOL.equals(name)
+                    || InteractionModeFreshness.latestDesktopBaseline(request.runId(), events).isPresent());
+    }
+
+    private List<String> roleControlNames() {
+        if (!InteractionExecutionPolicy.isInteraction(request.runRequest())
+                || request.control().remainingToolCalls() == 0) return List.of();
+        List<String> result = new ArrayList<>(List.of(InteractionExecutionPolicy.SELECT_MODE_TOOL,
+                "ask_user_clarification"));
+        if (roleAllowed(InteractionExecutionPolicy.WAIT_EVENT_TOOL)) {
+            result.add(InteractionExecutionPolicy.WAIT_EVENT_TOOL);
+        }
+        for (String name : result) {
+            if (!authorized.containsKey(name)) throw new IllegalStateException("required interaction control is unavailable: " + name);
+        }
+        return List.copyOf(result);
     }
 
     private ToolCatalogProjection withControl(List<ToolCallback> business,
             int businessCharacters, int businessAvailable) {
         if (decisionCallback == null) throw new IllegalStateException("harness decision callback is unavailable");
+        List<ToolCallback> selected = new ArrayList<>(business.stream()
+                .filter(callback -> callback == catalogCallback || roleAllowed(callback.getToolDefinition().name()))
+                .filter(callback -> !roleControlNames().contains(callback.getToolDefinition().name())).toList());
+        for (String name : roleControlNames()) selected.add(authorized.get(name));
+        businessCharacters = selected.stream().mapToInt(SpringAiToolCatalog::schemaCharacters).sum();
         int characters = businessCharacters + controlCharacters();
-        if (business.size() > policy.maxTools()
+        if (selected.size() > policy.maxTools()
                 || businessCharacters > policy.maxToolSchemaCharacters()) {
             throw new IllegalStateException("harness decision callback exceeds model context limits");
         }
-        List<ToolCallback> selected = new ArrayList<>(business);
         selected.add(decisionCallback);
         return new ToolCatalogProjection(selected, characters, businessAvailable + 1);
     }

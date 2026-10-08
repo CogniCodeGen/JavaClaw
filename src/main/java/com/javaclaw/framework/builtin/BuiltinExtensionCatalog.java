@@ -65,6 +65,17 @@ public final class BuiltinExtensionCatalog {
             ToolProviderFactory hostTools, ToolProviderFactory subagents,
             DeferredContextSource memorySource, DeferredContextSource knowledgeSource,
             DeferredContextSource skillSource, FixedContextSource personaSource) {
+        return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor, hostTools,
+                subagents, memorySource, knowledgeSource, skillSource, personaSource, context -> List.of());
+    }
+
+    public static List<ExtensionArtifact> create(
+            MemoryRecallGateway memoryRecall, MemoryMutationGateway memoryMutations,
+            RetrieverContribution knowledgeRetriever, PromptContributor skillContributor,
+            ToolProviderFactory hostTools, ToolProviderFactory subagents,
+            DeferredContextSource memorySource, DeferredContextSource knowledgeSource,
+            DeferredContextSource skillSource, FixedContextSource personaSource,
+            ToolProviderFactory interactionTools) {
         Objects.requireNonNull(memoryRecall, "memoryRecall");
         Objects.requireNonNull(memoryMutations, "memoryMutations");
         Objects.requireNonNull(knowledgeRetriever, "knowledgeRetriever");
@@ -165,6 +176,9 @@ public final class BuiltinExtensionCatalog {
         extensions.add(declarative("subagent.run", "SubAgent",
                 "Parent/child AgentClient runs with shared kernel budgets and cancellation",
                 schema(true), 40, List.of(), registrar -> registrar.toolProvider(subagents)));
+        extensions.add(declarative("interaction.run", "Interaction Executor",
+                "Structured browser and desktop delegation with host-owned mode selection and event waits",
+                schema(true), 41, List.of(), registrar -> registrar.toolProvider(interactionTools)));
         extensions.add(declarative("context.compaction", "Context Compaction",
                 "Bounded model-visible messages and tool schemas with durable full evidence",
                 contextCompactionSchema(), 50, List.of(), registrar -> {}));

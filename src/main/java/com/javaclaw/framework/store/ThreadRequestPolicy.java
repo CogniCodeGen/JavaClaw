@@ -30,8 +30,13 @@ final class ThreadRequestPolicy {
             if (parent.equals(request.scope())) throw new IllegalArgumentException("child agent needs its own thread");
         }
         String requestedDirectory = request.attributes().getOrDefault("workDir", TextNode.valueOf("")).asText();
+        boolean interaction = parentRequest != null
+                && com.javaclaw.framework.core.InteractionExecutionPolicy.isInteraction(request);
+        // A parent's remaining Turn budget is temporary. Do not save it as the stable child's
+        // lifetime default. Explicitly configured child limits still intersect every request below.
         ThreadConfiguration initial = configuration(new ThreadConfiguration("", requestedDirectory, "host",
-                request.permissionCeiling(), request.budget(), Map.of()));
+                interaction ? PermissionSet.UNRESTRICTED : request.permissionCeiling(),
+                interaction ? RunBudget.UNBOUNDED : request.budget(), Map.of()));
         ThreadSnapshot thread = threads.create(new ThreadStartRequest(request.scope(), title(request), initial,
                 parent, request.linkage().parentRunId() == null ? null : TurnId.from(request.linkage().parentRunId())));
         if (thread.status() != ThreadStatus.ACTIVE) throw new IllegalStateException("thread is not active: " + thread.status());
@@ -46,7 +51,13 @@ final class ThreadRequestPolicy {
         Map<String, com.fasterxml.jackson.databind.JsonNode> attributes = new LinkedHashMap<>(request.attributes());
         attributes.put("workDir", TextNode.valueOf(config.workingDirectory()));
         attributes.put("framework.threadGeneration", com.fasterxml.jackson.databind.node.LongNode.valueOf(thread.generation()));
-        attributes.put("framework.threadModelPolicy", TextNode.valueOf(config.modelPolicyRef()));
+        // The stable interaction thread can outlive several parent Turns with different models.
+        // Its saved default must never replace this parent Turn's frozen model policy.
+        String modelPolicy = interaction
+                ? parentRequest.attributes().getOrDefault("framework.modelPolicyRef",
+                        TextNode.valueOf("")).asText()
+                : config.modelPolicyRef();
+        attributes.put("framework.threadModelPolicy", TextNode.valueOf(modelPolicy));
         attributes.put("framework.projectInstructions", TextNode.valueOf(String.join("\n\n", config.projectInstructions().values())));
         java.util.List<InputBlock> inputs = new java.util.ArrayList<>();
         if (!request.source().kind().equals("maintenance") && request.inputs().stream().noneMatch(input -> input.type().equals("core.message"))) {

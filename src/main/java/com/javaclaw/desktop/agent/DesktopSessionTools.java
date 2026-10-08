@@ -7,6 +7,7 @@ import com.javaclaw.agent.vision.DesktopVisualActiveView;
 import com.javaclaw.agent.vision.DesktopVisualTarget;
 import com.javaclaw.agent.vision.DesktopObservationCondition;
 import com.javaclaw.agent.vision.DesktopVisualConditionEvidence;
+import com.javaclaw.agent.vision.DesktopVisualConditionResult;
 import com.javaclaw.desktop.api.*;
 import com.javaclaw.framework.spi.ToolContract;
 import com.javaclaw.framework.spi.ToolEffectCapture;
@@ -31,7 +32,8 @@ import org.springframework.ai.tool.annotation.ToolParam;
 
 /** Agent facade. Every session call retains its constructor-bound workspace/run owner. */
 @ToolContract(group = "desktop-session", permissions = {"tool.execute"}, idempotent = false)
-public final class DesktopSessionTools implements ToolRuntimeContextProvider {
+public final class DesktopSessionTools implements ToolRuntimeContextProvider,
+        com.javaclaw.framework.spi.InteractionSurfaceProvider {
     private static final int MAX_OBSERVATION_CHARS = 20_000;
     private final DesktopSessionService sessions;
     private final DesktopSessionOwner owner;
@@ -46,7 +48,53 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
     private final ThreadLocal<RejectedApplicationLaunchProof> receiptLaunchRejection = new ThreadLocal<>();
     private final ThreadLocal<DesktopActionResult> receiptAction = new ThreadLocal<>();
     private final ThreadLocal<ActionProof> receiptActionProof = new ThreadLocal<>();
+    private final ThreadLocal<SurfaceProof> actionSurface = new ThreadLocal<>();
     private volatile com.javaclaw.desktop.api.DesktopApplicationCatalog applicationIdentities;
+
+    @Override public List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
+        List<com.javaclaw.framework.api.InteractionSurfaceEvent> values = new ArrayList<>();
+        SurfaceProof before = actionSurface.get();
+        actionSurface.remove();
+        if (before != null) values.add(surfaceEvent(before.sessionId(), before.surface(),
+                com.javaclaw.framework.spi.InteractionInvocation.current()));
+        for (String sessionId : sessions.liveSessionIds(owner).orElse(List.of())) {
+            sessions.surface(owner, sessionId).ifPresent(surface -> {
+                if (before == null || !before.sessionId().equals(sessionId)
+                        || !before.surface().surfaceId().equals(surface.surfaceId()))
+                    values.add(surfaceEvent(sessionId, surface, surfaceAssociation(sessionId, surface)));
+            });
+        }
+        return List.copyOf(values);
+    }
+
+    private com.javaclaw.framework.api.InteractionSurfaceEvent surfaceEvent(String sessionId,
+            DesktopSurfaceSnapshot surface, String invocation) {
+        return new com.javaclaw.framework.api.InteractionSurfaceEvent(java.util.UUID.randomUUID().toString(),
+                            java.time.Instant.ofEpochMilli(surface.observedAtMillis()),
+                            com.javaclaw.framework.api.InteractionSurfaceEvent.Mode.DESKTOP,
+                            com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.SURFACE_CHECKPOINT,
+                            surface.runtimeId(), sessionId, surface.surfaceId(), "", surface.logicalTargetId(),
+                            surface.applicationId(), surface.generation(), surface.contentRevision(), "",
+                            com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.UNKNOWN,
+                            com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.UNKNOWN,
+                            invocation, "", "");
+    }
+
+    private record SurfaceProof(String sessionId, DesktopSurfaceSnapshot surface) { }
+
+    private String surfaceAssociation(String sessionId, DesktopSurfaceSnapshot surface) {
+        ActionProof action = receiptActionProof.get();
+        ObservationProof observation = receiptObservation.get();
+        boolean matchedAction = action != null && action.sessionId().equals(sessionId)
+                && action.targetId().equals(surface.logicalTargetId()) && action.windowGeneration() > 0
+                && action.windowGeneration() == surface.generation();
+        boolean matchedObservation = observation != null && observation.sessionId().equals(sessionId)
+                && observation.targetId().equals(surface.logicalTargetId())
+                && observation.windowGeneration() == surface.generation()
+                && observation.contentRevision() == surface.contentRevision()
+                && observation.capturedAtMillis() == surface.observedAtMillis();
+        return matchedAction || matchedObservation ? com.javaclaw.framework.spi.InteractionInvocation.current() : "";
+    }
 
     public DesktopSessionTools(DesktopSessionService sessions, DesktopSessionOwner owner,
                                Path screenshots) {
@@ -394,12 +442,14 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
                     observation.observationId(), frame.windowGeneration(),
                     frame.contentRevision(), frame.capturedAtMillis(),
                     observedSubject(visual), visual.activeView(), frame.width(), frame.height(),
-                    visual.conditionEvidence(), committedSession.controlGranted()));
-            ToolEffectCapture.noteData("desktop_session_observe",
-                    DesktopToolPayloads.observation(committedSession, observation.observationId(),
+                    visual.conditionEvidence(), committedSession.controlGranted(), visual.conditionResults()));
+            var data = DesktopToolPayloads.observation(committedSession, observation.observationId(),
                             frame, observation.elements(), regions, visual.activeView(),
                             elementDiagnostics, visual.summary(), visual.visibleText(),
-                            visual.conditionEvidence()));
+                            visual.conditionEvidence());
+            var stage = desktopStage(committedSession, observation, visual);
+            if (stage != null) data.set("interactionStage", stage);
+            ToolEffectCapture.noteData("desktop_session_observe", data);
             return ToolResponse.success("desktop_session_observe",
                     "所属应用=" + session.target().application()
                             + "；observationId=" + observation.observationId()
@@ -421,6 +471,8 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
 
     /** Requirements come only from the constructor-bound host, never from the observe question. */
     private List<DesktopObservationCondition> acceptanceConditions() {
+        var binding = com.javaclaw.framework.spi.InteractionStageContext.current();
+        if (binding.isPresent()) return stageConditions(binding.get().contract());
         if (runtimeContext == null) return List.of();
         try {
             var result = new java.util.LinkedHashMap<String, DesktopObservationCondition>();
@@ -440,6 +492,95 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
             return result.size() > 12 ? List.of() : List.copyOf(result.values());
         } catch (RuntimeException unavailable) {
             return List.of();
+        }
+    }
+
+    private static List<DesktopObservationCondition> stageConditions(
+            com.fasterxml.jackson.databind.JsonNode contract) {
+        if (contract.path("version").asInt() != 3 || !contract.path("reliable").asBoolean(false)
+                || !contract.path("criteria").isArray()) return List.of();
+        try {
+            var conditions = new java.util.LinkedHashMap<String, DesktopObservationCondition>();
+            for (var criterion : contract.path("criteria")) {
+                if (!"desktop.observe".equals(criterion.path("capabilityId").asText())
+                        || criterion.path("requiredSubject").asText().isBlank()) continue;
+                if (!criterion.path("id").isTextual() || !criterion.path("requiredSubject").isTextual())
+                    return List.of();
+                var condition = new DesktopObservationCondition(criterion.path("id").asText(),
+                        criterion.path("requiredSubject").asText());
+                if (conditions.putIfAbsent(condition.criterionId(), condition) != null) return List.of();
+            }
+            return conditions.size() > 12 ? List.of() : List.copyOf(conditions.values());
+        } catch (RuntimeException invalid) {
+            return List.of();
+        }
+    }
+
+    /** Stage identity comes from the exact native capture, never the model's target descriptions. */
+    private com.fasterxml.jackson.databind.node.ObjectNode desktopStage(DesktopSessionInfo session,
+            DesktopObservation observation, DesktopVisualObservation visual) {
+        var binding = com.javaclaw.framework.spi.InteractionStageContext.current().orElse(null);
+        if (binding == null) return null;
+        var contract = binding.contract();
+        var requested = stageConditions(contract);
+        if (requested.isEmpty()) return null;
+        try {
+            DesktopFrame frame = observation.frame();
+            DesktopSurfaceSnapshot surface = observation.capturedSurface();
+            if (surface == null || surface.runtimeId().isBlank() || surface.surfaceId().isBlank()
+                    || !surface.logicalTargetId().equals(frame.targetId())
+                    || !surface.logicalTargetId().equals(session.target().id())
+                    || !surface.providerId().equals(session.target().providerId())
+                    || surface.applicationId().isBlank()
+                    || !surface.applicationId().equals(session.target().applicationId())
+                    || surface.generation() != frame.windowGeneration()
+                    || surface.contentRevision() != frame.contentRevision()
+                    || surface.observedAtMillis() != frame.capturedAtMillis()) return null;
+            DesktopSurfaceSnapshot current = sessions.surface(owner, session.sessionId()).orElse(null);
+            if (current == null || !surface.providerId().equals(current.providerId())
+                    || !surface.runtimeId().equals(current.runtimeId())
+                    || !surface.surfaceId().equals(current.surfaceId())
+                    || !surface.logicalTargetId().equals(current.logicalTargetId())
+                    || !surface.applicationId().equals(current.applicationId())
+                    || surface.generation() != current.generation()
+                    || surface.contentRevision() != current.contentRevision()
+                    || current.observedAtMillis() < surface.observedAtMillis()) return null;
+            var stage = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                    .put("schemaVersion", 1).put("kind", "observation").put("mode", "DESKTOP")
+                    .put("contractSequence", binding.contractSequence())
+                    .put("contractSha256", binding.contractSha256())
+                    .put("runtimeId", surface.runtimeId()).put("contextId", session.sessionId())
+                    .put("surfaceId", surface.surfaceId()).put("targetId", frame.targetId())
+                    .put("applicationId", surface.applicationId()).put("generation", surface.generation())
+                    .put("contentRevision", frame.contentRevision()).put("observationId", observation.observationId())
+                    .put("capturedAtMillis", frame.capturedAtMillis())
+                    .put("frameWidth", frame.width()).put("frameHeight", frame.height()).put("complete", true);
+            var conditions = stage.putArray("conditions");
+            for (var condition : requested) {
+                var criterion = java.util.stream.StreamSupport.stream(contract.path("criteria").spliterator(), false)
+                        .filter(value -> condition.criterionId().equals(value.path("id").asText()))
+                        .findFirst().orElseThrow();
+                var matching = visual.conditionResults().stream().filter(value ->
+                        condition.criterionId().equals(value.criterionId())
+                                && condition.subject().equals(value.subject())).toList();
+                var result = matching.size() == 1 ? matching.getFirst()
+                        : DesktopVisualConditionResult.unknown(condition);
+                var entry = conditions.addObject().put("criterionId", condition.criterionId())
+                        .put("predicateSha256", com.javaclaw.framework.spi.InteractionStageContext.predicateSha256(criterion))
+                        .put("outcome", result.outcome().name()).put("complete", result.complete());
+                if (result.complete() && result.content() != null) {
+                    entry.put("confidence", result.confidence());
+                    entry.put("contradiction", result.outcome() == DesktopVisualConditionResult.Outcome.FALSE);
+                    var content = result.content();
+                    entry.putObject("evidence").put("region", "main-content")
+                            .put("label", content.label()).put("role", content.role())
+                            .put("x", content.x()).put("y", content.y()).put("width", content.width())
+                            .put("height", content.height()).put("confidence", content.confidence());
+                }
+            }
+            return stage.toString().length() <= 32_000 ? stage : null;
+        } catch (RuntimeException unavailable) {
+            return null;
         }
     }
 
@@ -621,9 +762,22 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
                                    String subject, DesktopVisualActiveView activeView,
                                    int frameWidth, int frameHeight,
                                    List<DesktopVisualConditionEvidence> conditionEvidence,
-                                   boolean controlGranted) {
+                                   boolean controlGranted,
+                                   List<DesktopVisualConditionResult> conditionResults) {
         public ObservationProof {
             conditionEvidence = List.copyOf(conditionEvidence == null ? List.of() : conditionEvidence);
+            conditionResults = List.copyOf(conditionResults == null ? List.of() : conditionResults);
+        }
+
+        public ObservationProof(String sessionId, String targetId, String application,
+                                String applicationId, String observationId, long windowGeneration,
+                                long contentRevision, long capturedAtMillis,
+                                String subject, DesktopVisualActiveView activeView,
+                                int frameWidth, int frameHeight,
+                                List<DesktopVisualConditionEvidence> conditionEvidence, boolean controlGranted) {
+            this(sessionId, targetId, application, applicationId, observationId, windowGeneration,
+                    contentRevision, capturedAtMillis, subject, activeView, frameWidth, frameHeight,
+                    conditionEvidence, controlGranted, List.of());
         }
 
         public ObservationProof(String sessionId, String targetId, String application,
@@ -731,6 +885,7 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
                           java.util.function.Supplier<DesktopAction> input) {
         receiptAction.remove();
         receiptActionProof.remove();
+        actionSurface.remove();
         DesktopAction requested;
         try { requested = selectedTarget(input.get()); }
         catch (Exception invalid) {
@@ -749,6 +904,11 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider {
         catch (Exception invalidSession) { return failed(tool, sessionId, invalidSession); }
         receiptActionProof.set(new ActionProof(sessionId, targetId,
                 requested.observationId(), requested.windowGeneration(), null));
+        try {
+            sessions.surface(owner, sessionId).filter(surface -> surface.logicalTargetId().equals(targetId)
+                    && surface.generation() == requested.windowGeneration())
+                    .ifPresent(surface -> actionSurface.set(new SurfaceProof(sessionId, surface)));
+        } catch (RuntimeException unavailable) { /* Optional history cannot change input admission. */ }
         CompletionStage<DesktopActionResult> operation;
         try { operation = sessions.perform(owner, sessionId, requested); }
         catch (SecurityException | IllegalArgumentException rejected) {

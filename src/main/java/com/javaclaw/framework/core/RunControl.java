@@ -28,6 +28,8 @@ public final class RunControl implements CancellationToken {
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<EffectAttemptId, EffectAttempt> effectAttempts =
             new ConcurrentHashMap<>();
+    private final java.util.Set<String> trustedBrowserNavigationStarts = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> completedBrowserNavigations = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<EffectAttemptId, DesktopInputBinding> desktopInputBindings =
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DesktopObservationBaseline.Frame> desktopObservations =
@@ -245,6 +247,27 @@ public final class RunControl implements CancellationToken {
                 && !"NOT_SENT".equals(attempt.delivery());
     }
 
+    /** A mode switch cannot turn an uncertain physical input into a fresh attempt. */
+    public synchronized void assertNoUnknownInteractionEffect() {
+        var pending = effectAttempts.entrySet().stream().filter(entry -> unresolvedInput(entry.getValue()))
+                .findFirst();
+        if (pending.isPresent()) throw new ToolPermissionDeniedException(
+                "EFFECT_UNKNOWN: observe and reconcile the pending interaction before further input: "
+                        + pending.get().getKey().invocationId());
+    }
+
+    /** 有界只读安全摘要，不包含入参、资源 URL、句柄或释放门禁的能力。 */
+    public synchronized java.util.List<PendingInteractionEffect> pendingInteractionEffects() {
+        return effectAttempts.entrySet().stream().filter(entry -> unresolvedInput(entry.getValue()))
+                .sorted(java.util.Comparator.comparing(entry -> entry.getKey().sourceRunId() + "/" + entry.getKey().invocationId()))
+                .limit(8).map(entry -> new PendingInteractionEffect(entry.getKey().sourceRunId(),
+                        entry.getKey().invocationId(), entry.getValue().status() == null ? "UNKNOWN"
+                            : entry.getValue().status().name(), entry.getValue().delivery())).toList();
+    }
+
+    /** sourceRunId 为空时，动作属于本 Run；其余 ID 保留继承来源。 */
+    public record PendingInteractionEffect(String sourceRunId, String invocationId, String status, String delivery) {}
+
     /** A new input baseline never changes the old action's business effect or receipt. */
     private boolean observedAfterInput(EffectAttemptId id, EffectAttempt attempt,
             String resourceKey, com.fasterxml.jackson.databind.JsonNode arguments) {
@@ -345,20 +368,44 @@ public final class RunControl implements CancellationToken {
 
     /** Import effect safety state only; no spending or approval grants transfer. */
     public void inheritUnresolvedEffects(RunControl previous) {
-        inheritUnresolvedEffects(previous, Objects.requireNonNull(previous, "previous").effectNamespace);
+        inheritUnresolvedEffects(previous, Objects.requireNonNull(previous, "previous").effectNamespace, false);
     }
 
     /** Source-qualified invocation IDs keep old receipts and new receipts isolated. */
     public synchronized void inheritUnresolvedEffects(RunControl previous, String sourceRunId) {
+        inheritUnresolvedEffects(previous, sourceRunId, false);
+    }
+
+    /** Only a host-confirmed, distinct human request may release completed navigation fences. */
+    synchronized void inheritUnresolvedEffects(RunControl previous, String sourceRunId,
+            boolean allowCompletedBrowserNavigation) {
+        inheritUnresolvedEffects(previous, sourceRunId, allowCompletedBrowserNavigation, java.util.Set.of());
+    }
+
+    /** No-op exclusions must come from the source journal's exact host settlement proof. */
+    synchronized void inheritUnresolvedEffects(RunControl previous, String sourceRunId,
+            boolean allowCompletedBrowserNavigation, java.util.Set<String> completedNavigationNoOps) {
         Objects.requireNonNull(previous, "previous");
+        var settledNoOps = java.util.Set.copyOf(Objects.requireNonNull(completedNavigationNoOps,
+                "completedNavigationNoOps"));
         String source = Objects.requireNonNull(sourceRunId, "sourceRunId").trim();
         if (source.isBlank()) throw new IllegalArgumentException("effect source Run must not be blank");
         if (previous == this) throw new IllegalArgumentException("cannot inherit own control state");
         var snapshot = java.util.Map.copyOf(previous.effectAttempts);
+        var completedNavigations = java.util.Set.copyOf(previous.completedBrowserNavigations);
         // A queued turn may refresh after the previous execution publishes its final receipt.
         effectAttempts.keySet().removeIf(id -> id.sourceRunId().equals(source));
         desktopInputBindings.keySet().removeIf(id -> id.sourceRunId().equals(source));
         snapshot.forEach((id, attempt) -> {
+            // A new human turn may navigate again after a host navigation returned.
+            // This never changes same-Run replay protection or an uncertain attempt.
+            if (allowCompletedBrowserNavigation && id.sourceRunId().isBlank()
+                    && (completedNavigations.contains(id.invocationId())
+                            && completedBrowserNavigationStatus(attempt.status(), attempt.delivery())
+                        || settledNoOps.contains(id.invocationId())
+                            && attempt.policy() == ToolEffectPolicy.LEGACY
+                            && attempt.status() == EffectReceiptV1.Status.ACCEPTED
+                            && "NOT_SENT".equals(attempt.delivery()))) return;
             boolean unresolved = attempt.policy() == ToolEffectPolicy.OBSERVATION_GATED
                     // Keep consumed observations as well as unresolved window fences.
                     ? !(attempt.status() == EffectReceiptV1.Status.FAILED
@@ -396,6 +443,30 @@ public final class RunControl implements CancellationToken {
         persistStart.run();
         restoreEffectStart(invocationId, fingerprint, effectKey, idempotent,
                 policy, resourceKey);
+    }
+
+    /** Only the exact host navigation gateway may reserve an immutable read-only prepared path. */
+    synchronized void reserveReadOnlyBrowserNavigation(String invocationId, String fingerprint,
+            String effectKey, Runnable persistStart) {
+        assertReadOnlyBrowserNavigationAllowed(fingerprint, effectKey);
+        Objects.requireNonNull(persistStart, "persistStart").run();
+        // Keep the normal durable-attempt classification; a crash remains conservative.
+        restoreEffectStart(invocationId, fingerprint, effectKey, false, ToolEffectPolicy.LEGACY, "");
+    }
+
+    synchronized void assertReadOnlyBrowserNavigationAllowed(String fingerprint, String effectKey) {
+        assertNoUnknownInteractionEffect();
+        boolean accepted = false;
+        for (var attempt : effectAttempts.values()) {
+            if (!attempt.fingerprint().equals(fingerprint) && !attempt.effectKey().equals(effectKey)) continue;
+            if (attempt.status() == EffectReceiptV1.Status.FAILED && "NOT_SENT".equals(attempt.delivery())) continue;
+            if (attempt.policy() != ToolEffectPolicy.LEGACY || attempt.status() != EffectReceiptV1.Status.ACCEPTED) {
+                assertRepairRetryAllowed(fingerprint, effectKey, false, ToolEffectPolicy.LEGACY, "");
+                throw new ToolPermissionDeniedException("read-only navigation requires a completed accepted attempt");
+            }
+            accepted = true;
+        }
+        if (!accepted) throw new ToolPermissionDeniedException("read-only navigation requires an accepted prior attempt");
     }
 
     public void recordEffectStart(String fingerprint, boolean idempotent) {
@@ -442,6 +513,38 @@ public final class RunControl implements CancellationToken {
                 (key, attempt) -> new EffectAttempt(attempt.fingerprint(), attempt.effectKey(),
                         attempt.policy(), attempt.resourceKey(), status,
                         delivery == null ? "" : delivery, attempt.reconciled()));
+    }
+
+    /** Only the gateway's exact host implementation marker may establish this classification. */
+    void restoreTrustedBrowserNavigationStart(String invocationId) {
+        EffectAttempt attempt = effectAttempts.get(new EffectAttemptId("", invocationId));
+        if (attempt != null && attempt.policy() == ToolEffectPolicy.LEGACY)
+            trustedBrowserNavigationStarts.add(invocationId);
+    }
+
+    /** A browser receipt must identify the original navigation, not merely share its token. */
+    void restoreTrustedBrowserNavigationReceipt(String invocationId, String tool, String operation,
+            EffectReceiptV1.Status status, String delivery, String target) {
+        if (!trustedBrowserNavigationStarts.contains(invocationId)) return;
+        completedBrowserNavigations.remove(invocationId);
+        if ("web_navigate".equals(tool) && "navigate".equals(operation)
+                && target != null && !target.isBlank()
+                && completedBrowserNavigationStatus(status, delivery))
+            completedBrowserNavigations.add(invocationId);
+    }
+
+    /** Execution evidence only; this does not prove that the current page still has that URL. */
+    public boolean isCompletedBrowserNavigation(String invocationId) {
+        if (!trustedBrowserNavigationStarts.contains(invocationId)
+                || !completedBrowserNavigations.contains(invocationId)) return false;
+        EffectAttempt attempt = effectAttempts.get(new EffectAttemptId("", invocationId));
+        return attempt != null && completedBrowserNavigationStatus(attempt.status(), attempt.delivery());
+    }
+
+    private static boolean completedBrowserNavigationStatus(EffectReceiptV1.Status status, String delivery) {
+        return (status == EffectReceiptV1.Status.ACCEPTED || status == EffectReceiptV1.Status.OBSERVED
+                || status == EffectReceiptV1.Status.VERIFIED)
+                && ("".equals(delivery) || "SENT".equals(delivery));
     }
 
     /** Bind a launch to its typed host receipt identity; never inspect model output or detail text. */
