@@ -62,6 +62,18 @@ awk '
 ' "$header_java" > "$header_java.trusted"
 mv "$header_java.trusted" "$header_java"
 
+# jextract can leave a trailing empty line after its final class brace.
+# Canonicalize that whitespace so regeneration also passes git diff --check.
+awk '
+  { lines[NR] = $0 }
+  END {
+    last = NR
+    while (last > 0 && lines[last] == "") last--
+    for (line = 1; line <= last; line++) print lines[line]
+  }
+' "$header_java" > "$header_java.eof"
+mv "$header_java.eof" "$header_java"
+
 files=(desktop_bridge_h.java 'desktop_bridge_h$shared.java' \
        jc_desktop_action.java jc_desktop_element.java jc_desktop_frame.java jc_desktop_window.java)
 if [[ "$mode" == generate ]]; then

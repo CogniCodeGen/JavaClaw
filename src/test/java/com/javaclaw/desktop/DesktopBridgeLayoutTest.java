@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DesktopBridgeLayoutTest {
     @Test
     void generatedLayoutsMatchTheVersionedNativeAbi() {
-        assertEquals(432, jc_desktop_window.layout().byteSize());
+        assertEquals(448, jc_desktop_window.layout().byteSize());
         assertEquals(64, jc_desktop_frame.layout().byteSize());
         assertEquals(64, jc_desktop_action.layout().byteSize());
         assertEquals(348, jc_desktop_element.layout().byteSize());

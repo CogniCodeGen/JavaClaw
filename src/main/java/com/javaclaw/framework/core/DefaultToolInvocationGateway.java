@@ -182,6 +182,17 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
                 && com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.isExactHostTool(request.tool())
                 && java.util.Set.of("desktop_session_click", "desktop_session_type", "desktop_session_key",
                         "desktop_session_scroll").contains(descriptor.name());
+        boolean limitedDesktopClick = runStore != null && trustedDesktopInput
+                && InteractionExecutionPolicy.isInteraction(request.runRequest())
+                && descriptor.name().equals("desktop_session_click");
+        if (limitedDesktopClick) {
+            try {
+                DesktopActionProgressLimit.assertClickAllowed(request.context().runId(),
+                        runStore.eventsAfter(request.context().runId(), 0));
+            } catch (DesktopNoProgressException stalled) {
+                return CompletableFuture.failedFuture(stalled);
+            }
+        }
         boolean trustedBrowserNavigation = descriptor.name().equals("web_navigate")
                 && com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.isExactHostTool(request.tool());
         JsonNode desktopInputArguments = trustedDesktopInput ? request.arguments() : null;
@@ -269,11 +280,15 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
             } else request.control().reserveEffect(invocationId, fingerprint, effectKey,
                     descriptor.idempotent(), descriptor.effectPolicy(), finalResourceKey, desktopInputArguments,
                     () -> {
-                        if (limitedDesktopDiscovery) {
+                        if (limitedDesktopDiscovery || limitedDesktopClick) {
                             // Serialize the last check with durable reservation across distinct direct-call controls.
                             runStore.withRunAcceptanceLock(request.context().runId(), () -> {
-                                DesktopFrameRecoveryLimit.assertDiscoveryAllowed(request.context().runId(),
-                                        runStore.eventsAfter(request.context().runId(), 0), invocationId);
+                                var history = runStore.eventsAfter(request.context().runId(), 0);
+                                if (limitedDesktopDiscovery)
+                                    DesktopFrameRecoveryLimit.assertDiscoveryAllowed(request.context().runId(),
+                                            history, invocationId);
+                                if (limitedDesktopClick)
+                                    DesktopActionProgressLimit.assertClickAllowed(request.context().runId(), history);
                                 persistStart.run();
                                 return null;
                             });

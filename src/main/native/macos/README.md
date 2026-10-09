@@ -6,15 +6,41 @@ Pass a destination to place it in a portable distribution's
 `runtime/native/macos/` directory. The distribution build must sign this
 library together with the application bundle.
 
-The bridge lists currently on-screen shareable windows, captures a selected window with
-ScreenCaptureKit, and follows the topmost window of the same process as it
-changes. It keeps one BGRA frame in memory and returns copied frames through
+The bridge lists currently on-screen shareable windows and captures the exact
+selected window with ScreenCaptureKit. ABI v7 keeps that native window ID fixed
+for the session: another frontmost window of the same process, including a
+detached chat or a sheet, never silently replaces it. A minimized, off-screen
+or closed target has no usable frame; a different window requires a separately
+discovered target and explicit session. It keeps one BGRA frame in memory and returns copied frames through
 the C ABI; callers release them with `jc_desktop_release_frame`. A window or
 size change increments the generation and invalidates old action coordinates.
 ABI v4 also increments a separate content revision when captured pixels change.
 `jc_desktop_list_elements` exposes a bounded, value-free Accessibility summary
 for the selected frame. Java binds the returned elements and visual coordinates
 to an observation ID before allowing an action.
+Window relationships remain `UNKNOWN` unless public Accessibility `AXParent`
+and window/sheet objects uniquely match both actual ScreenCaptureKit windows.
+Sheets are read through the public `AXChildren` hierarchy and `AXSheet` role.
+These bounded read-only queries never infer a parent from PID, title or Z order.
+Java additionally requires an exact parent identity in the same discovery
+snapshot before exposing `NATIVE_PARENT`.
+
+`jc_desktop_window_exists` separately checks the complete Core Graphics window
+list, including off-screen/minimized windows, against the original PID and
+process creation identity before and after the read. Missing screen-recording
+permission or an incomplete/native read failure remains unknown. This liveness
+query does not capture a frame, focus a window or grant input authority.
+
+For a source checkout that has already initialized its application data, manually
+precompile the matching ABI v7 library from the project root:
+
+```bash
+src/main/native/macos/build.sh "$PWD/data/native/macos/libjavaclaw_desktop.dylib"
+```
+
+Startup only loads this precompiled library; it never compiles, downloads or
+extracts one. The script's default output remains `target/native/macos/` and
+portable distributions continue to use `runtime/native/macos/`.
 The optional `jc_desktop_launch_application` entry point resolves an exact
 installed application display name or bundle ID to a `.app` bundle, checks
 the bundle and launched process identity, and asks `NSWorkspace` to activate

@@ -153,8 +153,17 @@ final class DesktopDiscoveryEvidence {
         if (!entries.isArray() || count < 0 || count != entries.size()) return false;
         for (JsonNode entry : entries) {
             if (!onlyFields(entry, Set.of("providerId", "targetId", "processId", "application",
-                    "applicationId", "title", "minimized", "visible", "systemSurface"))
+                    "applicationId", "title", "minimized", "visible", "systemSurface",
+                    "parentTargetId", "relationProof"))
                     || text(entry, "providerId").isBlank() || text(entry, "targetId").isBlank()) return false;
+            if (entry.has("parentTargetId") || entry.has("relationProof")) {
+                if (!entry.has("parentTargetId") || !entry.has("relationProof")) return false;
+                String parent = text(entry, "parentTargetId");
+                String relation = text(entry, "relationProof");
+                if (!(relation.equals("UNKNOWN") && parent.isEmpty()
+                        || relation.equals("NATIVE_PARENT") && !parent.isBlank()
+                            && !parent.equals(text(entry, "targetId")))) return false;
+            }
             JsonNode process = entry.path("processId");
             if (!process.isIntegralNumber() || !process.canConvertToLong() || process.longValue() < 0) return false;
             text(entry, "application");

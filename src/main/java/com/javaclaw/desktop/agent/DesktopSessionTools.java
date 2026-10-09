@@ -51,8 +51,42 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
     private final ThreadLocal<SurfaceProof> actionSurface = new ThreadLocal<>();
     private volatile com.javaclaw.desktop.api.DesktopApplicationCatalog applicationIdentities;
 
+    @Override public void bindInteractionObserver(
+            java.util.function.Consumer<com.javaclaw.framework.api.InteractionSurfaceEvent> observer) {
+        try { sessions.bindWindowObserver(owner, event -> observer.accept(windowEvent(event))); }
+        catch (RuntimeException unavailable) { /* Tracing cannot prevent the ordinary tool lifecycle. */ }
+    }
+
+    private com.javaclaw.framework.api.InteractionSurfaceEvent windowEvent(DesktopWindowTrackingEvent event) {
+        var kind = switch (event.kind()) {
+            case DISCOVERED -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_DISCOVERED;
+            case OPENED -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_OPENED;
+            case HIDDEN -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_HIDDEN;
+            case SHOWN -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_SHOWN;
+            case UNAVAILABLE -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_UNAVAILABLE;
+            case CLOSED -> com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.WINDOW_CLOSED;
+        };
+        boolean parent = DesktopTarget.NATIVE_PARENT.equals(event.relationProof())
+                && !event.parentTargetId().isBlank() && !event.surfaceId().isBlank();
+        var value = new com.javaclaw.framework.api.InteractionSurfaceEvent(event.eventId(),
+                java.time.Instant.ofEpochMilli(event.observedAtMillis()),
+                com.javaclaw.framework.api.InteractionSurfaceEvent.Mode.DESKTOP, kind,
+                event.runtimeId(), event.sessionId(), event.surfaceId(), "", event.targetId(),
+                event.applicationId(), 0, 0, parent ? event.parentTargetId() : "",
+                parent ? com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.PARENT
+                        : com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.UNKNOWN,
+                parent ? com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.HOST_PROVEN
+                        : com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.UNKNOWN,
+                "", "", "");
+        return event.association() == DesktopWindowTrackingEvent.Association.OBSERVED_AFTER
+                ? value.withObservedAfter(event.sourceInvocationId(), event.sourceSurfaceId()) : value;
+    }
+
     @Override public List<com.javaclaw.framework.api.InteractionSurfaceEvent> currentInteractionSurfaces() {
         List<com.javaclaw.framework.api.InteractionSurfaceEvent> values = new ArrayList<>();
+        // Replaying stable event IDs compensates failed asynchronous persistence. Journal deduplicates them.
+        try { windowTrackingEvents().forEach(event -> values.add(windowEvent(event))); }
+        catch (RuntimeException unavailable) { /* Keep normal capture checkpoints reachable. */ }
         SurfaceProof before = actionSurface.get();
         actionSurface.remove();
         if (before != null) values.add(surfaceEvent(before.sessionId(), before.surface(),
@@ -74,13 +108,30 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                             com.javaclaw.framework.api.InteractionSurfaceEvent.Mode.DESKTOP,
                             com.javaclaw.framework.api.InteractionSurfaceEvent.Kind.SURFACE_CHECKPOINT,
                             surface.runtimeId(), sessionId, surface.surfaceId(), "", surface.logicalTargetId(),
-                            surface.applicationId(), surface.generation(), surface.contentRevision(), "",
-                            com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.UNKNOWN,
-                            com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.UNKNOWN,
+                            surface.applicationId(), surface.generation(), surface.contentRevision(), surface.parentTargetId(),
+                            DesktopTarget.NATIVE_PARENT.equals(surface.relationProof())
+                                ? com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.PARENT
+                                : com.javaclaw.framework.api.InteractionSurfaceEvent.Relation.UNKNOWN,
+                            DesktopTarget.NATIVE_PARENT.equals(surface.relationProof())
+                                ? com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.HOST_PROVEN
+                                : com.javaclaw.framework.api.InteractionSurfaceEvent.RelationProof.UNKNOWN,
                             invocation, "", "");
     }
 
     private record SurfaceProof(String sessionId, DesktopSurfaceSnapshot surface) { }
+
+    private List<DesktopWindowTrackingEvent> windowTrackingEvents() {
+        List<DesktopWindowTrackingEvent> events = new ArrayList<>();
+        long cursor = 0;
+        // Service ring is bounded at 4096. Do not permanently strand later events behind page one.
+        for (int page = 0; page < 9; page++) {
+            var snapshot = sessions.snapshotWindowTracking(owner, cursor, 500);
+            events.addAll(snapshot.events());
+            if (!snapshot.hasMore() || snapshot.nextSequence() <= cursor) break;
+            cursor = snapshot.nextSequence();
+        }
+        return List.copyOf(events);
+    }
 
     private String surfaceAssociation(String sessionId, DesktopSurfaceSnapshot surface) {
         ActionProof action = receiptActionProof.get();
@@ -152,6 +203,29 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                 values.add(live);
             }
         } catch (RuntimeException unavailable) { /* Inventory remains unknown. */ }
+        try {
+            var tracking = sessions.snapshotWindowTracking(owner, 0, 1);
+            var history = windowTrackingEvents();
+            var windows = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                    .put("kind", "desktop.windows.current").put("historicalOnly", true)
+                    .put("inputAuthority", false).put("freshObservation", false)
+                    .put("truncated", tracking.truncated() || history.size() > 16);
+            var events = windows.putArray("events");
+            history.stream().skip(Math.max(0, history.size() - 16)).forEach(event ->
+                    events.addObject().put("eventId", event.eventId()).put("kind", event.kind().name())
+                            .put("observedAtMillis", event.observedAtMillis()).put("sessionId", event.sessionId())
+                            .put("targetId", event.targetId()).put("runtimeId", event.runtimeId())
+                            .put("surfaceId", event.surfaceId()).put("parentTargetId", event.parentTargetId())
+                            .put("applicationId", event.applicationId()).put("sourceSurfaceId", event.sourceSurfaceId())
+                            .put("relationProof", event.relationProof())
+                            .put("sourceInvocationId", event.sourceInvocationId())
+                            .put("association", event.association().name()));
+            while (windows.toString().length() > 5500 && !events.isEmpty()) {
+                events.remove(0);
+                windows.put("truncated", true);
+            }
+            if (!events.isEmpty()) values.add(windows);
+        } catch (RuntimeException unavailable) { /* History is supplemental, never input authority. */ }
         return List.copyOf(values);
     }
 
@@ -171,7 +245,7 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
     @Tool(name = "desktop_session_targets", description = "列出桌面会话可选择的应用窗口。应用已启动或已调用过 desktop_session_launch_application 时，用此工具重新发现窗口，再打开会话；不要重复启动。按所属应用列确认目标；窗口标题中的应用名或 bundle ID 不代表该窗口属于该应用。目标应用不在列表中时可用 desktop_session_launch_application 按准确应用名或 bundle ID 启动。")
     public String targets() {
         try {
-            List<DesktopTarget> values = await(sessions.discoverTargets(), 10);
+            List<DesktopTarget> values = await(sessions.discoverTargets(owner), 10);
             if (values.isEmpty()) {
                 DesktopAvailability availability = sessions.availability();
                 if (availability.available()) {
@@ -198,6 +272,21 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                     + "若目标应用不在列表中，可用 desktop_session_launch_application 启动该应用，"
                     + "或显示/恢复其窗口后重新发现；不要猜测目标 ID。");
         } catch (Exception failure) { return failed("desktop_session_targets", "", failure); }
+    }
+
+    @ToolContract(group = "desktop-session", permissions = {"tool.read"}, idempotent = true)
+    @Tool(name = "desktop_session_window_candidates", description = "只读发现当前会话同一真实应用/进程实例的窗口候选，可由宿主等待新窗口最多3秒。保留全部候选，不自动选最后出现的窗口。observedAfterAction只表示操作后观察到，不能证明操作创建窗口；只有NATIVE_PARENT证明原生父关系。选定确切targetId后显式desktop_session_open并重新observe；此发现不刷新输入基线，也不清除未知效果。")
+    public String windowCandidates(@ToolParam(description = "当前所有者的桌面会话ID") String sessionId,
+            @ToolParam(required = false, description = "宿主等待毫秒，默认0，范围0到3000") Long waitMillis) {
+        try {
+            long wait = waitMillis == null ? 0 : waitMillis;
+            if (wait < 0 || wait > 3000) throw new IllegalArgumentException("等待范围为0到3000毫秒");
+            var value = await(sessions.discoverWindowCandidates(owner, sessionId, "", wait), 10);
+            ToolEffectCapture.noteData("desktop_session_window_candidates", DesktopToolPayloads.windowCandidates(value));
+            return ToolResponse.success("desktop_session_window_candidates", "窗口候选=" + value.candidates().size()
+                    + "；inventoryAvailable=" + value.inventoryAvailable() + "；truncated=" + value.truncated()
+                    + "。根据业务目标明确选择targetId再open/observe；多个候选不能自动选最后一个。");
+        } catch (Exception failure) { return failed("desktop_session_window_candidates", sessionId, failure); }
     }
 
     @ToolContract(group = "desktop-session", permissions = {"tool.read"}, idempotent = true)
@@ -315,12 +404,26 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
 
     @ToolContract(group = "desktop-session", permissions = {"tool.execute"},
             idempotent = false, effectPolicy = ToolEffectPolicy.ENSURE_STATE)
-    @Tool(name = "desktop_session_open", description = "先调用 desktop_session_targets 或 desktop_session_launch_application 获取真实目标 ID，按所属应用选择窗口，再打开后台预览会话；control=false 只允许观察，输入前应对该 targetId 再调用 open(control=true) 并重新 observe。返回的 sessionId 用于 desktop_session_observe 等会话工具。启动应用本身不会创建会话。")
+    @Tool(name = "desktop_session_open", description = "先调用 desktop_session_targets 或 desktop_session_launch_application 获取真实目标 ID，按所属应用选择窗口并打开预览会话；control=true 默认启用系统鼠标键盘事件，操作前会激活准确目标窗口，输入后恢复焦点，不使用 AXPress。control=false 只允许观察，输入前应对该 targetId 再调用 open(control=true) 并重新 observe。旧会话已有后台输入时禁止自动切换通道重试。返回的 sessionId 用于 desktop_session_observe 等会话工具。启动应用本身不会创建会话。")
     public String open(@ToolParam(description = "desktop_session_targets 或 desktop_session_launch_application 返回的目标 ID") String targetId,
                        @ToolParam(description = "是否启用本会话控制能力") boolean control) {
         receiptOpen.remove();
         try {
             DesktopSessionInfo session = await(sessions.open(owner, targetId, control), 200);
+            if (control && session.controlGranted() && !session.foregroundGranted()) {
+                if (!await(sessions.authorizeSystemInput(owner, session.sessionId()), 100))
+                    throw new SecurityException("系统鼠标键盘输入不可用，请检查电脑应用访问和系统权限；不会退回 AXPress");
+                DesktopSessionInfo enabled = sessions.info(owner, session.sessionId());
+                if (!session.sessionId().equals(enabled.sessionId())
+                        || !session.target().id().equals(enabled.target().id())
+                        || !session.target().providerId().equals(enabled.target().providerId())
+                        || session.target().processId() != enabled.target().processId()
+                        || !session.target().applicationId().equals(enabled.target().applicationId())
+                        || !session.target().application().equals(enabled.target().application())
+                        || !enabled.controlGranted() || !enabled.foregroundGranted())
+                    throw new IllegalStateException("系统输入模式或目标身份未确认，请重新发现并打开目标会话");
+                session = enabled;
+            }
             receiptOpen.set(new OpenedSessionProof(session.target().id(),
                     session.target().application(), session.target().applicationId(),
                     session.sessionId(), session.controlGranted()));
@@ -328,6 +431,8 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
             return ToolResponse.success("desktop_session_open", "sessionId=" + session.sessionId()
                     + "；目标 " + session.target().application() + " / " + session.target().title()
                     + "；可控制=" + session.controlGranted()
+                    + "；输入模式=" + (session.foregroundGranted() ? "系统鼠标键盘事件"
+                        : session.controlGranted() ? "尚未启用系统输入" : "只读观察")
                     + "；后续 desktop_session_observe 的会话参数名为 sessionId");
         } catch (Exception failure) { return failed("desktop_session_open", "", failure); }
     }
@@ -543,7 +648,10 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                     || !surface.logicalTargetId().equals(current.logicalTargetId())
                     || !surface.applicationId().equals(current.applicationId())
                     || surface.generation() != current.generation()
-                    || surface.contentRevision() != current.contentRevision()
+                    // Observation evidence describes the committed captured frame. A later
+                    // repaint (for example a blinking caret) must not erase that proof.
+                    // Input freshness remains checked separately by the session service.
+                    || surface.contentRevision() > current.contentRevision()
                     || current.observedAtMillis() < surface.observedAtMillis()) return null;
             var stage = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
                     .put("schemaVersion", 1).put("kind", "observation").put("mode", "DESKTOP")
@@ -586,7 +694,7 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
 
     @ToolContract(group = "desktop-session", permissions = {"tool.execute"},
             idempotent = false, effectPolicy = ToolEffectPolicy.OBSERVATION_GATED)
-    @Tool(name = "desktop_session_click", description = "基于最新观察点击目标。observationId 是独立的观察 UUID；带 :vN 等后缀的完整目标 ID 填 elementId。辅助功能不支持时自动切前台；返回待观察时先重新观察。")
+    @Tool(name = "desktop_session_click", description = "基于最新观察发送系统鼠标点击，不使用 AXPress。observationId 是独立的观察 UUID；带 :vN 等后缀的完整目标 ID 填 elementId，辅助功能元素用于定位坐标。先 open(control=true) 启用系统输入，再 observe；输入后重新观察，未知效果禁止盲目重试。")
     public String click(@ToolParam(description = "会话 ID") String sessionId,
                         @ToolParam(description = "最新观察返回的独立 observationId UUID，不含目标后缀") String observationId,
                         @ToolParam(description = "当前窗口代次") long generation,
@@ -602,7 +710,7 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
 
     @ToolContract(group = "desktop-session", permissions = {"tool.execute"},
             idempotent = false, effectPolicy = ToolEffectPolicy.OBSERVATION_GATED)
-    @Tool(name = "desktop_session_type", description = "向最新观察中的合法输入目标写入用户指定的完整文本。AX目标必须具有WRITE能力（actions含2）；PRESS=1或actions=0的只读容器不支持写入。后台语义写入可能替换控件全部原值；已授权前台时可使用合法视觉目标或观察内坐标，但会先定位点击，不得选择数字/动作按钮或危险控件。保持完整文本，不缩短为试字符或改成KEY串；无合适目标时报告或澄清，不自行扩展权限。")
+    @Tool(name = "desktop_session_type", description = "通过系统键盘事件向最新观察中的合法输入目标输入用户指定的完整文本；先鼠标点击定位，再输入文本。AX目标必须具有WRITE能力（actions含2）；也可使用合法视觉输入目标或观察内坐标，不得选择数字/动作按钮或危险控件。保持完整文本，不缩短为试字符或改成KEY串；输入后重新观察，未知效果禁止盲目重试。")
     public String type(@ToolParam(description = "会话 ID") String sessionId,
                        @ToolParam(description = "最新观察返回的 observationId") String observationId,
                        @ToolParam(description = "当前窗口代次") long generation,
@@ -642,10 +750,10 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                         generation, observationId, elementId, 0));
     }
 
-    @Tool(name = "desktop_session_takeover", description = "后台无法可靠操作时，为本会话启用前台接管；需电脑应用访问开关保持开启。")
+    @Tool(name = "desktop_session_takeover", description = "在尚未派发后台输入的会话中请求系统键鼠通道；需电脑应用访问开关保持开启。正常控制会话已在 open(control=true) 时启用。旧任务已派发后台动作时不得用此工具切通道重试；成功后须重新观察。")
     public String takeover(@ToolParam(description = "会话 ID") String sessionId) {
         try {
-            boolean allowed = await(sessions.authorizeForeground(owner, sessionId), 100);
+            boolean allowed = await(sessions.authorizeSystemInput(owner, sessionId), 100);
             ToolEffectCapture.noteData("desktop_session_takeover", allowed
                     ? DesktopToolPayloads.sessionState(sessionId,
                         DesktopSessionState.Kind.FOREGROUND_READY, true, DesktopActionResult.NextStep.OBSERVE)
@@ -900,8 +1008,21 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
             return failed(tool, sessionId, invalid);
         }
         String targetId;
-        try { targetId = effectResourceKey(sessionId); }
+        DesktopSessionInfo session;
+        try {
+            session = sessions.info(owner, sessionId);
+            targetId = session.target().id();
+        }
         catch (Exception invalidSession) { return failed(tool, sessionId, invalidSession); }
+        if (session.controlGranted() && !session.foregroundGranted()) {
+            DesktopActionResult blocked = new DesktopActionResult(DesktopActionResult.Status.DENIED,
+                    "本会话尚未启用系统鼠标键盘输入；请先 open(control=true)，再重新 observe；不会发送 AXPress",
+                    requested.windowGeneration(), DesktopActionResult.Mode.NONE,
+                    DesktopActionResult.Reason.SYSTEM_INPUT_REQUIRED, false,
+                    requested.observationId(), DesktopActionResult.NextStep.OPEN_SESSION);
+            publishAction(tool, sessionId, targetId, requested, blocked);
+            return ToolResponse.error(tool, blocked.detail());
+        }
         receiptActionProof.set(new ActionProof(sessionId, targetId,
                 requested.observationId(), requested.windowGeneration(), null));
         try {
@@ -910,6 +1031,9 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                     .ifPresent(surface -> actionSurface.set(new SurfaceProof(sessionId, surface)));
         } catch (RuntimeException unavailable) { /* Optional history cannot change input admission. */ }
         CompletionStage<DesktopActionResult> operation;
+        String invocation = com.javaclaw.framework.spi.InteractionInvocation.current();
+        try { sessions.beginWindowAction(owner, sessionId, invocation, requested.observationId()); }
+        catch (RuntimeException unavailable) { /* Tracing does not change input admission. */ }
         try { operation = sessions.perform(owner, sessionId, requested); }
         catch (SecurityException | IllegalArgumentException rejected) {
             DesktopActionResult result = new DesktopActionResult(
@@ -921,6 +1045,8 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
                     false, requested.observationId(), rejected instanceof SecurityException
                             ? DesktopActionResult.NextStep.CHECK_PERMISSIONS : DesktopActionResult.NextStep.OBSERVE);
             publishAction(tool, sessionId, targetId, requested, result);
+            try { sessions.finishWindowAction(owner, sessionId, invocation, result); }
+            catch (RuntimeException unavailable) { /* A rejected dispatch remains NOT_SENT. */ }
             return ToolResponse.fromException(tool, rejected);
         } catch (Exception unknown) {
             // An unclassified exception from a starting service call is not proof
@@ -935,6 +1061,8 @@ public final class DesktopSessionTools implements ToolRuntimeContextProvider,
         }
         try {
             DesktopActionResult result = await(operation, 30);
+            try { sessions.finishWindowAction(owner, sessionId, invocation, result); }
+            catch (RuntimeException unavailable) { /* Actual dispatch remains the service's authority. */ }
             sessions.acknowledgeActionResult(owner, sessionId, requested.observationId());
             publishAction(tool, sessionId, targetId, requested, result);
             return switch (result.status()) {

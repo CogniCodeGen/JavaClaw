@@ -45,7 +45,35 @@ effect `UNKNOWN`; a new observation establishes the application outcome. An
 input. Older clients could misread the new status as `FAILED`/`NOT_SENT`, so ABI
 v5 libraries and clients must not be mixed with v6. Structure layouts are unchanged.
 
-Optional additive extensions preserve the layouts introduced in ABI v5:
+ABI version 7 adds `parent_window_id` and `relation_kind` to each window record.
+The layout is 448 bytes on both supported platforms; clients and libraries must
+be upgraded together. `NATIVE_PARENT` is emitted only for a public native owner
+or parent relationship: Windows `GetWindow(GW_OWNER)` with a live owner in the
+same process, or macOS `AXParent` on a
+window/sheet with unique Accessibility-to-ScreenCaptureKit window matches.
+Missing permission, incomplete reads, ambiguity and ordinary independent
+windows produce `UNKNOWN`. Sharing a PID, window layer or Z order never proves
+parentage. Java exposes an opaque parent target only when the parent can also
+be uniquely resolved in the same discovery snapshot.
+Cross-process Windows owners remain `UNKNOWN`: ABI v7 carries no separate
+owner PID/process-creation identity, so their relationship cannot be exported.
+
+Sessions remain pinned to the exact native window selected at `open`. They do
+not follow another window of that process or an owned popup. A minimized,
+hidden or closed selected window yields no usable frame; reopening a different
+window requires discovery and an explicit new session. Discovery-only surface
+identities have zero generation, content revision and capture time, and confer
+neither a fresh observation nor input authority.
+
+ABI v7 also requires the read-only `jc_desktop_window_exists` entry point. It
+checks the exact PID, process creation identity and native window ID, including
+hidden/minimized windows. macOS uses the complete Core Graphics window list;
+Windows uses `IsWindow`, the owning PID and process creation time. Return 0 is a
+close proof only after these exact checks; permission/read failures are unknown.
+The provider retains at most 4096 discovery identities for this purpose, never
+for reopening stale targets. On-screen enumeration absence alone is unavailable.
+
+Optional additive extensions preserve the layouts of their ABI version:
 `jc_desktop_list_applications` reads installed application metadata without
 launching or sending input. It returns a complete UTF-8 JSON catalog of up to
 256 applications, with a maximum of 32768 bytes including the terminating NUL.
@@ -87,7 +115,7 @@ process instance. It does not depend on application names or enable the
 undocumented `AXEnhancedUserInterface` attribute.
 
 `jc_desktop_launch_application` was introduced as an ABI v3 extension. The
-current Java bridge requires ABI v6 for all desktop sessions and checks this
+current Java bridge requires ABI v7 for all desktop sessions and checks this
 symbol before use. The function accepts
 an exact installed application display name or bundle ID, never a path or
 command, and returns the actual process ID on success. It can also return a
@@ -114,10 +142,11 @@ JEXTRACT_BIN=/absolute/path/to/jextract src/main/native/generate-bindings.sh che
 ```
 
 The argument file limits extraction to JavaClaw's own ABI; it excludes system
-headers. Two deterministic normalizations are applied to jextract output:
+headers. Deterministic normalizations are applied to jextract output:
 its unused `C_LONG` constant becomes a platform-neutral `MemoryLayout` because
 Windows uses a 32-bit C `long` and macOS uses a 64-bit C `long`; and its default
-symbol lookup is replaced with the bridge's exact-path library lookup. The ABI
+symbol lookup is replaced with the bridge's exact-path library lookup; a trailing
+empty header-class line is removed. The ABI
 uses `int32_t` and `uint64_t`. Generated struct layouts and function wrappers
 are otherwise unmodified. Review the generated Java diff and run the check
 command whenever the header or jextract version changes.
@@ -143,3 +172,10 @@ the macOS script's default output remains `target/native/macos/`.
 Place the built library under the portable application's `runtime/native/`
 directory before signing the distribution. Startup only loads a precompiled
 library; it does not download, compile, or extract one.
+
+The source checkout's `/data/` directory and native binaries are Git-ignored.
+An installed `data/native/macos/libjavaclaw_desktop.dylib` is a local delivery
+artifact, not part of the committed source; a fresh checkout needs an explicit
+precompile or a separately supplied matching library. Keep its SHA-256 with the
+delivery record and package the matching binary under `runtime/native/` for a
+distribution. Java compilation does not rebuild or replace that artifact.

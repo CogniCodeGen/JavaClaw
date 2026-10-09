@@ -150,7 +150,7 @@ public final class TaskResultEvaluator {
                     // desktop receipts, not an independent earlier matching view chain.
                     if (desktop.contains(criterion) && !linkedDesktopCandidate(
                             contract, viewContract, criterion, event, desktopEvidenceBindings,
-                            desktopEvents, events, stopReason, capabilities, historicalViewIds)) continue;
+                            evidenceByCriterion, desktopEvents, events, stopReason, capabilities, historicalViewIds)) continue;
                     matched = index;
                     break;
                 }
@@ -202,7 +202,7 @@ public final class TaskResultEvaluator {
 
     private static boolean linkedDesktopCandidate(TaskContractV3 originalContract, TaskContractV2 viewContract,
             TaskCriterionV3 criterion, RunEventEnvelope candidate,
-            Map<String, String> previousBindings, List<RunEventEnvelope> events,
+            Map<String, String> previousBindings, Map<String, String> previousOrderedBindings, List<RunEventEnvelope> events,
             List<RunEventEnvelope> completeHistory, String stopReason, TrustedCapabilityRegistry capabilities,
             Set<String> historicalViewIds) {
         String evidenceRef = candidate.payload().path("evidenceRef").asText("");
@@ -218,6 +218,10 @@ public final class TaskResultEvaluator {
         // to the same actual native object, using the actual new open and original predicates.
         var reopened = DesktopReadOnlySessionRecovery.reopened(originalContract, criterion,
                 candidate, previousBindings, completeHistory);
+        // A different actual window needs its own explicit open, native candidate identity,
+        // complete subject proof and ordered read-only history, rather than the first window's session.
+        if (reopened.isEmpty()) reopened = DesktopExplicitWindowObservation.opened(originalContract, criterion,
+                candidate, previousOrderedBindings, completeHistory);
         if (reopened.isEmpty()) return false;
         TaskCriterion open = viewContract.criteria().getFirst();
         TaskCriterion observation = viewContract.criteria().stream()

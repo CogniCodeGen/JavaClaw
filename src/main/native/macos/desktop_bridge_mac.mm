@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
@@ -28,13 +29,15 @@
 #include <utility>
 #include <vector>
 #include <libproc.h>
+#include <signal.h>
 #include <unistd.h>
 
-static_assert(sizeof(jc_desktop_window) == 432, "desktop ABI window layout changed");
+static_assert(sizeof(jc_desktop_window) == 448, "desktop ABI window layout changed");
 static_assert(sizeof(jc_desktop_frame) == 64, "desktop ABI frame layout changed");
 static_assert(sizeof(jc_desktop_action) == 64, "desktop ABI action layout changed");
 static_assert(sizeof(jc_desktop_element) == 348, "desktop ABI element layout changed");
 static_assert(offsetof(jc_desktop_window, app_utf8) == 44, "desktop ABI window offset changed");
+static_assert(offsetof(jc_desktop_window, parent_window_id) == 432, "desktop ABI parent offset changed");
 static_assert(offsetof(jc_desktop_frame, timestamp_millis) == 32, "desktop ABI frame offset changed");
 static_assert(offsetof(jc_desktop_action, text_utf8) == 48, "desktop ABI action offset changed");
 
@@ -328,6 +331,10 @@ bool confirmedMinimized(SCWindow *window) {
     return minimized;
 }
 
+void fillWindowRelation(jc_desktop_window *out, SCShareableContent *content,
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(120));
+
 void fillWindow(jc_desktop_window *out, SCWindow *window, uint64_t initialId,
                 uint64_t processInstanceId,
                 bool inspectMinimized = false) {
@@ -351,25 +358,13 @@ void fillWindow(jc_desktop_window *out, SCWindow *window, uint64_t initialId,
     copyUtf8(out->title_utf8, sizeof(out->title_utf8), window.title);
 }
 
-SCWindow *preferredWindow(SCShareableContent *content, pid_t pid, uint64_t initialId, bool initialOnly) {
-    auto order = windowOrder();
-    SCWindow *fallback = nil;
-    SCWindow *preferred = nil;
-    size_t best = SIZE_MAX;
+SCWindow *selectedWindow(SCShareableContent *content, pid_t pid, uint64_t initialId) {
     for (SCWindow *window in content.windows) {
         if (!windowForProcess(window, pid) || !validWindow(window)
                 || foreignControlCenterItem(window)) continue;
-        if (window.windowID == initialId) fallback = window;
-        if (initialOnly && window.windowID != initialId) continue;
-        if (!window.isOnScreen) continue;
-        auto position = order.find(window.windowID);
-        size_t rank = position == order.end() ? SIZE_MAX - 1 : position->second;
-        if (!preferred || rank < best) {
-            preferred = window;
-            best = rank;
-        }
+        if (window.windowID == initialId) return window;
     }
-    return preferred ?: fallback;
+    return nil;
 }
 
 } // namespace
@@ -698,7 +693,9 @@ void MacSession::refresh() {
         frameReady.notify_all();
         return;
     }
-    SCWindow *selected = preferredWindow(content, pid, initialId, false);
+    // Keep the originally approved native window. Another visible window of
+    // this process, including a sheet or detached chat, is a separate target.
+    SCWindow *selected = selectedWindow(content, pid, initialId);
     if (!selected || !selected.isOnScreen) {
         stopStream();
         {
@@ -714,6 +711,7 @@ void MacSession::refresh() {
     }
     jc_desktop_window updated;
     fillWindow(&updated, selected, initialId, processInstanceId(process));
+    fillWindowRelation(&updated, content);
     bool changed;
     {
         std::lock_guard guard(state);
@@ -1007,6 +1005,128 @@ AXUIElementRef uniqueAxWindow(pid_t pid, const jc_desktop_window &target,
     CFRelease(rawWindows);
     if (!retained && result) *result = kAXErrorInvalidUIElement;
     return retained;
+}
+
+// Public AXParent and AXSheet children are evidence only when both AX objects have a
+// unique ScreenCaptureKit window match. PID, title and Z order are not evidence.
+void fillWindowRelation(jc_desktop_window *out, SCShareableContent *content,
+                        std::chrono::steady_clock::time_point deadline) {
+    if (!out || !content || !AXIsProcessTrusted()
+            || std::chrono::steady_clock::now() >= deadline) return;
+    ProcessInstance before{};
+    pid_t pid = static_cast<pid_t>(out->process_id);
+    if (!processInstance(pid, &before)
+            || processInstanceId(before) != out->process_instance_id) return;
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) return;
+    AXUIElementSetMessagingTimeout(app, 0.02);
+    CFTypeRef rawWindows = nullptr;
+    AXError error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, &rawWindows);
+    CFRelease(app);
+    if (error != kAXErrorSuccess || !rawWindows
+            || CFGetTypeID(rawWindows) != CFArrayGetTypeID()) {
+        if (rawWindows) CFRelease(rawWindows);
+        return;
+    }
+    CFArrayRef windows = static_cast<CFArrayRef>(rawWindows);
+    std::vector<AXUIElementRef> candidates;
+    auto add = [&](CFTypeRef value) {
+        if (!value || CFGetTypeID(value) != AXUIElementGetTypeID()) return;
+        auto element = static_cast<AXUIElementRef>(const_cast<void *>(value));
+        for (AXUIElementRef known : candidates) if (CFEqual(known, element)) return;
+        AXUIElementSetMessagingTimeout(element, 0.02);
+        candidates.push_back(static_cast<AXUIElementRef>(CFRetain(element)));
+    };
+    bool complete = CFArrayGetCount(windows) <= 64;
+    for (CFIndex i = 0; complete && i < CFArrayGetCount(windows); ++i) {
+        if (std::chrono::steady_clock::now() >= deadline) { complete = false; break; }
+        CFTypeRef value = CFArrayGetValueAtIndex(windows, i);
+        if (!value || CFGetTypeID(value) != AXUIElementGetTypeID()) { complete = false; break; }
+        add(value);
+        auto window = static_cast<AXUIElementRef>(const_cast<void *>(value));
+        CFTypeRef children = nullptr;
+        AXError sheetError = AXUIElementCopyAttributeValue(window, kAXChildrenAttribute, &children);
+        if (sheetError == kAXErrorSuccess && children) {
+            if (CFGetTypeID(children) != CFArrayGetTypeID()
+                    || CFArrayGetCount(static_cast<CFArrayRef>(children)) > 128) complete = false;
+            else for (CFIndex j = 0; complete && j < CFArrayGetCount(static_cast<CFArrayRef>(children)); ++j) {
+                if (std::chrono::steady_clock::now() >= deadline) { complete = false; break; }
+                CFTypeRef value = CFArrayGetValueAtIndex(static_cast<CFArrayRef>(children), j);
+                if (!value || CFGetTypeID(value) != AXUIElementGetTypeID()) { complete = false; break; }
+                auto child = static_cast<AXUIElementRef>(const_cast<void *>(value));
+                AXUIElementSetMessagingTimeout(child, 0.02);
+                CFTypeRef role = nullptr;
+                AXError roleError = AXUIElementCopyAttributeValue(child, kAXRoleAttribute, &role);
+                if (roleError != kAXErrorSuccess || !role || CFGetTypeID(role) != CFStringGetTypeID())
+                    complete = false;
+                else if (CFEqual(role, kAXSheetRole)) add(value);
+                if (role) CFRelease(role);
+            }
+        } else if (sheetError != kAXErrorAttributeUnsupported && sheetError != kAXErrorNoValue)
+            complete = false;
+        if (children) CFRelease(children);
+    }
+    AXUIElementRef child = nullptr;
+    int matches = 0;
+    for (AXUIElementRef candidate : candidates) {
+        if (!complete || std::chrono::steady_clock::now() >= deadline) { complete = false; break; }
+        CGRect bounds{};
+        pid_t actual = 0;
+        if (AXUIElementGetPid(candidate, &actual) != kAXErrorSuccess || actual != pid) {
+            complete = false; break;
+        }
+        if (!axBounds(candidate, &bounds)) { complete = false; break; }
+        if (sameBounds(bounds, *out)) { child = candidate; ++matches; }
+    }
+    auto uniqueWindow = [&](CGRect bounds) -> uint64_t {
+        uint64_t selected = 0;
+        for (SCWindow *window in content.windows) {
+            if (!windowForProcess(window, pid) || !validWindow(window)) continue;
+            jc_desktop_window value{};
+            fillWindow(&value, window, 0, out->process_instance_id);
+            if (!sameBounds(bounds, value)) continue;
+            if (selected) return 0;
+            selected = window.windowID;
+        }
+        return selected;
+    };
+    CFTypeRef parent = nullptr;
+    CFTypeRef childRole = nullptr;
+    bool childWindow = complete && matches == 1
+        && AXUIElementCopyAttributeValue(child, kAXRoleAttribute, &childRole) == kAXErrorSuccess
+        && childRole && CFGetTypeID(childRole) == CFStringGetTypeID()
+        && (CFEqual(childRole, kAXWindowRole) || CFEqual(childRole, kAXSheetRole));
+    if (childWindow && std::chrono::steady_clock::now() < deadline
+            && AXUIElementCopyAttributeValue(child, kAXParentAttribute, &parent) == kAXErrorSuccess
+            && parent && CFGetTypeID(parent) == AXUIElementGetTypeID()) {
+        auto parentElement = static_cast<AXUIElementRef>(const_cast<void *>(parent));
+        AXUIElementSetMessagingTimeout(parentElement, 0.02);
+        pid_t actual = 0;
+        CFTypeRef role = nullptr;
+        CGRect parentBounds{}, childBounds{};
+        int parentMatches = 0;
+        for (CFIndex i = 0; i < CFArrayGetCount(windows); ++i)
+            if (CFEqual(parent, CFArrayGetValueAtIndex(windows, i))) ++parentMatches;
+        bool parentWindow = AXUIElementCopyAttributeValue(parentElement, kAXRoleAttribute, &role)
+                == kAXErrorSuccess && role && CFGetTypeID(role) == CFStringGetTypeID()
+                && CFEqual(role, kAXWindowRole);
+        uint64_t parentId = 0;
+        ProcessInstance after{};
+        if (parentMatches == 1 && parentWindow && AXUIElementGetPid(parentElement, &actual) == kAXErrorSuccess
+                && actual == pid && axBounds(parentElement, &parentBounds)
+                && axBounds(child, &childBounds) && uniqueWindow(childBounds) == out->window_id
+                && (parentId = uniqueWindow(parentBounds)) != 0 && parentId != out->window_id
+                && std::chrono::steady_clock::now() < deadline && processInstance(pid, &after)
+                && sameProcessInstance(before, after)) {
+            out->parent_window_id = parentId;
+            out->relation_kind = JC_RELATION_NATIVE_PARENT;
+        }
+        if (role) CFRelease(role);
+    }
+    if (childRole) CFRelease(childRole);
+    if (parent) CFRelease(parent);
+    for (AXUIElementRef value : candidates) CFRelease(value);
+    CFRelease(rawWindows);
 }
 
 int axCandidatePriority(const AxCandidate &candidate) {
@@ -2296,10 +2416,56 @@ int32_t jc_desktop_list_windows(jc_desktop_window *windows, uint32_t capacity, u
             return left < right;
         });
         *count = static_cast<uint32_t>(sorted.size());
+        auto relationDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
         for (uint32_t index = 0; index < std::min(capacity, *count); ++index) {
             fillWindow(&windows[index], sorted[index].first, 0, sorted[index].second);
+            fillWindowRelation(&windows[index], content, relationDeadline);
         }
         return 0;
+    }
+}
+
+int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id,
+                                  uint64_t expected_instance) {
+    @autoreleasepool {
+        if (process_id == 0 || process_id > static_cast<uint64_t>(std::numeric_limits<pid_t>::max())
+                || window_id == 0 || window_id > std::numeric_limits<CGWindowID>::max()
+                || expected_instance == 0) return -1;
+        if (!CGPreflightScreenCaptureAccess()) return -2;
+        pid_t pid = static_cast<pid_t>(process_id);
+        auto unavailableProcess = [&]() -> int32_t {
+            errno = 0;
+            return kill(pid, 0) != 0 && errno == ESRCH ? 0 : -3;
+        };
+        ProcessInstance before{};
+        if (!processInstance(pid, &before)) return unavailableProcess();
+        if (processInstanceId(before) != expected_instance) return 0;
+        // All includes off-screen and minimized windows. The on-screen capture
+        // inventory must never be used to infer that a window was closed.
+        CFArrayRef raw = CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID);
+        if (!raw) return -3;
+        bool complete = true, found = false;
+        for (CFIndex i = 0; i < CFArrayGetCount(raw); ++i) {
+            CFTypeRef value = CFArrayGetValueAtIndex(raw, i);
+            if (!value || CFGetTypeID(value) != CFDictionaryGetTypeID()) { complete = false; continue; }
+            auto item = static_cast<CFDictionaryRef>(value);
+            CFTypeRef number = CFDictionaryGetValue(item, kCGWindowNumber);
+            CFTypeRef owner = CFDictionaryGetValue(item, kCGWindowOwnerPID);
+            int64_t nativeId = 0, nativePid = 0;
+            if (!number || !owner || CFGetTypeID(number) != CFNumberGetTypeID()
+                    || CFGetTypeID(owner) != CFNumberGetTypeID()
+                    || !CFNumberGetValue(static_cast<CFNumberRef>(number), kCFNumberSInt64Type, &nativeId)
+                    || !CFNumberGetValue(static_cast<CFNumberRef>(owner), kCFNumberSInt64Type, &nativePid)) {
+                complete = false; continue;
+            }
+            if (nativeId == static_cast<int64_t>(window_id) && nativePid == pid) found = true;
+        }
+        CFRelease(raw);
+        ProcessInstance after{};
+        if (!processInstance(pid, &after)) return unavailableProcess();
+        if (processInstanceId(after) != expected_instance) return 0;
+        if (!CGPreflightScreenCaptureAccess()) return -2;
+        return found ? 1 : complete ? 0 : -3;
     }
 }
 
@@ -2430,7 +2596,7 @@ void *jc_desktop_open(uint64_t process_id, uint64_t window_id,
                 return nullptr;
             }
         }
-        SCWindow *window = preferredWindow(content, static_cast<pid_t>(process_id), window_id, true);
+        SCWindow *window = selectedWindow(content, static_cast<pid_t>(process_id), window_id);
         if (!window || window.windowID != window_id) {
             writeDetail(detail_utf8, detail_capacity,
                 @"Target window is no longer available or shareable; discover windows again");
@@ -2451,6 +2617,7 @@ void *jc_desktop_open(uint64_t process_id, uint64_t window_id,
         }
         auto *session = new MacSession(static_cast<pid_t>(process_id), window_id, instance);
         fillWindow(&session->current, window, window_id, process_instance_id_expected);
+        fillWindowRelation(&session->current, content);
         session->generation = 1;
         session->available = true;
         if (!session->start(window, &error)) {

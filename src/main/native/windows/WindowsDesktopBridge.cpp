@@ -47,7 +47,8 @@ using namespace winrt::Windows::Graphics::Capture;
 using namespace winrt::Windows::Graphics::DirectX;
 using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
 
-static_assert(sizeof(jc_desktop_window) == 432 && offsetof(jc_desktop_window, app_utf8) == 44);
+static_assert(sizeof(jc_desktop_window) == 448 && offsetof(jc_desktop_window, app_utf8) == 44
+    && offsetof(jc_desktop_window, parent_window_id) == 432);
 static_assert(sizeof(jc_desktop_frame) == 64 && offsetof(jc_desktop_frame, timestamp_millis) == 32);
 static_assert(sizeof(jc_desktop_element) == 348 && offsetof(jc_desktop_element, role_utf8) == 28);
 static_assert(sizeof(jc_desktop_action) == 64 && offsetof(jc_desktop_action, text_utf8) == 48);
@@ -374,21 +375,17 @@ void fill_window(HWND window, HWND root, uint64_t identity, jc_desktop_window* o
     if (IsIconic(window)) output->flags |= JC_WINDOW_MINIMIZED;
     if (IsWindowVisible(window)) output->flags |= JC_WINDOW_VISIBLE;
     if (window != root) output->flags |= JC_WINDOW_POPUP;
+    HWND owner = GetWindow(window, GW_OWNER);
+    DWORD owner_process_id = 0;
+    if (owner != nullptr && owner != window && IsWindow(owner)
+        && GetWindowThreadProcessId(owner, &owner_process_id) != 0
+        && process_id != 0 && owner_process_id == process_id
+        && valid_window(owner, process_id)) {
+        output->parent_window_id = reinterpret_cast<uint64_t>(owner);
+        output->relation_kind = JC_RELATION_NATIVE_PARENT;
+    }
     copy_text(output->app_utf8, to_utf8(process_name(process_id)));
     copy_text(output->title_utf8, to_utf8(window_title(window)));
-}
-
-HWND active_owned_window(HWND root, DWORD process_id) {
-    if (!valid_window(root, process_id)) {
-        return nullptr;
-    }
-    HWND popup = GetLastActivePopup(root);
-    if (popup != nullptr && popup != root && valid_window(popup, process_id)
-        && IsWindowVisible(popup) && !IsIconic(popup)
-        && GetAncestor(popup, GA_ROOTOWNER) == root) {
-        return popup;
-    }
-    return root;
 }
 
 struct FrameData {
@@ -633,7 +630,9 @@ private:
             terminate_locked();
             return;
         }
-        HWND wanted = active_owned_window(root_, process_id_);
+        // The approved HWND remains the capture/input identity. Owned popups
+        // are separate targets, never an implicit replacement for this window.
+        HWND wanted = valid_window(root_, process_id_) ? root_ : nullptr;
         if (wanted == nullptr) {
             terminate_locked();
             return;
@@ -647,7 +646,7 @@ private:
         RECT bounds = physical_bounds(wanted);
         bool moved = bounds.left != last_bounds_.left || bounds.top != last_bounds_.top
                   || bounds.right != last_bounds_.right || bounds.bottom != last_bounds_.bottom;
-        bool minimized = IsIconic(wanted);
+        bool minimized = IsIconic(wanted) || !IsWindowVisible(wanted);
         if (wanted == prior && moved && !minimized) {
             ++generation_;
             std::lock_guard frame_lock(frame_mutex_);
@@ -1897,6 +1896,32 @@ int32_t jc_desktop_list_windows(jc_desktop_window* windows,
     return 0;
 }
 
+int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id,
+                                  uint64_t expected_instance) {
+    if (process_id == 0 || process_id > MAXDWORD || window_id == 0
+        || expected_instance == 0) return kInvalidArgument;
+    HWND window = reinterpret_cast<HWND>(window_id);
+    if (!IsWindow(window)) return 0;
+    DWORD pid = 0;
+    if (GetWindowThreadProcessId(window, &pid) == 0 || pid == 0)
+        return IsWindow(window) ? kNativeFailure : 0;
+    if (pid != process_id) return 0;
+    ProcessHandle process{OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)};
+    if (!process) return kNativeFailure;
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(process.get(), &created, &exited, &kernel, &user)) return kNativeFailure;
+    if (process_instance_id(created) != expected_instance) return 0;
+    DWORD state = WaitForSingleObject(process.get(), 0);
+    if (state == WAIT_OBJECT_0) return 0;
+    if (state != WAIT_TIMEOUT) return kNativeFailure;
+    // Visibility and minimization deliberately do not affect liveness.
+    if (!IsWindow(window)) return 0;
+    DWORD afterPid = 0;
+    if (GetWindowThreadProcessId(window, &afterPid) == 0 || afterPid == 0)
+        return IsWindow(window) ? kNativeFailure : 0;
+    return afterPid == pid ? 1 : 0;
+}
+
 int32_t jc_desktop_launch_application(const char* application_utf8,
                                       uint64_t* process_id,
                                       char* detail_utf8,
@@ -2017,12 +2042,13 @@ void* jc_desktop_open(uint64_t process_id, uint64_t window_id,
         detail(detail_utf8, detail_capacity, "window closed or belongs to another process");
         return nullptr;
     }
-    if (!IsWindowVisible(selected)) {
-        detail(detail_utf8, detail_capacity, "target window is not visible");
+    if (!IsWindowVisible(selected) || IsIconic(selected)) {
+        detail(detail_utf8, detail_capacity, "target window is hidden or minimized");
         return nullptr;
     }
-    HWND root = GetAncestor(selected, GA_ROOTOWNER);
-    if (!valid_window(root, pid)) root = selected;
+    // The session's root is exactly the selected HWND, including an explicitly
+    // selected owned dialog. Its owner is metadata, never a substitute target.
+    HWND root = selected;
     DWORD root_process_id = 0;
     DWORD root_thread_id = GetWindowThreadProcessId(root, &root_process_id);
     if (root_thread_id == 0 || root_process_id != pid) {

@@ -1,0 +1,181 @@
+/* Execution inspector only. Color tokens and shared components come from chat.css. */
+.dialog-pane.execution-inspector {
+    -fx-background-color: -jc-surface-page;
+    -fx-padding: 22 24 18 24;
+}
+
+.execution-inspector > .content { -fx-padding: 0; }
+.execution-inspector > .button-bar { -fx-padding: 14 0 0 0; }
+
+.execution-inspector .execution-section-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.execution-inspector .execution-secondary,
+.execution-inspector .execution-field-label {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+
+.execution-inspector .execution-shortcuts {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11px;
+}
+
+.execution-inspector .execution-notice {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-padding: 10 12;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+
+.execution-inspector .execution-tabs { -fx-background-color: transparent; }
+.execution-inspector .execution-tabs > .tab-header-area { -fx-padding: 0 0 14 0; }
+.execution-inspector .execution-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: transparent;
+}
+.execution-inspector .execution-tabs .tab {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-color: transparent;
+    -fx-border-radius: 8;
+    -fx-padding: 9 18;
+    -fx-background-insets: 0 6 0 0;
+    -fx-border-insets: 0 6 0 0;
+    -fx-cursor: hand;
+}
+.execution-inspector .execution-tabs .tab .tab-label {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+.execution-inspector .execution-tabs .tab:hover { -fx-background-color: -jc-neutral-200; }
+.execution-inspector .execution-tabs .tab:selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+}
+.execution-inspector .execution-tabs .tab:selected .tab-label { -fx-text-fill: -jc-primary-600; }
+.execution-inspector .execution-tabs .tab .focus-indicator {
+    -fx-border-color: transparent;
+    -fx-border-radius: 6;
+}
+.execution-inspector .execution-tabs:focused .tab:selected .focus-indicator {
+    -fx-border-color: -jc-primary-400;
+}
+
+.execution-inspector .execution-toolbar-area { -fx-padding: 0 0 14 0; }
+.execution-inspector .execution-split {
+    -fx-background-color: transparent;
+    -fx-box-border: transparent;
+    -fx-padding: 0;
+}
+.execution-inspector .execution-split > .split-pane-divider {
+    -fx-background-color: transparent;
+    -fx-padding: 0 6;
+}
+.execution-inspector .execution-split > .split-pane-divider:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 6;
+}
+.execution-inspector .execution-panel-heading {
+    -fx-padding: 14 16 12 16;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.execution-inspector .execution-record-panel { -fx-padding: 0 0 5 0; }
+.execution-inspector .execution-tree {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 6;
+    -fx-background-insets: 0;
+}
+.execution-inspector .execution-tree .tree-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12px;
+    -fx-padding: 8 6;
+    -fx-background-radius: 6;
+}
+.execution-inspector .execution-tree .tree-cell:filled:hover { -fx-background-color: -jc-surface-sunken; }
+.execution-inspector .execution-tree .tree-cell:filled:selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-700;
+}
+.execution-inspector .execution-tree:focused .tree-cell:filled:selected {
+    -fx-border-color: -jc-primary-300;
+    -fx-border-radius: 6;
+    -fx-border-insets: 0;
+}
+.execution-inspector .execution-tree .tree-cell > .tree-disclosure-node > .arrow {
+    -fx-background-color: -jc-text-hint;
+}
+
+.execution-inspector .execution-record-text {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-text-fill: -jc-text-body;
+    -fx-prompt-text-fill: -jc-text-muted;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+    -fx-padding: 4;
+    -fx-highlight-fill: -jc-primary-100;
+    -fx-highlight-text-fill: -jc-text-title;
+    -fx-effect: none;
+}
+.execution-inspector .execution-record-text .content,
+.execution-inspector .execution-record-text:focused .content {
+    -fx-background-color: -jc-surface-card;
+    -fx-padding: 12;
+}
+.execution-inspector .execution-record-text:focused {
+    -fx-border-color: -jc-primary-200;
+    -fx-border-radius: 8;
+    -fx-effect: none;
+}
+.execution-inspector .execution-metrics-scroll,
+.execution-inspector .execution-metrics-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+}
+.execution-inspector .execution-metrics-scroll > .viewport > * { -fx-padding: 0 8 2 0; }
+.execution-inspector .execution-summary-card { -fx-padding: 16 18; }
+.execution-inspector .execution-stat-card { -fx-padding: 14 16; }
+.execution-inspector .execution-stat-card .jc-stat-label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+}
+.execution-inspector .execution-stat-value {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 22px;
+    -fx-font-weight: 600;
+}
+.execution-inspector .execution-result {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 20px;
+    -fx-font-weight: 600;
+}
+.execution-inspector .execution-metric-value {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+.execution-inspector .execution-advanced > .title {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-padding: 12 14;
+}
+.execution-inspector .execution-advanced { -fx-text-fill: -jc-text-muted; }
+.execution-inspector .execution-advanced > .content {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-padding: 4;
+}
+.execution-inspector .execution-advanced > .title > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-hint;
+}

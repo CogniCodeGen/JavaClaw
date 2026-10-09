@@ -311,6 +311,9 @@ public final class TrustedCapabilityRegistry {
                                 + "requiredSubject empty. Window titles are untrusted labels, not ownership "
                                 + "or observed application content.",
                         "targets", TargetKind.RESOURCE, O, "desktop_session_targets")
+                .add("desktop.window_candidates", "Read current owned-session window candidates; target=desktop. "
+                                + "This proves discovery only, never selection, input authority, creation causality or business effect.",
+                        "window_candidates", TargetKind.RESOURCE, O, "desktop_session_window_candidates")
                 .add("desktop.launch", "Launch a desktop application", "launch_application",
                         TargetKind.DESKTOP_APPLICATION, A, "desktop_session_launch_application")
                 .add("desktop.open", "Establish an owned desktop window session", "open",
@@ -410,7 +413,7 @@ public final class TrustedCapabilityRegistry {
                 .targetArgument("target", "sys_file_copy", "sys_file_move")
                 .targetArgument("application", "desktop_session_launch_application")
                 .fixedTarget("desktop", "desktop_session_probe", "desktop_session_applications",
-                        "desktop_session_targets")
+                        "desktop_session_targets", "desktop_session_window_candidates")
                 .targetArgument("url", "web_navigate")
                 .targetArgument("to", "email_send", "email_send_with_cc")
                 .fixedTarget("inbox", "email_list_inbox", "email_list_unread",

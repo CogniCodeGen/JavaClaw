@@ -64,7 +64,7 @@ public final class AgentConfig {
     public static final String DESKTOP_AGENT_DESCRIPTION =
             "通过目标绑定会话观察和操作 Windows 11 或 macOS 14 应用窗口。" +
             "设置中的电脑应用访问开关开启且系统权限就绪时，可直接使用会话能力，前台接管也由此开关授权。" +
-            "后台优先，失败时可前台接管；支持实时预览和按需截图。" +
+            "交互会话默认使用系统鼠标键盘输入；只读会话仅观察，支持实时预览和按需截图。" +
             "不处理网页（由 Web 专家负责）、不做本地文件读写（由系统操作专家负责）。";
 
     public static final String COMMAND_AGENT_NAME = "命令行专家";

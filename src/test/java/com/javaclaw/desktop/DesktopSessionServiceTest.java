@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -558,6 +559,161 @@ class DesktopSessionServiceTest {
     }
 
     @Test
+    @DisplayName("首次后台输入前可选择系统输入，授权本身不会派发操作")
+    void freshControlledSessionCanAuthorizeSystemInputWithoutDispatch() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        List<DesktopConsentPort.Purpose> purposes = new CopyOnWriteArrayList<>();
+        DesktopConsentPort consent = (owner, target, purpose) -> {
+            purposes.add(purpose);
+            return true;
+        };
+        try (var service = new DefaultDesktopSessionService(List.of(provider), consent)) {
+            String id = service.open(OWNER, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession platform = provider.opened.getFirst();
+
+            assertTrue(service.authorizeSystemInput(OWNER, id).toCompletableFuture().join());
+
+            assertTrue(service.info(OWNER, id).foregroundGranted());
+            assertEquals(DesktopSessionState.Kind.FOREGROUND_READY, service.state(OWNER, id).kind());
+            assertEquals(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER, purposes.getLast());
+            assertEquals(0, platform.actionCount.get(), "选择系统输入模式不能顺便派发点击");
+            assertTrue(platform.foregroundModes.isEmpty());
+        }
+    }
+
+    @Test
+    @DisplayName("后台输入历史不能被新观察或效果核验清除，显式前台接管仍可用")
+    void systemInputRemainsDeniedAfterBackgroundDispatchFenceIsReconciled() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        List<DesktopConsentPort.Purpose> purposes = new CopyOnWriteArrayList<>();
+        DesktopConsentPort consent = (owner, target, purpose) -> {
+            purposes.add(purpose);
+            return true;
+        };
+        long capturedAt = System.currentTimeMillis();
+        Clock captureClock = Clock.fixed(java.time.Instant.ofEpochMilli(capturedAt),
+                java.time.ZoneOffset.UTC);
+        try (var service = new DefaultDesktopSessionService(List.of(provider), consent, captureClock)) {
+            String id = service.open(OWNER, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession platform = provider.opened.getFirst();
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, capturedAt,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
+            DesktopObservation before = observeCommitted(service, id);
+            platform.nextResult = new DesktopActionResult(DesktopActionResult.Status.UNKNOWN,
+                    "may have been sent", 1);
+            DesktopActionResult result = service.perform(OWNER, id,
+                    click(1, before.observationId())).toCompletableFuture().join();
+            assertTrue(result.dispatchAttempted());
+            assertEquals(List.of(false), platform.foregroundModes);
+
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, capturedAt + 250,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 2));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
+                    .map(value -> value.contentRevision() == 2).orElse(false));
+            DesktopObservation after = observeCommitted(service, id);
+            assertEquals(DesktopSessionState.Kind.LIVE, service.state(OWNER, id).kind());
+            assertTrue(service.reconcilePendingAction(OWNER, id,
+                    before.observationId(), after.observationId()).toCompletableFuture().join());
+            int consentCount = purposes.size();
+
+            CompletionException denied = assertThrows(CompletionException.class,
+                    () -> service.authorizeSystemInput(OWNER, id).toCompletableFuture().join(),
+                    "输入屏障已清除也不能把后台操作自动升级为系统输入重试");
+            assertTrue(denied.getCause() instanceof IllegalStateException);
+            assertFalse(service.info(OWNER, id).foregroundGranted());
+            assertEquals(consentCount, purposes.size(), "拒绝自动切换时不应请求前台授权");
+            assertEquals(1, platform.actionCount.get());
+            assertTrue(service.authorizeForeground(OWNER, id).toCompletableFuture().join(),
+                    "用户显式接管保留原有前台授权行为");
+        }
+    }
+
+    @Test
+    @DisplayName("后台已接受输入后同任务重开会话仍不能切换系统输入，新任务可以")
+    void backgroundDispatchHistorySurvivesReopenButDoesNotBlockANewScope() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        DesktopSessionOwner sameScopeOwner = new DesktopSessionOwner(
+                OWNER.workspaceId(), OWNER.scopeId(), OWNER.sourceKind(), "message-2");
+        DesktopSessionOwner newScopeOwner = new DesktopSessionOwner(
+                OWNER.workspaceId(), "run-2", OWNER.sourceKind(), "message-3");
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String firstId = service.open(OWNER, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession firstPlatform = provider.opened.getFirst();
+            firstPlatform.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, firstId).toCompletableFuture().join().isPresent());
+            DesktopObservation before = observeCommitted(service, firstId);
+            firstPlatform.nextResult = new DesktopActionResult(DesktopActionResult.Status.ACCEPTED,
+                    "input accepted", 1);
+            DesktopActionResult accepted = service.perform(OWNER, firstId,
+                    click(1, before.observationId())).toCompletableFuture().join();
+            assertEquals(DesktopActionResult.Status.ACCEPTED, accepted.status());
+            assertEquals(DesktopActionResult.Delivery.SENT, accepted.delivery());
+            assertEquals(List.of(false), firstPlatform.foregroundModes);
+            service.closeSession(OWNER, firstId);
+
+            String reopenedId = service.open(sameScopeOwner, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession reopened = provider.opened.getLast();
+            assertNotEquals(firstId, reopenedId);
+            CompletionException denied = assertThrows(CompletionException.class,
+                    () -> service.authorizeSystemInput(sameScopeOwner, reopenedId)
+                            .toCompletableFuture().join(),
+                    "关闭会话或换同任务的调用者都不能遗忘已有后台输入");
+            assertTrue(denied.getCause() instanceof IllegalStateException);
+            assertFalse(service.info(sameScopeOwner, reopenedId).foregroundGranted());
+            assertEquals(0, reopened.actionCount.get());
+
+            String newScopeId = service.open(newScopeOwner, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            assertTrue(service.authorizeSystemInput(newScopeOwner, newScopeId).toCompletableFuture().join(),
+                    "已接受的后台输入没有未决派发屏障，不应阻止新任务选择系统输入");
+            assertTrue(service.info(newScopeOwner, newScopeId).foregroundGranted());
+            assertEquals(0, provider.opened.getLast().actionCount.get());
+        }
+    }
+
+    @Test
+    @DisplayName("同一目标的未决输入阻止其他全新会话自动选择系统输入")
+    void targetWidePendingInputBlocksSystemInputInAnotherFreshSession() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A, TARGET_B));
+        DesktopSessionOwner otherOwner = new DesktopSessionOwner(
+                OWNER.workspaceId(), "run-2", "agent", "message-2");
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String firstId = service.open(OWNER, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession firstPlatform = provider.opened.getFirst();
+            firstPlatform.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, firstId).toCompletableFuture().join().isPresent());
+            DesktopObservation before = observeCommitted(service, firstId);
+            firstPlatform.nextResult = new DesktopActionResult(DesktopActionResult.Status.UNKNOWN,
+                    "may have been sent", 1);
+            assertEquals(DesktopActionResult.Status.UNKNOWN,
+                    service.perform(OWNER, firstId, click(1, before.observationId()))
+                            .toCompletableFuture().join().status());
+
+            String secondId = service.open(otherOwner, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            FakeSession secondPlatform = provider.opened.getLast();
+            CompletionException denied = assertThrows(CompletionException.class,
+                    () -> service.authorizeSystemInput(otherOwner, secondId).toCompletableFuture().join(),
+                    "新会话自身没有输入历史，仍必须遵守同目标的未决输入屏障");
+            assertTrue(denied.getCause() instanceof IllegalStateException);
+            assertFalse(service.info(otherOwner, secondId).foregroundGranted());
+            assertEquals(0, secondPlatform.actionCount.get());
+            assertEquals(0, secondPlatform.prepareCount.get());
+
+            String unrelatedId = service.open(otherOwner, TARGET_B.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            assertTrue(service.authorizeSystemInput(otherOwner, unrelatedId).toCompletableFuture().join(),
+                    "未决输入不能阻止其他目标的首次模式选择");
+        }
+    }
+
+    @Test
     void definiteBackgroundUnsupportedPreparesForegroundButDoesNotRepeatClick() {
         FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
         List<DesktopConsentPort.Purpose> purposes = new CopyOnWriteArrayList<>();
@@ -770,6 +926,8 @@ class DesktopSessionServiceTest {
                     .toCompletableFuture().join().sessionId();
             FakeSession firstPlatform = provider.opened.get(0);
             FakeSession secondPlatform = provider.opened.get(1);
+            assertTrue(service.authorizeForeground(OWNER, firstId).toCompletableFuture().join());
+            service.captureObservation(OWNER, firstId).toCompletableFuture().join();
             firstPlatform.emit(frame(TARGET_A, 1));
             secondPlatform.emit(frame(TARGET_A, 1));
             await(() -> service.snapshot(OWNER, firstId).toCompletableFuture().join().isPresent()

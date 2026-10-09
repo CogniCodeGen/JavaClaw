@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +47,9 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     private final Map<ActionKey, TargetKey> unacknowledgedActions = new ConcurrentHashMap<>();
     /** Platform processes outlive Run scopes; closing a scope must not replay a launch. */
     private final Map<LaunchKey, LaunchAdmission> launchAdmissions = new ConcurrentHashMap<>();
+    private final Map<DesktopSessionOwner, DesktopWindowTracker> windowTrackers = new ConcurrentHashMap<>();
+    private final java.util.concurrent.ScheduledExecutorService windowWatch = Executors.newSingleThreadScheduledExecutor(
+            Thread.ofPlatform().daemon(true).name("desktop-window-watch").factory());
     // Incremented when a scope/workspace closes so an in-flight consent dialog cannot
     // publish a session after its owner has gone away. Guarded by this service's monitor.
     private final Map<String, Long> workspaceEpochs = new HashMap<>();
@@ -70,6 +74,7 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         this.clock = Objects.requireNonNull(clock);
         this.observer = Objects.requireNonNull(observer);
         this.workers = Executors.newVirtualThreadPerTaskExecutor();
+        windowWatch.scheduleWithFixedDelay(this::watchWindows, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     @Override public DesktopAvailability availability() { return selection().availability(); }
@@ -87,6 +92,226 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
             return s.provider() == null ? List.of() : List.copyOf(s.provider().discoverTargets());
         }, workers);
     }
+
+    @Override public CompletionStage<List<DesktopTarget>> discoverTargets(DesktopSessionOwner owner) {
+        Objects.requireNonNull(owner, "owner");
+        TrackingLease lease = trackingLease(owner);
+        return CompletableFuture.supplyAsync(() -> {
+            requireLaunchActive(owner, lease.scope(), lease.workspaceEpoch(), lease.scopeEpoch());
+            Selection selected = selection();
+            if (selected.provider() == null) return List.of();
+            List<DesktopTarget> discovered = List.copyOf(selected.provider().discoverTargets());
+            trackDiscovery(owner, selected.provider(), discovered, lease);
+            return discovered;
+        }, workers);
+    }
+
+    @Override public AutoCloseable bindWindowObserver(DesktopSessionOwner owner,
+            java.util.function.Consumer<DesktopWindowTrackingEvent> listener) {
+        Objects.requireNonNull(owner, "owner"); ensureOpen();
+        return windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers)).bind(listener);
+    }
+
+    @Override public DesktopWindowTrackingSnapshot snapshotWindowTracking(DesktopSessionOwner owner,
+            long afterSequence, int limit) {
+        Objects.requireNonNull(owner, "owner");
+        if (afterSequence < 0 || limit < 1 || limit > 500)
+            throw new IllegalArgumentException("invalid window history bounds");
+        DesktopWindowTracker tracker = windowTrackers.get(owner);
+        return tracker == null ? new DesktopWindowTrackingSnapshot(List.of(), 0, afterSequence, false, false)
+                : tracker.snapshot(afterSequence, limit);
+    }
+
+    @Override public void beginWindowAction(DesktopSessionOwner owner, String sessionId,
+            String invocationId, String observationId) {
+        ManagedSession session = owned(owner, sessionId);
+        if (invocationId == null || invocationId.isBlank() || observationId == null || observationId.isBlank()) return;
+        try {
+            DesktopWindowTracker tracker = windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers));
+            // Optional pre-action inventory is bounded and cannot change input admission.
+            DesktopPlatformProvider provider = provider(session.target.providerId());
+            if (provider != null) refreshWindowTracking(owner, tracker, provider, 200);
+            session.windowActionSource(observationId).ifPresent(surface -> tracker.sourceBegin(sessionId,
+                    invocationId, observationId, session.target.id(), surface));
+        } catch (RuntimeException unavailable) { /* Input admission remains the responsibility of perform. */ }
+    }
+
+    @Override public void finishWindowAction(DesktopSessionOwner owner, String sessionId,
+            String invocationId, DesktopActionResult result) {
+        DesktopWindowTracker tracker = windowTrackers.get(owner);
+        if (tracker == null || result == null || invocationId == null) return;
+        if (tracker.finish(sessionId, invocationId, result)) try {
+            ManagedSession session = sessions.get(sessionId);
+            if (session != null && session.owner.equals(owner)) queueWindowTracking(owner, tracker, session);
+        } catch (RuntimeException unavailable) { /* Preserve the already settled physical action result. */ }
+    }
+
+    @Override public CompletionStage<DesktopWindowCandidates> discoverWindowCandidates(DesktopSessionOwner owner,
+            String sessionId, String invocationId, long waitMillis) {
+        if (waitMillis < 0 || waitMillis > 3_000) throw new IllegalArgumentException("window wait must be 0..3000ms");
+        requireEnabled();
+        ManagedSession session = owned(owner, sessionId);
+        TrackingLease lease = trackingLease(owner);
+        return CompletableFuture.supplyAsync(() -> {
+            long started = System.nanoTime(), minimumInventoryAt = clock.millis();
+            long deadline = started + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(Math.max(250, waitMillis));
+            DesktopWindowTracker tracker = windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers));
+            DesktopPlatformProvider provider = provider(session.target.providerId());
+            DesktopWindowCandidates result;
+            do {
+                requireLaunchActive(owner, lease.scope(), lease.workspaceEpoch(), lease.scopeEpoch());
+                session.requireOpen();
+                long remaining = Math.max(1, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                if (provider != null) refreshWindowTracking(owner, tracker, provider, Math.min(250, remaining), lease);
+                // Discovery identities are immutable and do not take the session's native-input
+                // monitor. A capture/perform in flight must not extend this bounded readonly wait.
+                DesktopSurfaceSnapshot identity = session.windowInventoryIdentity().orElseGet(() ->
+                        provider == null ? null : safeTargetIdentity(provider, session.target));
+                long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                result = tracker.candidates(sessionId, session.target.id(), identity, invocationId,
+                        clock.millis(), elapsed, System.nanoTime() >= deadline);
+                if (result.observedAtMillis() < minimumInventoryAt)
+                    result = new DesktopWindowCandidates(result.sessionId(), result.sourceTargetId(), result.sourceInvocationId(),
+                            List.of(), result.observedAtMillis(), result.waitedMillis(), result.timedOut(), false, result.truncated());
+                if (waitMillis == 0 || result.candidates().stream().anyMatch(DesktopWindowCandidate::observedAfterAction)
+                        || System.nanoTime() >= deadline) {
+                    requireLaunchActive(owner, lease.scope(), lease.workspaceEpoch(), lease.scopeEpoch());
+                    session.requireOpen();
+                    return result;
+                }
+                long sleepMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (sleepMillis <= 0) continue;
+                try { Thread.sleep(Math.min(100, sleepMillis)); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt(); throw new java.util.concurrent.CancellationException("window discovery interrupted");
+                }
+            } while (true);
+        }, workers);
+    }
+
+    private DesktopPlatformProvider provider(String id) {
+        return providers.stream().filter(candidate -> candidate.id().equals(id)).findFirst().orElse(null);
+    }
+
+    private TrackingLease trackingLease(DesktopSessionOwner owner) {
+        synchronized (this) {
+            ensureOpen(); requireEnabled();
+            ScopeKey scope = new ScopeKey(owner.workspaceId(), owner.scopeId());
+            return new TrackingLease(scope, workspaceEpochs.getOrDefault(owner.workspaceId(), 0L),
+                    scopeEpochs.getOrDefault(scope, 0L));
+        }
+    }
+
+    private void watchWindows() {
+        if (closed) return;
+        try {
+            Map<DesktopSessionOwner, ManagedSession> active = new HashMap<>();
+            sessions.values().stream().filter(session -> !session.closed)
+                    .forEach(session -> active.putIfAbsent(session.owner, session));
+            active.forEach((owner, session) -> {
+                DesktopWindowTracker tracker = windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers));
+                long now = System.nanoTime();
+                if (now < tracker.nextWatchAtNanos) return;
+                tracker.nextWatchAtNanos = now + java.util.concurrent.TimeUnit.SECONDS.toNanos(1);
+                queueWindowTracking(owner, tracker, session);
+            });
+        } catch (RuntimeException unavailable) { /* Supplemental history cannot stop session capture. */ }
+    }
+
+    private void queueWindowTracking(DesktopSessionOwner owner, DesktopWindowTracker tracker, ManagedSession session) {
+        try {
+            synchronized (this) {
+                if (closed || sessions.get(session.id) != session || session.closed || !session.owner.equals(owner)) return;
+                TrackingLease lease = trackingLease(owner);
+                DesktopPlatformProvider selected = provider(session.target.providerId());
+                if (selected != null) workers.execute(() -> refreshWindowTracking(owner, tracker, selected, 500, lease));
+            }
+        } catch (RuntimeException unavailable) { /* Optional late history never changes an input outcome. */ }
+    }
+
+    private boolean refreshWindowTracking(DesktopSessionOwner owner, DesktopWindowTracker tracker,
+            DesktopPlatformProvider provider, long timeoutMillis) {
+        TrackingLease lease;
+        try { lease = trackingLease(owner); }
+        catch (RuntimeException unavailable) { return false; }
+        return refreshWindowTracking(owner, tracker, provider, timeoutMillis, lease);
+    }
+
+    private boolean refreshWindowTracking(DesktopSessionOwner owner, DesktopWindowTracker tracker,
+            DesktopPlatformProvider provider, long timeoutMillis, TrackingLease lease) {
+        if (!tracker.scanning.compareAndSet(false, true)) return false;
+        try { requireLaunchActive(owner, lease.scope(), lease.workspaceEpoch(), lease.scopeEpoch()); }
+        catch (RuntimeException unavailable) { tracker.scanning.set(false); return false; }
+        CompletableFuture<WindowScan> scan;
+        try {
+            scan = CompletableFuture.supplyAsync(() -> windowScan(provider, tracker,
+                    List.copyOf(provider.discoverTargets())), workers);
+        } catch (RuntimeException unavailable) { tracker.scanning.set(false); return false; }
+        try {
+            WindowScan value = scan.get(Math.max(1, timeoutMillis), java.util.concurrent.TimeUnit.MILLISECONDS);
+            applyWindowScan(owner, tracker, provider.id(), value, lease);
+            tracker.scanning.set(false);
+            return true;
+        } catch (InterruptedException interrupted) {
+            scan.whenComplete((ignored, failure) -> tracker.scanning.set(false));
+            Thread.currentThread().interrupt(); return false;
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException | RuntimeException unavailable) {
+            // A late readonly enumeration is not published as a fresh before/after sample.
+            // Keep its single-flight lease until the actual native read exits.
+            scan.whenComplete((ignored, failure) -> tracker.scanning.set(false));
+            return false;
+        }
+    }
+
+    private void trackDiscovery(DesktopSessionOwner owner, DesktopPlatformProvider provider,
+            List<DesktopTarget> targets, TrackingLease lease) {
+        try {
+            DesktopWindowTracker tracker = windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers));
+            if (!tracker.scanning.compareAndSet(false, true)) return;
+            try { applyWindowScan(owner, tracker, provider.id(), windowScan(provider, tracker, targets), lease); }
+            finally { tracker.scanning.set(false); }
+        } catch (RuntimeException unavailable) { /* Preserve the original discovery result. */ }
+    }
+
+    private WindowScan windowScan(DesktopPlatformProvider provider, DesktopWindowTracker tracker, List<DesktopTarget> targets) {
+        boolean truncated = targets.size() > 512;
+        List<DesktopWindowTracker.Discovered> discovered = targets.stream().limit(512)
+                .filter(target -> provider.id().equals(target.providerId()))
+                .map(target -> new DesktopWindowTracker.Discovered(target, safeTargetIdentity(provider, target))).toList();
+        Set<String> present = new java.util.HashSet<>();
+        discovered.forEach(item -> present.add(DesktopWindowTracker.key(item.target(), item.surface())));
+        Set<String> closedTargets = new java.util.HashSet<>();
+        if (!truncated) for (var known : tracker.known(provider.id())) {
+            String key = DesktopWindowTracker.key(known.target(), known.surface());
+            if (present.contains(key)) continue;
+            try { if (provider.targetExists(known.target()).equals(Optional.of(false))) closedTargets.add(key); }
+            catch (RuntimeException unknown) { /* Enumeration absence is not a close proof. */ }
+        }
+        return new WindowScan(discovered, closedTargets, clock.millis(), truncated);
+    }
+
+    private static DesktopSurfaceSnapshot safeTargetIdentity(DesktopPlatformProvider provider, DesktopTarget target) {
+        try {
+            DesktopSurfaceSnapshot identity = provider.surfaceForTarget(target).orElse(null);
+            return identity != null && identity.providerId().equals(target.providerId())
+                    && identity.logicalTargetId().equals(target.id())
+                    && !identity.runtimeId().isBlank() && !identity.surfaceId().isBlank()
+                    && !identity.applicationId().isBlank() && identity.applicationId().equals(target.applicationId())
+                    ? identity : null;
+        } catch (RuntimeException unavailable) { return null; }
+    }
+
+    private void applyWindowScan(DesktopSessionOwner owner, DesktopWindowTracker tracker,
+            String providerId, WindowScan value, TrackingLease lease) {
+        synchronized (this) {
+            requireLaunchActive(owner, lease.scope(), lease.workspaceEpoch(), lease.scopeEpoch());
+            if (windowTrackers.get(owner) != tracker) return;
+            tracker.scan(providerId, value.targets(), value.closed(), value.at(), value.truncated());
+        }
+    }
+
+    private record TrackingLease(ScopeKey scope, long workspaceEpoch, long scopeEpoch) { }
+    private record WindowScan(List<DesktopWindowTracker.Discovered> targets, Set<String> closed, long at, boolean truncated) { }
 
     @Override public CompletionStage<DesktopApplicationCatalog> discoverApplications(DesktopSessionOwner owner) {
         Objects.requireNonNull(owner, "owner");
@@ -424,6 +649,12 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
                         || scopeEpochs.getOrDefault(scope, 0L) != scopeEpoch)
                     throw new IllegalStateException("桌面会话所属工作区或运行作用域已关闭");
                 sessions.put(session.id, session);
+                try {
+                    DesktopSurfaceSnapshot identity = safeTargetIdentity(s.provider(), info.target());
+                    if (identity != null) session.windowIdentity = identity;
+                    windowTrackers.computeIfAbsent(owner, ignored -> new DesktopWindowTracker(workers))
+                            .opened(info.target(), identity, session.id, clock.millis());
+                } catch (RuntimeException unavailable) { /* History cannot change a successful session admission. */ }
                 observer.opened(owner, info, this);
                 workers.execute(session::poll);
             }
@@ -543,7 +774,16 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         unacknowledgedActions.putIfAbsent(new ActionKey(owner, sessionId,
                 action.observationId()), session.targetKey);
         return CompletableFuture.supplyAsync(() -> {
-            synchronized (session.coordinator) { return session.perform(action); }
+            synchronized (session.coordinator) {
+                DesktopActionResult result = session.perform(action);
+                DesktopWindowTracker tracker = windowTrackers.get(owner);
+                if (tracker != null) try {
+                    if (tracker.actualOutcome(sessionId, action.observationId(), result, clock.millis())) {
+                        queueWindowTracking(owner, tracker, session);
+                    }
+                } catch (RuntimeException unavailable) { /* Preserve exact physical input outcome. */ }
+                return result;
+            }
         }, workers);
     }
 
@@ -610,25 +850,55 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     @Override public CompletionStage<Boolean> authorizeForeground(
             DesktopSessionOwner owner, String sessionId) {
+        return authorizeForeground(owner, sessionId, false);
+    }
+
+    @Override public CompletionStage<Boolean> authorizeSystemInput(
+            DesktopSessionOwner owner, String sessionId) {
+        return authorizeForeground(owner, sessionId, true);
+    }
+
+    private CompletionStage<Boolean> authorizeForeground(
+            DesktopSessionOwner owner, String sessionId, boolean initialSystemInput) {
         requireEnabled(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
         ManagedSession session = owned(owner, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             requireEnabled(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
             session.requireOpen();
             if (!session.controlGranted) return false;
+            if (initialSystemInput) {
+                synchronized (session.coordinator) {
+                    synchronized (session) { requireInitialSystemInput(session); }
+                }
+            }
             boolean approved = consent.request(owner, session.target,
                     DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
-            synchronized (session) {
-                if (approved && !session.closed) {
-                    session.foregroundGranted = true;
-                    session.committedObservation = null;
-                    session.pendingObservation = null;
-                    session.state(DesktopSessionState.Kind.FOREGROUND_READY,
-                            "前台模拟输入已就绪，请先重新观察目标窗口");
+            synchronized (session.coordinator) {
+                synchronized (session) {
+                    session.requireOpen();
+                    if (initialSystemInput) requireInitialSystemInput(session);
+                    if (approved && !session.closed) {
+                        session.foregroundGranted = true;
+                        session.committedObservation = null;
+                        session.pendingObservation = null;
+                        session.state(DesktopSessionState.Kind.FOREGROUND_READY,
+                                "前台模拟输入已就绪，请先重新观察目标窗口");
+                    }
+                    return approved && !session.closed;
                 }
-                return approved && !session.closed;
             }
         }, workers);
+    }
+
+    /** Called under target then session locks, including after external consent returns. */
+    private void requireInitialSystemInput(ManagedSession session) {
+        session.requireOpen();
+        boolean priorBackground = session.coordinator.backgroundInputOwners.stream().anyMatch(prior ->
+                prior.workspaceId().equals(session.owner.workspaceId())
+                        && prior.scopeId().equals(session.owner.scopeId()));
+        if (!session.foregroundGranted && (priorBackground || pendingInputs.containsKey(session.targetKey)))
+            throw new IllegalStateException("该窗口在本任务内已有后台输入或结果未知的操作；"
+                    + "禁止自动改用系统键鼠重试，请先核验已有操作或开始新任务");
     }
 
     @Override public Flow.Publisher<DesktopFrame> frames(DesktopSessionOwner owner, String sessionId) {
@@ -667,6 +937,8 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         scopeEpochs.merge(new ScopeKey(workspaceId, scopeId), 1L, Long::sum);
         closeMatching(s -> s.owner.workspaceId().equals(workspaceId)
                 && s.owner.scopeId().equals(scopeId));
+        targets.values().forEach(coordinator -> coordinator.backgroundInputOwners.removeIf(owner ->
+                owner.workspaceId().equals(workspaceId) && owner.scopeId().equals(scopeId)));
         pendingInputs.entrySet().removeIf(entry ->
                 entry.getValue().owner.workspaceId().equals(workspaceId)
                         && entry.getValue().owner.scopeId().equals(scopeId));
@@ -681,11 +953,16 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         unacknowledgedActions.keySet().removeIf(key ->
                 key.owner().workspaceId().equals(workspaceId)
                         && key.owner().scopeId().equals(scopeId));
+        windowTrackers.forEach((owner, tracker) -> {
+            if (owner.workspaceId().equals(workspaceId) && owner.scopeId().equals(scopeId)) tracker.detach();
+        });
     }
 
     @Override public synchronized void closeWorkspace(String workspaceId) {
         workspaceEpochs.merge(workspaceId, 1L, Long::sum);
         closeMatching(s -> s.owner.workspaceId().equals(workspaceId));
+        targets.values().forEach(coordinator -> coordinator.backgroundInputOwners.removeIf(owner ->
+                owner.workspaceId().equals(workspaceId)));
         pendingInputs.entrySet().removeIf(entry ->
                 entry.getValue().owner.workspaceId().equals(workspaceId));
         reconciledInputs.entrySet().removeIf(entry ->
@@ -695,6 +972,10 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
                         || entry.getValue().observer().workspaceId().equals(workspaceId));
         unacknowledgedActions.keySet().removeIf(key ->
                 key.owner().workspaceId().equals(workspaceId));
+        windowTrackers.entrySet().removeIf(entry -> {
+            if (!entry.getKey().workspaceId().equals(workspaceId)) return false;
+            entry.getValue().detach(); return true;
+        });
     }
 
     private void closeMatching(java.util.function.Predicate<ManagedSession> predicate) {
@@ -711,6 +992,9 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         unacknowledgedActions.clear();
         targets.clear();
         launchAdmissions.clear();
+        windowWatch.shutdownNow();
+        windowTrackers.values().forEach(DesktopWindowTracker::detach);
+        windowTrackers.clear();
         // Allow already queued completion signals to reach frame/state subscribers.
         workers.shutdown();
     }
@@ -863,6 +1147,8 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     static final class TargetCoordinator {
         long actionEpoch;
         long lastDispatchAtMillis;
+        /** Retained across close/reopen in a task, cleared only when its scope ends. */
+        final java.util.Set<DesktopSessionOwner> backgroundInputOwners = ConcurrentHashMap.newKeySet();
     }
     record PendingInput(DesktopSessionOwner owner, String actionObservationId,
                         long attemptedAtMillis) {}

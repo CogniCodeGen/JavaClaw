@@ -74,7 +74,8 @@ final class HostEffectReceiptAdapter {
         }
         String type = source.getClass().getName();
         if (source.getClass() == DesktopSessionTools.class) {
-            if (Set.of("desktop_session_probe", "desktop_session_applications", "desktop_session_targets")
+            if (Set.of("desktop_session_probe", "desktop_session_applications", "desktop_session_targets",
+                    "desktop_session_window_candidates")
                     .contains(tool)) {
                 return desktopDiscovery(tool, arguments, rawOutput, signal, context, at, evidence);
             }
@@ -147,6 +148,7 @@ final class HostEffectReceiptAdapter {
             case "desktop_session_probe" -> "probe";
             case "desktop_session_applications" -> "applications";
             case "desktop_session_targets" -> "targets";
+            case "desktop_session_window_candidates" -> "window_candidates";
             default -> throw new IllegalArgumentException("not a desktop discovery tool");
         };
         if (signal != ToolEffectCapture.Signal.SUCCESS) {
@@ -179,6 +181,16 @@ final class HostEffectReceiptAdapter {
             metadata.put("offset", Integer.toString(args.path("offset").asInt(0)));
             metadata.put("limit", Integer.toString(args.path("limit").asInt(64)));
             metadata.put("catalogId", output.path("catalogId").asText(""));
+        }
+        if (operation.equals("window_candidates")) {
+            if (!output.path("sessionId").asText().equals(args.path("sessionId").asText())
+                    || output.path("sessionId").asText().isBlank() || !output.path("candidates").isArray()
+                    || !output.path("inventoryAvailable").isBoolean())
+                return EffectReceiptV1.unknown(context.invocationId(), tool, at, evidence);
+            metadata.put("sessionId", output.path("sessionId").asText());
+            metadata.put("sourceInvocationId", output.path("sourceInvocationId").asText());
+            metadata.put("delivery", "NOT_SENT");
+            metadata.put("effect", "NONE");
         }
         return new EffectReceiptV1(context.invocationId(), tool, operation, "desktop",
                 EffectReceiptV1.Status.OBSERVED, at, evidence,
@@ -354,7 +366,9 @@ final class HostEffectReceiptAdapter {
                 metadata.put("reasonCode", action.reason().name());
                 metadata.put("dispatchAttempted", Boolean.toString(action.dispatchAttempted()));
                 metadata.put("delivery", action.delivery().name());
-                metadata.put("effect", "UNKNOWN");
+                metadata.put("effect", action.reason() == DesktopActionResult.Reason.NO_PROGRESS
+                        && !action.dispatchAttempted()
+                        && action.delivery() == DesktopActionResult.Delivery.NOT_SENT ? "NONE" : "UNKNOWN");
                 metadata.put("observationId", proof.observationId());
                 metadata.put("nextStep", action.nextStep().name());
                 metadata.put("targetId", proof.targetId());

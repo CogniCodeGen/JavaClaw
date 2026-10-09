@@ -199,7 +199,7 @@ final class DesktopReadOnlySessionRecovery {
         return opened;
     }
 
-    private static boolean identityMatchesReceipt(JsonNode identity, RunEventEnvelope receipt, String application) {
+    static boolean identityMatchesReceipt(JsonNode identity, RunEventEnvelope receipt, String application) {
         JsonNode metadata = receipt.payload().path("metadata");
         if (!identity.path("applicationId").asText().equals(application)
                 || !metadata.path("applicationId").asText().equals(application)
@@ -217,7 +217,7 @@ final class DesktopReadOnlySessionRecovery {
         return first.path("generation").asLong() == second.path("generation").asLong();
     }
 
-    private static boolean sameTarget(JsonNode target, JsonNode identity, String application) {
+    static boolean sameTarget(JsonNode target, JsonNode identity, String application) {
         String[] runtime = identity.path("runtimeId").asText().split(":");
         return runtime.length == 5 && target.path("providerId").asText().equals(runtime[2])
                 && target.path("processId").isIntegralNumber() && target.path("processId").canConvertToLong()
@@ -230,7 +230,7 @@ final class DesktopReadOnlySessionRecovery {
     }
 
     /** Successful host controls have no physical effect adapter; their UNKNOWN is not input delivery. */
-    private static boolean completedHostControl(List<RunEventEnvelope> events, RunEventEnvelope receipt) {
+    static boolean completedHostControl(List<RunEventEnvelope> events, RunEventEnvelope receipt) {
         JsonNode metadata = receipt.payload().path("metadata");
         if (!metadata.path("delivery").asText().isEmpty() || !metadata.path("effect").asText().isEmpty()) return false;
         Triple control = triple(events, receipt, "SUCCEEDED", false);
@@ -254,7 +254,7 @@ final class DesktopReadOnlySessionRecovery {
                 && control.start().payload().path("arguments").path("mode").asText().equals("DESKTOP");
     }
 
-    private static Triple triple(List<RunEventEnvelope> events, RunEventEnvelope receipt, String completedStatus) {
+    static Triple triple(List<RunEventEnvelope> events, RunEventEnvelope receipt, String completedStatus) {
         return triple(events, receipt, completedStatus, true);
     }
 
@@ -301,5 +301,5 @@ final class DesktopReadOnlySessionRecovery {
         return event.type().equals(type) && event.schemaVersion() == schema && event.producer().equals("framework.core");
     }
 
-    private record Triple(RunEventEnvelope start, RunEventEnvelope complete, RunEventEnvelope receipt) { }
+    record Triple(RunEventEnvelope start, RunEventEnvelope complete, RunEventEnvelope receipt) { }
 }

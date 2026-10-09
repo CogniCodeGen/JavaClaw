@@ -78,6 +78,7 @@ public final class ToolRiskRegistry {
         // 设置中的电脑应用访问开关与系统权限是统一授权；执行由会话服务再次校验。
         put(levels, labels, "desktop_session_probe", ToolRiskLevel.NOTIFY, "探测桌面平台能力");
         put(levels, labels, "desktop_session_targets", ToolRiskLevel.NOTIFY, "发现桌面目标窗口");
+        put(levels, labels, "desktop_session_window_candidates", ToolRiskLevel.NOTIFY, "观察桌面窗口候选");
         put(levels, labels, "desktop_session_launch_application", ToolRiskLevel.NOTIFY, "启动桌面应用");
         put(levels, labels, "desktop_session_open", ToolRiskLevel.NOTIFY, "打开桌面目标会话");
         put(levels, labels, "desktop_session_snapshot", ToolRiskLevel.NOTIFY, "读取桌面会话截图");

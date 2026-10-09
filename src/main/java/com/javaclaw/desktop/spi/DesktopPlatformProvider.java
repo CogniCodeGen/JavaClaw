@@ -11,6 +11,14 @@ public interface DesktopPlatformProvider {
     String id();
     DesktopAvailability probe();
     List<DesktopTarget> discoverTargets();
+    /** Identity from discovery only: no open/capture, no freshness or input authority. */
+    default java.util.Optional<com.javaclaw.desktop.api.DesktopSurfaceSnapshot> surfaceForTarget(DesktopTarget target) {
+        return java.util.Optional.empty();
+    }
+    /** False requires actual exact-window/process-instance destruction proof; absence from enumeration is insufficient. */
+    default java.util.Optional<Boolean> targetExists(DesktopTarget target) {
+        return java.util.Optional.empty();
+    }
     /** Read installed application identities without starting a process. */
     default com.javaclaw.desktop.api.DesktopApplicationCatalog discoverApplications() {
         throw new UnsupportedOperationException("当前桌面平台不支持安装应用发现");

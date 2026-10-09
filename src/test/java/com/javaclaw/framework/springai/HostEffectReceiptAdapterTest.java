@@ -65,6 +65,11 @@ class HostEffectReceiptAdapterTest {
             condition.putObject("content").put("label", visibleContent)
                     .put("role", "list").put("x", 20).put("y", 25)
                     .put("width", 70).put("height", 60).put("confidence", 0.95);
+            var decision = output.putArray("conditionResults").addObject()
+                    .put("criterionId", "contacts").put("subject", "Contacts List")
+                    .put("outcome", "TRUE").put("complete", true)
+                    .put("region", "main-content").put("confidence", 0.95);
+            decision.set("content", condition.path("content").deepCopy());
             return CompletableFuture.completedFuture(new ModelTaskResult(output,
                     "fixture", 1, 1, false, Map.of()));
         }, context.runId());
@@ -461,7 +466,7 @@ class HostEffectReceiptAdapterTest {
                             assertEquals(kind, ((DesktopAction) arguments[2]).kind());
                             yield CompletableFuture.completedFuture(nativeResult);
                         }
-                        case "info" -> new DesktopSessionInfo("session-1", target, true, false);
+                        case "info" -> new DesktopSessionInfo("session-1", target, true, true);
                         case "acknowledgeActionResult" -> null;
                         default -> throw new UnsupportedOperationException(method.getName());
                     });

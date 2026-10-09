@@ -14,6 +14,32 @@ public interface DesktopSessionService extends AutoCloseable {
 
     DesktopAvailability availability();
     CompletionStage<List<DesktopTarget>> discoverTargets();
+    /** Owner-scoped discovery also records lifecycle observations; no target is selected. */
+    default CompletionStage<List<DesktopTarget>> discoverTargets(DesktopSessionOwner owner) {
+        return discoverTargets();
+    }
+    /** Optional action association; a begin alone is never evidence that input was sent. */
+    default void beginWindowAction(DesktopSessionOwner owner, String sessionId,
+            String invocationId, String observationId) { }
+    default void beginWindowAction(DesktopSessionOwner owner, String sessionId, String invocationId) {
+        beginWindowAction(owner, sessionId, invocationId, "");
+    }
+    /** Only a matching actual service dispatch may establish an observed-after source. */
+    default void finishWindowAction(DesktopSessionOwner owner, String sessionId,
+            String invocationId, DesktopActionResult result) { }
+    default DesktopWindowTrackingSnapshot snapshotWindowTracking(DesktopSessionOwner owner,
+            long afterSequence, int limit) {
+        return new DesktopWindowTrackingSnapshot(List.of(), 0, afterSequence, false, false);
+    }
+    /** One owner listener; snapshot is the compensation path for failed or late persistence. */
+    default AutoCloseable bindWindowObserver(DesktopSessionOwner owner,
+            java.util.function.Consumer<DesktopWindowTrackingEvent> observer) { return () -> { }; }
+    /** Same actual application/process candidates; wait is bounded to at most three seconds. */
+    default CompletionStage<DesktopWindowCandidates> discoverWindowCandidates(DesktopSessionOwner owner,
+            String sessionId, String invocationId, long waitMillis) {
+        return java.util.concurrent.CompletableFuture.completedFuture(new DesktopWindowCandidates(
+                sessionId, "", "", List.of(), 0, 0, false, false, false));
+    }
     /** Read-only installed application metadata within the owner's enabled desktop scope. */
     default CompletionStage<DesktopApplicationCatalog> discoverApplications(DesktopSessionOwner owner) {
         return java.util.concurrent.CompletableFuture.failedFuture(
@@ -68,6 +94,14 @@ public interface DesktopSessionService extends AutoCloseable {
         return java.util.concurrent.CompletableFuture.completedFuture(false);
     }
     CompletionStage<Boolean> authorizeForeground(DesktopSessionOwner owner, String sessionId);
+    /**
+     * Select system mouse/keyboard input before a session's first background dispatch.
+     * Implementations must refuse automatic mode changes after background input;
+     * explicit user takeover remains a separate operation. Legacy services fail closed.
+     */
+    default CompletionStage<Boolean> authorizeSystemInput(DesktopSessionOwner owner, String sessionId) {
+        return java.util.concurrent.CompletableFuture.completedFuture(false);
+    }
     Flow.Publisher<DesktopFrame> frames(DesktopSessionOwner owner, String sessionId);
     Flow.Publisher<DesktopSessionState> states(DesktopSessionOwner owner, String sessionId);
     Flow.Publisher<DesktopActionEvent> actions(DesktopSessionOwner owner, String sessionId);

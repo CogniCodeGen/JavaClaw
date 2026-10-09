@@ -73,6 +73,7 @@ public final class DesktopBridge {
             desktop_bridge_h.jc_desktop_probe$address();
             desktop_bridge_h.jc_desktop_request_permissions$address();
             desktop_bridge_h.jc_desktop_list_windows$address();
+            desktop_bridge_h.jc_desktop_window_exists$address();
             desktop_bridge_h.jc_desktop_open$address();
             desktop_bridge_h.jc_desktop_poll_frame$address();
             desktop_bridge_h.jc_desktop_release_frame$address();
@@ -208,6 +209,18 @@ public final class DesktopBridge {
 
     public com.javaclaw.desktop.api.DesktopApplicationCatalog listApplications() {
         return DesktopApplicationCatalogCodec.read(listApplications);
+    }
+
+    /** No capture or input: a negative native result never becomes a close proof. */
+    public java.util.Optional<Boolean> windowExists(long processId, long windowId, long processInstanceId) {
+        if (processId <= 0 || windowId == 0 || processInstanceId == 0) return java.util.Optional.empty();
+        try {
+            int result = desktop_bridge_h.jc_desktop_window_exists(processId, windowId, processInstanceId);
+            return result == 1 ? java.util.Optional.of(true)
+                    : result == 0 ? java.util.Optional.of(false) : java.util.Optional.empty();
+        } catch (Throwable unavailable) {
+            return java.util.Optional.empty();
+        }
     }
 
     public DesktopApplicationLaunch launchApplication(String application) {
@@ -492,7 +505,7 @@ public final class DesktopBridge {
     }
 
     static DesktopActionResult.Status actionStatus(int nativeStatus) {
-        // ABI 6 action codes from desktop_bridge.h. Keep classification independent
+        // ABI 7 action codes from desktop_bridge.h. Keep classification independent
         // of generated FFM wrappers, whose initializer requires a loaded OS library.
         return switch (nativeStatus) {
             case 0 -> DesktopActionResult.Status.VERIFIED;
@@ -518,7 +531,8 @@ public final class DesktopBridge {
                 jc_desktop_window.height(value), jc_desktop_window.flags(value),
                 application,
                 utf8(jc_desktop_window.title_utf8(value), desktop_bridge_h.JC_DESKTOP_TITLE_BYTES()),
-                applicationId(processId, application));
+                applicationId(processId, application), jc_desktop_window.parent_window_id(value),
+                jc_desktop_window.relation_kind(value));
     }
 
     private String applicationId(long processId, String application) {
@@ -545,5 +559,12 @@ public final class DesktopBridge {
     public record NativeWindow(long processId, long windowId, long processInstanceId,
                                int x, int y, int width,
                                int height, int flags, String application, String title,
-                               String applicationId) {}
+                               String applicationId, long parentWindowId, int relationKind) {
+        public NativeWindow(long processId, long windowId, long processInstanceId,
+                int x, int y, int width, int height, int flags, String application, String title,
+                String applicationId) {
+            this(processId, windowId, processInstanceId, x, y, width, height, flags,
+                    application, title, applicationId, 0, 0);
+        }
+    }
 }

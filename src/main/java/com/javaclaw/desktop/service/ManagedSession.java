@@ -34,6 +34,8 @@ final class ManagedSession implements AutoCloseable {
     final BoundedPublisher<DesktopActionEvent> actions;
     volatile DesktopFrame latest;
     private DesktopSurfaceSnapshot latestSurface;
+    /** Last actual identity only; it survives frame loss for readonly candidate filtering. */
+    volatile DesktopSurfaceSnapshot windowIdentity;
     volatile boolean capturedAnyFrame;
     volatile DesktopSessionState.Kind stateKind = DesktopSessionState.Kind.PAUSED;
     volatile String stateDetail = "等待目标窗口的首帧画面";
@@ -44,8 +46,10 @@ final class ManagedSession implements AutoCloseable {
     DesktopObservation pendingObservation;
     long pendingActionEpoch;
     DesktopObservation committedObservation;
+    private boolean committedObservationInterpreted;
     long committedActionEpoch;
     long committedObservationAtMillis;
+    private AcceptedBackgroundClick acceptedBackgroundClick;
     volatile boolean closed;
 
     ManagedSession(DefaultDesktopSessionService service, DesktopSessionOwner owner,
@@ -101,6 +105,19 @@ final class ManagedSession implements AutoCloseable {
                             : "等待目标窗口的首帧画面", now);
         }
         return new DesktopSessionState(id, stateKind, stateDetail, now);
+    }
+
+    /** Exact committed capture identity only; supplemental tracking never creates an input baseline. */
+    synchronized Optional<DesktopSurfaceSnapshot> windowActionSource(String observationId) {
+        DesktopObservation observation = committedObservation;
+        if (closed || observation == null || !observation.observationId().equals(observationId)
+                || committedActionEpoch != coordinator.actionEpoch
+                || !matchesCapture(observation.capturedSurface(), observation.frame())) return Optional.empty();
+        return Optional.of(observation.capturedSurface());
+    }
+
+    Optional<DesktopSurfaceSnapshot> windowInventoryIdentity() {
+        return closed ? Optional.empty() : Optional.ofNullable(windowIdentity);
     }
 
     synchronized Optional<DesktopObservation> captureObservation() {
@@ -177,6 +194,7 @@ final class ManagedSession implements AutoCloseable {
         committedObservation = new DesktopObservation(id, observationId,
                 pending.frame(), pending.elements(), visualRegions,
                 pending.elementDiagnostics(), pending.capturedSurface());
+        committedObservationInterpreted = interpreted;
         committedActionEpoch = coordinator.actionEpoch;
         committedObservationAtMillis = service.clock.millis();
         pendingObservation = null;
@@ -372,6 +390,7 @@ final class ManagedSession implements AutoCloseable {
                         }
                         latest = value;
                         latestSurface = capturedSurface;
+                        if (capturedSurface != null) windowIdentity = capturedSurface;
                         capturedAnyFrame = true;
                         lastFrameAt = service.clock.millis();
                         if (!service.pendingInputs.containsKey(targetKey)) frames.submit(value);
@@ -566,6 +585,19 @@ final class ManagedSession implements AutoCloseable {
         DesktopAction resolved = new DesktopAction(action.kind(), x, y, action.button(),
                 action.clicks(), action.amount(), action.text(), action.windowGeneration(),
                 action.observationId(), action.elementId(), frame.contentRevision());
+        if (!foregroundGranted && unchangedAcceptedClick(resolved, observed, frame)) {
+            // Equal pixels establish visible non-progress, never the absence of a
+            // business effect. Refuse this new dispatch; the earlier SENT action
+            // remains unresolved and must not become a synthetic mouse retry.
+            return new DesktopActionResult(DesktopActionResult.Status.FAILED,
+                    "DESKTOP_NO_PROGRESS：上次后台点击已被系统接受，但新的完整画面未变化；"
+                            + "已阻止重复点击。上次业务效果仍未知，请核验或向用户澄清，禁止自动改用前台重试。",
+                    frame.windowGeneration(), DesktopActionResult.Mode.BACKGROUND_SEMANTIC,
+                    DesktopActionResult.Reason.NO_PROGRESS, false, action.observationId(),
+                    DesktopActionResult.NextStep.RECONCILE);
+        }
+        AcceptedBackgroundClick clickCandidate = !foregroundGranted
+                ? backgroundClickCandidate(resolved, observed, frame) : null;
         DesktopActionResult.Mode mode = foregroundGranted
                 ? DesktopActionResult.Mode.FOREGROUND_SYNTHETIC
                 : DesktopActionResult.Mode.BACKGROUND_SEMANTIC;
@@ -608,8 +640,13 @@ final class ManagedSession implements AutoCloseable {
         // definitely sent no input. A second action needs fresh target evidence.
         DesktopActionResult.NextStep nextStep = DesktopActionResult.NextStep.OBSERVE;
         if (result.dispatchAttempted() || result.status() == DesktopActionResult.Status.UNKNOWN) {
+            if (!foregroundGranted) coordinator.backgroundInputOwners.add(owner);
             coordinator.actionEpoch++;
             coordinator.lastDispatchAtMillis = service.clock.millis();
+            acceptedBackgroundClick = result.status() == DesktopActionResult.Status.ACCEPTED
+                    && clickCandidate != null
+                    ? clickCandidate.dispatched(coordinator.actionEpoch, coordinator.lastDispatchAtMillis)
+                    : null;
             latest = null;
             latestSurface = null;
         }
@@ -657,11 +694,100 @@ final class ManagedSession implements AutoCloseable {
         return result.withContext(mode, action.observationId(), nextStep);
     }
 
+    private AcceptedBackgroundClick backgroundClickCandidate(DesktopAction action,
+            DesktopObservation observation, DesktopFrame frame) {
+        if (!committedObservationInterpreted || action.kind() != DesktopAction.Kind.CLICK
+                || action.button() != 1 || action.clicks() != 1
+                || !matchesCapture(latestSurface, frame)) return null;
+        ClickControl control = clickControl(action, observation);
+        if (control == null) return null;
+        byte[] pixels = pixelDigest(frame);
+        return pixels == null ? null : new AcceptedBackgroundClick(latestSurface,
+                frame.width(), frame.height(), frame.stride(), pixels, control, 0, 0);
+    }
+
+    private boolean unchangedAcceptedClick(DesktopAction action,
+            DesktopObservation observation, DesktopFrame frame) {
+        AcceptedBackgroundClick previous = acceptedBackgroundClick;
+        if (previous == null || !committedObservationInterpreted
+                || action.kind() != DesktopAction.Kind.CLICK
+                || action.button() != 1 || action.clicks() != 1
+                || previous.actionEpoch() != coordinator.actionEpoch
+                || observation.frame().capturedAtMillis()
+                    <= previous.completedAtMillis() + UNKNOWN_SETTLE_MILLIS
+                || !matchesCapture(observation.capturedSurface(), observation.frame())
+                || !matchesCapture(latestSurface, frame)
+                || !sameClickSurface(previous.surface(), observation.capturedSurface())
+                || !sameClickSurface(previous.surface(), latestSurface)
+                || previous.width() != frame.width() || previous.height() != frame.height()
+                || previous.stride() != frame.stride()
+                || previous.width() != observation.frame().width()
+                || previous.height() != observation.frame().height()
+                || previous.stride() != observation.frame().stride()) return false;
+        ClickControl control = clickControl(action, observation);
+        if (control == null || !previous.control().equals(control)) return false;
+        byte[] observedPixels = pixelDigest(observation.frame());
+        byte[] currentPixels = pixelDigest(frame);
+        return observedPixels != null && currentPixels != null
+                && java.util.Arrays.equals(previous.pixels(), observedPixels)
+                && java.util.Arrays.equals(previous.pixels(), currentPixels);
+    }
+
+    private static ClickControl clickControl(DesktopAction action, DesktopObservation observation) {
+        if (!action.elementId().startsWith(observation.observationId() + ":e")) return null;
+        DesktopElement selected = observation.elements().stream()
+                .filter(element -> element.id().equals(action.elementId())).findFirst().orElse(null);
+        if (selected == null || selected.role().isBlank() || selected.label().isBlank()
+                || (selected.actions() & DesktopElement.PRESS) == 0) return null;
+        ClickControl control = ClickControl.of(selected);
+        // Observation tokens change on every capture. Only a unique exact semantic
+        // identity in the captured catalog can match a previous control.
+        return observation.elements().stream().filter(element -> control.equals(ClickControl.of(element)))
+                .limit(2).count() == 1 ? control : null;
+    }
+
+    private static boolean sameClickSurface(DesktopSurfaceSnapshot before, DesktopSurfaceSnapshot after) {
+        return before.providerId().equals(after.providerId())
+                && before.runtimeId().equals(after.runtimeId())
+                && before.surfaceId().equals(after.surfaceId())
+                && before.logicalTargetId().equals(after.logicalTargetId())
+                && before.applicationId().equals(after.applicationId())
+                && before.generation() == after.generation()
+                && before.contentRevision() == after.contentRevision();
+    }
+
+    private static byte[] pixelDigest(DesktopFrame frame) {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256").digest(frame.bgraPremultiplied());
+        } catch (java.security.NoSuchAlgorithmException | RuntimeException unavailable) {
+            // Optional progress detection must never invent an equality proof.
+            return null;
+        }
+    }
+
+    private record ClickControl(String role, String label, int x, int y,
+                                int width, int height, int actions) {
+        static ClickControl of(DesktopElement element) {
+            return new ClickControl(element.role(), element.label(), element.x(), element.y(),
+                    element.width(), element.height(), element.actions());
+        }
+    }
+
+    private record AcceptedBackgroundClick(DesktopSurfaceSnapshot surface, int width, int height,
+            int stride, byte[] pixels, ClickControl control, long actionEpoch, long completedAtMillis) {
+        AcceptedBackgroundClick dispatched(long epoch, long completedAt) {
+            return new AcceptedBackgroundClick(surface, width, height, stride, pixels, control,
+                    epoch, completedAt);
+        }
+    }
+
     @Override public synchronized void close() {
         if (closed) return;
         closed = true;
         latest = null;
         latestSurface = null;
+        windowIdentity = null;
+        acceptedBackgroundClick = null;
         state(DesktopSessionState.Kind.CLOSED, "会话已关闭");
         try { endForegroundLease(); }
         finally {

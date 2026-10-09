@@ -3,13 +3,17 @@ package com.javaclaw.desktop.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.desktop.api.*;
 import com.javaclaw.framework.spi.ToolEffectCapture;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -32,7 +36,7 @@ class DesktopToolProtocolTest {
                 .withContext(DesktopActionResult.Mode.BACKGROUND_SEMANTIC,
                         "observation", DesktopActionResult.NextStep.OBSERVE);
         DesktopSessionTools tools = tools((method, args) -> switch (method) {
-            case "info" -> new DesktopSessionInfo("session", TARGET, true, false);
+            case "info" -> new DesktopSessionInfo("session", TARGET, true, true);
             case "perform" -> CompletableFuture.completedFuture(nativeResult);
             case "acknowledgeActionResult" -> null;
             default -> throw new AssertionError(method);
@@ -93,7 +97,7 @@ class DesktopToolProtocolTest {
     void lostSynchronousOrAsynchronousInputResultInstallsAnExactObservationFence(boolean async) {
         AtomicInteger fences = new AtomicInteger();
         DesktopSessionTools tools = tools((method, args) -> switch (method) {
-            case "info" -> new DesktopSessionInfo("session", TARGET, true, false);
+            case "info" -> new DesktopSessionInfo("session", TARGET, true, true);
             case "perform" -> {
                 if (!async) throw new IllegalStateException("lost result while starting input");
                 yield CompletableFuture.failedFuture(new IllegalStateException("lost input result"));
@@ -139,7 +143,7 @@ class DesktopToolProtocolTest {
         DesktopSessionTools tools = tools((method, args) -> {
             assertEquals("open", method);
             assertEquals(!granted, args[2], "the request differs deliberately from the service result");
-            return CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, granted, false));
+            return CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, granted, granted));
         });
         try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
             tools.open("target", !granted);
@@ -192,6 +196,204 @@ class DesktopToolProtocolTest {
     }
 
     @Test
+    @DisplayName("控制会话在发布成功凭据前取得系统输入授权并刷新会话")
+    void controlledOpenAuthorizesSystemInputBeforePublishingSuccess() {
+        List<String> calls = new ArrayList<>();
+        DesktopSessionTools tools = tools((method, args) -> {
+            calls.add(method);
+            assertEquals(OWNER, args[0]);
+            return switch (method) {
+                case "open" -> {
+                    assertEquals("target", args[1]);
+                    assertEquals(true, args[2]);
+                    yield CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, true, false));
+                }
+                case "authorizeSystemInput" -> {
+                    assertEquals("session", args[1]);
+                    yield CompletableFuture.completedFuture(true);
+                }
+                case "info" -> {
+                    assertEquals("session", args[1]);
+                    yield new DesktopSessionInfo("session", TARGET, true, true);
+                }
+                default -> throw new AssertionError("打开会话不得派发输入或回退到 AX: " + method);
+            };
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
+            String result = tools.open("target", true);
+            assertTrue(result.contains("[成功]"), result);
+            assertEquals(List.of("open", "authorizeSystemInput", "info"), calls);
+            assertEquals(ToolEffectCapture.Signal.SUCCESS, capture.signal());
+            assertTrue(capture.data().path("controlGranted").asBoolean());
+            assertTrue(capture.data().path("foregroundGranted").asBoolean());
+            assertEquals("SYSTEM_EVENTS", capture.data().path("inputMode").asText());
+            DesktopSessionTools.OpenedSessionProof proof = tools.receiptOpenedSession("target");
+            assertNotNull(proof);
+            assertEquals("session", proof.sessionId());
+            assertTrue(proof.controlGranted());
+        }
+    }
+
+    @Test
+    @DisplayName("只读打开会话不申请系统输入授权")
+    void readOnlyOpenDoesNotRequestSystemInput() {
+        DesktopSessionTools tools = tools((method, args) -> {
+            assertEquals("open", method, "只读打开不得升级模式或派发输入");
+            assertEquals(false, args[2]);
+            return CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, false, false));
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
+            tools.open("target", false);
+            assertEquals(ToolEffectCapture.Signal.SUCCESS, capture.signal());
+            assertEquals("READ_ONLY", capture.data().path("inputMode").asText());
+            assertFalse(capture.data().path("foregroundGranted").asBoolean());
+            assertFalse(tools.receiptOpenedSession("target").controlGranted());
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    @DisplayName("系统输入授权拒绝或异常时不发布成功会话凭据，也不回退到 AX")
+    void rejectedSystemInputAuthorizationCannotPublishSuccessOrFallback(boolean exceptional) {
+        List<String> calls = new ArrayList<>();
+        DesktopSessionTools tools = tools((method, args) -> {
+            calls.add(method);
+            return switch (method) {
+                case "open" -> CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, true, false));
+                case "authorizeSystemInput" -> exceptional
+                        ? CompletableFuture.failedFuture(new SecurityException("系统输入授权失败"))
+                        : CompletableFuture.completedFuture(false);
+                default -> throw new AssertionError("授权失败后不得派发输入或回退到 AX: " + method);
+            };
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
+            String result = tools.open("target", true);
+            assertTrue(result.contains("[失败]"), result);
+            assertEquals(List.of("open", "authorizeSystemInput"), calls);
+            assertEquals(ToolEffectCapture.Signal.ERROR, capture.signal());
+            assertEquals("desktop.error", capture.data().path("kind").asText());
+            assertNull(tools.receiptOpenedSession("target"));
+        }
+    }
+
+    @Test
+    @DisplayName("旧服务缺少系统输入授权能力时失败，不沿用 AX 控制会话")
+    void legacyServiceDefaultAuthorizationFailsClosed() {
+        DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
+                DesktopSessionService.class.getClassLoader(), new Class<?>[]{DesktopSessionService.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("open")) {
+                        return CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, true, false));
+                    }
+                    if (method.getName().equals("authorizeSystemInput") && method.isDefault()) {
+                        return InvocationHandler.invokeDefault(proxy, method, args);
+                    }
+                    throw new AssertionError("旧服务不得通过其他路径继续输入: " + method.getName());
+                });
+        DesktopSessionTools tools = new DesktopSessionTools(service, OWNER, temporary);
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
+            tools.open("target", true);
+            assertEquals(ToolEffectCapture.Signal.ERROR, capture.signal());
+            assertNull(tools.receiptOpenedSession("target"));
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"grant", "control", "session", "target", "provider", "process", "application", "applicationId"})
+    @DisplayName("授权返回成功后仍校验实际系统输入授权及会话目标身份")
+    void systemInputAuthorizationRequiresMatchingRefreshedSession(String changed) {
+        DesktopTarget target = new DesktopTarget(changed.equals("provider") ? "other" : TARGET.providerId(),
+                changed.equals("target") ? "other-target" : TARGET.id(),
+                changed.equals("process") ? 99 : TARGET.processId(),
+                changed.equals("application") ? "Other" : TARGET.application(),
+                TARGET.title(), TARGET.x(), TARGET.y(), TARGET.width(), TARGET.height(), DesktopTarget.VISIBLE,
+                changed.equals("applicationId") ? "com.example.other" : TARGET.applicationId());
+        DesktopSessionInfo refreshed = new DesktopSessionInfo(changed.equals("session") ? "other-session" : "session",
+                target, !changed.equals("control"), !changed.equals("grant"));
+        DesktopSessionTools tools = tools((method, args) -> switch (method) {
+            case "open" -> CompletableFuture.completedFuture(new DesktopSessionInfo("session", TARGET, true, false));
+            case "authorizeSystemInput" -> CompletableFuture.completedFuture(true);
+            case "info" -> refreshed;
+            default -> throw new AssertionError("身份校验失败不得派发输入: " + method);
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_open")) {
+            tools.open("target", true);
+            assertEquals(ToolEffectCapture.Signal.ERROR, capture.signal(), changed);
+            assertNull(tools.receiptOpenedSession("target"), changed);
+        }
+    }
+
+    @Test
+    @DisplayName("旧后台控制会话的动作在派发前拒绝，不自动升级模式")
+    void legacyControlledSessionRequiresExplicitSystemInputOpenBeforeAnyAction() {
+        DesktopSessionTools tools = tools((method, args) -> {
+            assertEquals("info", method, "必须在调用 perform 或任何授权接口前拒绝");
+            return new DesktopSessionInfo("session", TARGET, true, false);
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_click")) {
+            tools.click("session", "observation", 1, "", 0, 0, 1, 1);
+            JsonNode data = capture.data();
+            assertEquals(ToolEffectCapture.Signal.ERROR, capture.signal());
+            assertEquals("DENIED", data.path("status").asText());
+            assertEquals("SYSTEM_INPUT_REQUIRED", data.path("reason").asText());
+            assertEquals("OPEN_SESSION", data.path("nextStep").asText());
+            assertEquals("NOT_SENT", data.path("delivery").asText());
+            assertFalse(data.path("dispatchAttempted").asBoolean());
+            assertEquals("target", data.path("targetId").asText());
+            assertFalse(tools.receiptActionProof().result().dispatchAttempted());
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    @DisplayName("模型接管工具也遵守首次系统输入授权，不能绕过后台输入历史限制")
+    void takeoverCannotBypassInitialSystemInputAuthorization(boolean priorBackgroundInput) {
+        AtomicInteger authorizations = new AtomicInteger();
+        DesktopSessionTools tools = tools((method, args) -> {
+            assertEquals("authorizeSystemInput", method,
+                    "模型接管不得调用不受输入历史限制的 authorizeForeground 或 perform");
+            assertEquals(OWNER, args[0]);
+            assertEquals("session", args[1]);
+            authorizations.incrementAndGet();
+            return priorBackgroundInput
+                    ? CompletableFuture.failedFuture(new IllegalStateException("已有后台输入，禁止自动切换通道"))
+                    : CompletableFuture.completedFuture(false);
+        });
+
+        try (var capture = ToolEffectCapture.begin("desktop_session_takeover")) {
+            String result = tools.takeover("session");
+            assertTrue(result.contains("[失败]"), result);
+            assertEquals(1, authorizations.get());
+            assertEquals(ToolEffectCapture.Signal.ERROR, capture.signal());
+            assertEquals("desktop.error", capture.data().path("kind").asText());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,true,SYSTEM_EVENTS", "true,false,ACCESSIBILITY", "false,false,READ_ONLY"})
+    @DisplayName("打开及观察载荷公开实际会话输入模式")
+    void sessionPayloadsReportActualInputMode(boolean controlled, boolean foreground, String mode) {
+        DesktopSessionInfo session = new DesktopSessionInfo("session", TARGET, controlled, foreground);
+        DesktopFrame frame = new DesktopFrame("target", 1, 100, 2, 1, 8, new byte[8]);
+        List<JsonNode> payloads = List.of(DesktopToolPayloads.opened(session),
+                DesktopToolPayloads.observation(session, "observation", frame,
+                        List.of(), List.of(), null, "", "", ""));
+
+        for (JsonNode payload : payloads) {
+            assertEquals(controlled, payload.path("controlGranted").asBoolean());
+            assertTrue(payload.path("foregroundGranted").isBoolean());
+            assertEquals(foreground, payload.path("foregroundGranted").asBoolean());
+            assertEquals(mode, payload.path("inputMode").asText());
+        }
+    }
+
+    @Test
     void inventoryListsExactIdsAndMarksEightPlusAsIncomplete() {
         List<String> all = IntStream.range(0, 9).mapToObj(n -> "session-" + n).toList();
         DesktopSessionTools tools = tools((method, args) -> {
@@ -230,7 +432,7 @@ class DesktopToolProtocolTest {
         var element = new DesktopElement("exact-element-id", text, text, 0, 0, 1, 1, 1);
         var region = new DesktopVisualRegion("exact-visual-id", "button", text.substring(0, 256),
                 0, 0, 1, 1, 1);
-        JsonNode data = DesktopToolPayloads.observation(new DesktopSessionInfo("session", TARGET, true, false),
+        JsonNode data = DesktopToolPayloads.observation(new DesktopSessionInfo("session", TARGET, true, true),
                 "exact-observation-id", frame, List.of(element), List.of(region), null, text, text, text);
         assertEquals("exact-observation-id", data.path("observationId").asText());
         assertTrue(data.path("controlGranted").isBoolean());
@@ -248,7 +450,12 @@ class DesktopToolProtocolTest {
     private DesktopSessionTools tools(ServiceCall call) {
         DesktopSessionService sessions = (DesktopSessionService) Proxy.newProxyInstance(
                 DesktopSessionService.class.getClassLoader(), new Class<?>[]{DesktopSessionService.class},
-                (proxy, method, args) -> call.invoke(method.getName(), args));
+                (proxy, method, args) -> switch (method.getName()) {
+                    // 可选生命周期诊断沿用接口默认实现，不改变原有协议用例的服务行为。
+                    case "surface", "beginWindowAction", "finishWindowAction", "snapshotWindowTracking" ->
+                            InvocationHandler.invokeDefault(proxy, method, args);
+                    default -> call.invoke(method.getName(), args);
+                });
         return new DesktopSessionTools(sessions, OWNER, temporary);
     }
 

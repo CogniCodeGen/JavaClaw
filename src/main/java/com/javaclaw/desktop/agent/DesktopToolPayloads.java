@@ -48,6 +48,23 @@ final class DesktopToolPayloads {
         return data;
     }
 
+    static ObjectNode windowCandidates(com.javaclaw.desktop.api.DesktopWindowCandidates value) {
+        ObjectNode data = base("desktop.window_candidates");
+        data.put("sessionId", value.sessionId()).put("sourceTargetId", value.sourceTargetId())
+                .put("sourceInvocationId", value.sourceInvocationId())
+                .put("observedAtMillis", value.observedAtMillis()).put("waitedMillis", value.waitedMillis())
+                .put("timedOut", value.timedOut()).put("inventoryAvailable", value.inventoryAvailable())
+                .put("truncated", value.truncated()).put("inputAuthority", false).put("freshObservation", false);
+        var rows = data.putArray("candidates");
+        for (var candidate : value.candidates()) {
+            var row = target(candidate.target());
+            row.put("runtimeId", candidate.runtimeId()).put("surfaceId", candidate.surfaceId())
+                    .put("selected", candidate.selected()).put("observedAfterAction", candidate.observedAfterAction());
+            rows.add(row);
+        }
+        return data;
+    }
+
     static ObjectNode applications(com.javaclaw.desktop.api.DesktopApplicationCatalog catalog,
             int offset, int limit) {
         return applications(catalog, offset, limit, null);
@@ -204,6 +221,9 @@ final class DesktopToolPayloads {
         data.put("sessionId", session.sessionId());
         data.set("target", target(session.target()));
         data.put("controlGranted", session.controlGranted());
+        data.put("foregroundGranted", session.foregroundGranted());
+        data.put("inputMode", session.foregroundGranted() ? "SYSTEM_EVENTS"
+                : session.controlGranted() ? "ACCESSIBILITY" : "READ_ONLY");
         data.put("nextStep", "OBSERVE");
         return data;
     }
@@ -232,6 +252,9 @@ final class DesktopToolPayloads {
         ObjectNode data = base("desktop.observation");
         data.put("sessionId", session.sessionId());
         data.put("controlGranted", session.controlGranted());
+        data.put("foregroundGranted", session.foregroundGranted());
+        data.put("inputMode", session.foregroundGranted() ? "SYSTEM_EVENTS"
+                : session.controlGranted() ? "ACCESSIBILITY" : "READ_ONLY");
         data.put("targetId", session.target().id());
         data.put("application", session.target().application());
         if (!session.target().applicationId().isBlank())
@@ -304,7 +327,10 @@ final class DesktopToolPayloads {
         data.put("admission", admission(result).name());
         data.put("delivery", result.delivery().name());
         // Input admission never establishes the intended application postcondition.
-        data.put("effect", "UNKNOWN");
+        data.put("effect", result.reason() == DesktopActionResult.Reason.NO_PROGRESS
+                ? "NONE" : "UNKNOWN");
+        if (result.reason() == DesktopActionResult.Reason.NO_PROGRESS)
+            data.put("errorCode", "DESKTOP_NO_PROGRESS");
         data.put("mode", result.mode().name());
         data.put("reason", result.reason().name());
         data.put("dispatchAttempted", result.dispatchAttempted());
@@ -395,6 +421,8 @@ final class DesktopToolPayloads {
         data.put("minimized", target.minimized());
         data.put("visible", target.visible());
         data.put("systemSurface", target.systemSurface());
+        data.put("parentTargetId", target.parentTargetId());
+        data.put("relationProof", target.relationProof());
         return data;
     }
 

@@ -1267,19 +1267,22 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         }, executor);
     }
 
-    /** A bounded host subscription timeout is not an application event or a model turn. */
+    /** 有界等待到期交还模型；持续监听的订阅分片到期仍由宿主续订。 */
     private void awaitInteractionEvent(ActiveRun active, JsonNode wait) {
         synchronized (active.launchLock) {
             if (!interactionEventWaitActive(active, wait)) return;
             if (active.interactionEventAwait != null) return;
             var renewal = active.waitRenewal; active.waitRenewal = null;
             if (renewal != null) renewal.cancel(false);
-            long remaining = Math.max(1, java.time.Duration.between(clock.instant(), active.control.deadline()).toMillis());
-            long slice = Math.min(remaining, Math.min(30_000, Math.max(1, wait.path("timeoutMillis").asLong(30_000))));
-            ObjectNode lease = (ObjectNode) wait.deepCopy();
-            lease.put("timeoutMillis", slice); // Never change the durable baseline or reserved invocation.
             long started = System.nanoTime();
             try {
+                InteractionEventWaitMode waitMode = InteractionEventWaitMode.forStoredWait(wait);
+                long slice = interactionEventWaitSlice(active, wait, waitMode);
+                ObjectNode lease = (ObjectNode) wait.deepCopy();
+                lease.put("timeoutMillis", slice); // Never change the durable baseline or reserved invocation.
+                if (waitMode == InteractionEventWaitMode.BOUNDED)
+                    scheduleBoundedInteractionTimeout(active, wait, slice);
+                if (slice == 0) return; // 已过期的有界等待不再订阅期限外的新事件。
                 var awaited = interactionEvents.await(active.request, lease, active.control).toCompletableFuture();
                 active.interactionEventAwait = awaited;
                 awaited.whenCompleteAsync((output, failure) -> {
@@ -1292,21 +1295,76 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                                         JsonNodeFactory.instance.objectNode().put("event", "EVENT_SOURCE_FAILED")
                                                 .put("errorCode", "EVENT_SOURCE_UNAVAILABLE"));
                             } else if (output != null && "WAIT_TIMEOUT".equals(output.path("event").asText())) {
-                                if (!output.path("sessionId").asText().equals(wait.path("sessionId").asText())
-                                        || !output.path("timeoutMillis").isIntegralNumber()
-                                        || output.path("timeoutMillis").longValue() != slice)
-                                    throw new IllegalStateException("event source returned an invalid subscription timeout");
-                                // A synchronous/early timeout must not cause a busy callback loop.
-                                long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-                                long delay = Math.max(1, Math.max(1_000, slice) - elapsed);
-                                active.waitRenewal = waitTimers.schedule(() -> awaitInteractionEvent(active, wait),
-                                        delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+                                validateInteractionTimeout(wait, output, slice);
+                                if (waitMode == InteractionEventWaitMode.UNTIL_CHANGE) {
+                                    // 提前返回的源超时不能造成忙循环，续订仍使用原基线与原调用。
+                                    long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                                    long delay = Math.max(1, Math.max(1_000, slice) - elapsed);
+                                    active.waitRenewal = waitTimers.schedule(() -> awaitInteractionEvent(active, wait),
+                                            delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+                                }
+                                // BOUNDED 的总时限由宿主计时器负责，源超时不能提前恢复或重置它。
                             } else deliverInteractionWait(active, RunState.WAITING_EVENT, wait, output);
                         } catch (Throwable deliveryFailure) { fail(active, deliveryFailure); }
                     }
                 }, executor);
             } catch (Throwable deliveryFailure) { fail(active, deliveryFailure); }
         }
+    }
+
+    private long interactionEventWaitSlice(ActiveRun active, JsonNode wait, InteractionEventWaitMode waitMode) {
+        long remaining = Math.max(1, java.time.Duration.between(clock.instant(), active.control.deadline()).toMillis());
+        if (waitMode == InteractionEventWaitMode.BOUNDED && wait.has("waitDeadline")) {
+            // 恢复同一次等待不能重置其总时限；旧上下文仍受原 Run 截止时间约束。
+            Instant deadline = Instant.parse(wait.path("waitDeadline").asText());
+            remaining = Math.min(remaining, Math.max(0, java.time.Duration.between(clock.instant(), deadline).toMillis()));
+        }
+        return Math.min(remaining, Math.min(30_000, Math.max(1, wait.path("timeoutMillis").asLong(30_000))));
+    }
+
+    private void scheduleBoundedInteractionTimeout(ActiveRun active, JsonNode wait, long slice) {
+        ObjectNode timedOut = JsonNodeFactory.instance.objectNode().put("event", "WAIT_TIMEOUT")
+                .put("sessionId", wait.path("sessionId").asText()).put("timeoutMillis", slice)
+                .put("afterCapturedAtMillis", wait.path("afterCapturedAtMillis").asLong())
+                .put("waitMode", InteractionEventWaitMode.BOUNDED.name())
+                .put("inputAuthority", false).put("acceptanceEvidence", false)
+                .put("message", "No desktop change arrived within the bounded wait. Observe fresh state and "
+                        + "continue the task; this timeout is not evidence that its goal was achieved.");
+        active.waitRenewal = waitTimers.schedule(() -> completeBoundedInteractionTimeout(active, wait, timedOut),
+                slice, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private void completeBoundedInteractionTimeout(ActiveRun active, JsonNode wait, JsonNode output) {
+        synchronized (active.launchLock) {
+            if (!interactionEventWaitActive(active, wait)) return;
+            try {
+                JsonNode result = output;
+                var awaited = active.interactionEventAwait;
+                if (awaited != null && awaited.isDone()) {
+                    // 真实事件可能已到达，只是其异步回调仍在排队；不能把它覆盖为超时。
+                    try {
+                        JsonNode received = awaited.join(); // isDone 已确认，此处不阻塞计时器。
+                        if (received != null && "WAIT_TIMEOUT".equals(received.path("event").asText()))
+                            validateInteractionTimeout(wait, received, output.path("timeoutMillis").asLong());
+                        else result = received;
+                    } catch (java.util.concurrent.CompletionException | java.util.concurrent.CancellationException failure) {
+                        result = JsonNodeFactory.instance.objectNode().put("event", "EVENT_SOURCE_FAILED")
+                                .put("errorCode", "EVENT_SOURCE_UNAVAILABLE");
+                    }
+                }
+                active.waitRenewal = null;
+                deliverInteractionWait(active, RunState.WAITING_EVENT, wait, result);
+            } catch (Throwable deliveryFailure) {
+                fail(active, deliveryFailure);
+            }
+        }
+    }
+
+    private static void validateInteractionTimeout(JsonNode wait, JsonNode output, long slice) {
+        if (!output.path("sessionId").asText().equals(wait.path("sessionId").asText())
+                || !output.path("timeoutMillis").isIntegralNumber()
+                || output.path("timeoutMillis").longValue() != slice)
+            throw new IllegalStateException("event source returned an invalid subscription timeout");
     }
 
     private boolean interactionEventWaitActive(ActiveRun active, JsonNode wait) {

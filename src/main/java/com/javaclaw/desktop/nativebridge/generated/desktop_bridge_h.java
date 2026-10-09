@@ -23,10 +23,10 @@ public class desktop_bridge_h extends desktop_bridge_h$shared {
     static final SymbolLookup SYMBOL_LOOKUP =
             com.javaclaw.desktop.nativebridge.DesktopBridge.nativeLookup();
 
-    private static final int JC_DESKTOP_ABI_VERSION = (int)6L;
+    private static final int JC_DESKTOP_ABI_VERSION = (int)7L;
     /**
      * {@snippet lang=c :
-     * #define JC_DESKTOP_ABI_VERSION 6
+     * #define JC_DESKTOP_ABI_VERSION 7
      * }
      */
     public static int JC_DESKTOP_ABI_VERSION() {
@@ -103,6 +103,24 @@ public class desktop_bridge_h extends desktop_bridge_h$shared {
      */
     public static int JC_WINDOW_SYSTEM_SURFACE() {
         return JC_WINDOW_SYSTEM_SURFACE;
+    }
+    private static final int JC_RELATION_UNKNOWN = (int)0L;
+    /**
+     * {@snippet lang=c :
+     * enum jc_desktop_window_relation.JC_RELATION_UNKNOWN = 0
+     * }
+     */
+    public static int JC_RELATION_UNKNOWN() {
+        return JC_RELATION_UNKNOWN;
+    }
+    private static final int JC_RELATION_NATIVE_PARENT = (int)1L;
+    /**
+     * {@snippet lang=c :
+     * enum jc_desktop_window_relation.JC_RELATION_NATIVE_PARENT = 1
+     * }
+     */
+    public static int JC_RELATION_NATIVE_PARENT() {
+        return JC_RELATION_NATIVE_PARENT;
     }
     private static final int JC_CAP_CAPTURE = (int)1L;
     /**
@@ -522,6 +540,68 @@ public class desktop_bridge_h extends desktop_bridge_h$shared {
                 traceDowncall("jc_desktop_list_windows", windows, capacity, count);
             }
             return (int)mh$.invokeExact(windows, capacity, count);
+        } catch (Error | RuntimeException ex) {
+           throw ex;
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class jc_desktop_window_exists {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            desktop_bridge_h.C_INT,
+            desktop_bridge_h.C_LONG_LONG,
+            desktop_bridge_h.C_LONG_LONG,
+            desktop_bridge_h.C_LONG_LONG
+        );
+
+        public static final MemorySegment ADDR = SYMBOL_LOOKUP.findOrThrow("jc_desktop_window_exists");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Function descriptor for:
+     * {@snippet lang=c :
+     * int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id, uint64_t process_instance_id)
+     * }
+     */
+    public static FunctionDescriptor jc_desktop_window_exists$descriptor() {
+        return jc_desktop_window_exists.DESC;
+    }
+
+    /**
+     * Downcall method handle for:
+     * {@snippet lang=c :
+     * int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id, uint64_t process_instance_id)
+     * }
+     */
+    public static MethodHandle jc_desktop_window_exists$handle() {
+        return jc_desktop_window_exists.HANDLE;
+    }
+
+    /**
+     * Address for:
+     * {@snippet lang=c :
+     * int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id, uint64_t process_instance_id)
+     * }
+     */
+    public static MemorySegment jc_desktop_window_exists$address() {
+        return jc_desktop_window_exists.ADDR;
+    }
+
+    /**
+     * {@snippet lang=c :
+     * int32_t jc_desktop_window_exists(uint64_t process_id, uint64_t window_id, uint64_t process_instance_id)
+     * }
+     */
+    public static int jc_desktop_window_exists(long process_id, long window_id, long process_instance_id) {
+        var mh$ = jc_desktop_window_exists.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("jc_desktop_window_exists", process_id, window_id, process_instance_id);
+            }
+            return (int)mh$.invokeExact(process_id, window_id, process_instance_id);
         } catch (Error | RuntimeException ex) {
            throw ex;
         } catch (Throwable ex$) {

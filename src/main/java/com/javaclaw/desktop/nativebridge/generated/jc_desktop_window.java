@@ -25,6 +25,8 @@ import static java.lang.foreign.MemoryLayout.PathElement.*;
  *     uint32_t flags;
  *     char app_utf8[128];
  *     char title_utf8[256];
+ *     uint64_t parent_window_id;
+ *     uint32_t relation_kind;
  * }
  * }
  */
@@ -45,6 +47,9 @@ public class jc_desktop_window {
         desktop_bridge_h.C_INT.withName("flags"),
         MemoryLayout.sequenceLayout(128, desktop_bridge_h.C_CHAR).withName("app_utf8"),
         MemoryLayout.sequenceLayout(256, desktop_bridge_h.C_CHAR).withName("title_utf8"),
+        MemoryLayout.paddingLayout(4),
+        desktop_bridge_h.C_LONG_LONG.withName("parent_window_id"),
+        desktop_bridge_h.C_INT.withName("relation_kind"),
         MemoryLayout.paddingLayout(4)
     ).withName("jc_desktop_window");
 
@@ -559,6 +564,94 @@ public class jc_desktop_window {
      */
     public static void title_utf8(MemorySegment struct, long index0, byte fieldValue) {
         title_utf8$ELEM_HANDLE.set(struct, title_utf8$OFFSET, index0, fieldValue);
+    }
+
+    private static final OfLong parent_window_id$LAYOUT = (OfLong)$LAYOUT.select(groupElement("parent_window_id"));
+
+    /**
+     * Layout for field:
+     * {@snippet lang=c :
+     * uint64_t parent_window_id
+     * }
+     */
+    public static final OfLong parent_window_id$layout() {
+        return parent_window_id$LAYOUT;
+    }
+
+    private static final long parent_window_id$OFFSET = $LAYOUT.byteOffset(groupElement("parent_window_id"));
+
+    /**
+     * Offset for field:
+     * {@snippet lang=c :
+     * uint64_t parent_window_id
+     * }
+     */
+    public static final long parent_window_id$offset() {
+        return parent_window_id$OFFSET;
+    }
+
+    /**
+     * Getter for field:
+     * {@snippet lang=c :
+     * uint64_t parent_window_id
+     * }
+     */
+    public static long parent_window_id(MemorySegment struct) {
+        return struct.get(parent_window_id$LAYOUT, parent_window_id$OFFSET);
+    }
+
+    /**
+     * Setter for field:
+     * {@snippet lang=c :
+     * uint64_t parent_window_id
+     * }
+     */
+    public static void parent_window_id(MemorySegment struct, long fieldValue) {
+        struct.set(parent_window_id$LAYOUT, parent_window_id$OFFSET, fieldValue);
+    }
+
+    private static final OfInt relation_kind$LAYOUT = (OfInt)$LAYOUT.select(groupElement("relation_kind"));
+
+    /**
+     * Layout for field:
+     * {@snippet lang=c :
+     * uint32_t relation_kind
+     * }
+     */
+    public static final OfInt relation_kind$layout() {
+        return relation_kind$LAYOUT;
+    }
+
+    private static final long relation_kind$OFFSET = $LAYOUT.byteOffset(groupElement("relation_kind"));
+
+    /**
+     * Offset for field:
+     * {@snippet lang=c :
+     * uint32_t relation_kind
+     * }
+     */
+    public static final long relation_kind$offset() {
+        return relation_kind$OFFSET;
+    }
+
+    /**
+     * Getter for field:
+     * {@snippet lang=c :
+     * uint32_t relation_kind
+     * }
+     */
+    public static int relation_kind(MemorySegment struct) {
+        return struct.get(relation_kind$LAYOUT, relation_kind$OFFSET);
+    }
+
+    /**
+     * Setter for field:
+     * {@snippet lang=c :
+     * uint32_t relation_kind
+     * }
+     */
+    public static void relation_kind(MemorySegment struct, int fieldValue) {
+        struct.set(relation_kind$LAYOUT, relation_kind$OFFSET, fieldValue);
     }
 
     /**

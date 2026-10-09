@@ -469,15 +469,29 @@ final class ToolCatalogSession implements FrameworkTool {
 
     /** A frozen read masks other activations without granting or consuming their interfaces. */
     synchronized ToolCatalogProjection projectRequiredRead(String name, int maxSelectedTools) {
+        return projectRequiredRead(name, maxSelectedTools, false);
+    }
+
+    /** The optional window inventory is another exact host read, never a control or input interface. */
+    synchronized ToolCatalogProjection projectRequiredRead(String name, int maxSelectedTools,
+            boolean includeWindowCandidates) {
         refresh();
         if (maxSelectedTools < 1 || !trustedReadOnlyTool(name)) {
             throw new IllegalStateException("required frozen read is not currently authorized");
         }
+        if (includeWindowCandidates && (!name.equals("desktop_session_observe")
+                || !trustedReadOnlyTool("desktop_session_window_candidates")))
+            throw new IllegalStateException("frozen desktop window inventory is not currently authorized");
+        if (includeWindowCandidates && selectedBusinessToolLimit(maxSelectedTools) < 2)
+            throw new ToolCountBudgetExceededException(2, selectedBusinessToolLimit(maxSelectedTools),
+                    "desktop_session_window_candidates");
         if (request.control().remainingToolCalls() == 0) {
             return withControl(List.of(), 0, authorizedNames.size());
         }
         List<ToolCallback> selected = new ArrayList<>();
         int characters = addRequired(selected, 0, authorized.get(name));
+        if (includeWindowCandidates)
+            characters = addRequired(selected, characters, authorized.get("desktop_session_window_candidates"));
         return withControl(selected, characters, authorizedNames.size());
     }
 
@@ -509,7 +523,8 @@ final class ToolCatalogSession implements FrameworkTool {
             throw new IllegalStateException("desktop READY schemas exceed the current selection limit");
         for (String name : names) {
             boolean observation = name.equals("desktop_session_observe") && trustedReadOnlyTool(name);
-            if (!observation && !trustedDesktopInputTool(name))
+            boolean candidates = name.equals("desktop_session_window_candidates") && trustedReadOnlyTool(name);
+            if (!observation && !candidates && !trustedDesktopInputTool(name))
                 throw new IllegalStateException("desktop READY interface is not currently authorized: " + name);
         }
         if (request.control().remainingToolCalls() == 0)
@@ -721,6 +736,26 @@ final class ToolCatalogSession implements FrameworkTool {
             }
         }
         return List.copyOf(context);
+    }
+
+    /** Internal routing only. Window tracking must not compete with the tiny provider runtime block. */
+    synchronized List<JsonNode> currentDesktopWindowContext() {
+        if (!trustedReadOnlyTool("desktop_session_window_candidates")) return List.of();
+        for (FrameworkTool tool : authorizedTools) {
+            if (!tool.descriptor().name().equals("desktop_session_window_candidates")
+                    || !SpringAiAnnotatedToolRegistry.isExactHostTool(tool)
+                    || !SpringAiAnnotatedToolRegistry.isTrustedReceiptSource(tool)) continue;
+            var provider = tool.runtimeContextProvider();
+            if (provider == null) continue;
+            try {
+                return provider.currentContext().stream().filter(value -> value != null && value.isObject()
+                        && value.path("kind").asText().equals("desktop.windows.current")
+                        && value.toString().length() <= 6_000).map(value -> value.<JsonNode>deepCopy()).toList();
+            } catch (RuntimeException unavailable) {
+                return List.of(); // Supplemental tracking cannot invalidate the current observed frame.
+            }
+        }
+        return List.of();
     }
 
     /** Searches only the Run-authorized business tools; no external read or budget charge. */

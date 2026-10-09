@@ -68,11 +68,16 @@ class DesktopSessionToolsPathTest {
         Path screenshots = Files.createDirectories(data.path().resolve("screenshots"));
         Path outside = Files.createDirectories(temporary.resolve("outside"));
         Files.createSymbolicLink(screenshots.resolve("workspace"), outside);
+        DesktopTarget target = new DesktopTarget("test", "target", 1,
+                "示例应用", "窗口", 0, 0, 1, 1, DesktopTarget.VISIBLE);
 
         DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
                 DesktopSessionService.class.getClassLoader(),
                 new Class<?>[] { DesktopSessionService.class },
                 (proxy, method, args) -> {
+                    if (method.getName().equals("info")) {
+                        return new DesktopSessionInfo("session", target, false, false);
+                    }
                     if (method.getName().equals("snapshot")) {
                         return CompletableFuture.completedFuture(Optional.of(new DesktopFrame(
                                 "target", 1, 1, 1, 1, 4,

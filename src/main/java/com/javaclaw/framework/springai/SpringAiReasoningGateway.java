@@ -383,6 +383,13 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             if (cause instanceof ToolInputRequiredException input) {
                 return ReasoningResult.waitingForInput(input.context(), input.getMessage());
             }
+            if (cause instanceof com.javaclaw.framework.core.DesktopNoProgressException stalled) {
+                ObjectNode context = stalled.context();
+                request.events().emit("core.desktop.no_progress", 1, "framework.core", context);
+                request.events().emit("core.task.stop", 3, "framework.springai",
+                        JsonNodeFactory.instance.objectNode().put("reasonCode", TaskStopReason.NO_PROGRESS.name()));
+                return new ReasoningResult(RunState.PAUSED, context, TaskStopReason.NO_PROGRESS.name());
+            }
             if (cause instanceof com.javaclaw.framework.core.CrossModeBusinessEffectUnverifiedException business) {
                 request.events().emit("core.interaction.business_fence_blocked", 1, "framework.core", business.context());
                 return new ReasoningResult(RunState.PAUSED, business.context(), "CROSS_MODE_BUSINESS_UNVERIFIED");
@@ -723,6 +730,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                         || cause instanceof ToolInputRequiredException
                         || cause instanceof ToolRecoveryRequiredException
                         || cause instanceof PendingEffectObservationRequiredException
+                        || cause instanceof com.javaclaw.framework.core.DesktopNoProgressException
                         || cause instanceof com.javaclaw.framework.core.CrossModeBusinessEffectUnverifiedException
                         || cause instanceof ContextPlanningRequiredException
                         || cause instanceof TurnPausedException

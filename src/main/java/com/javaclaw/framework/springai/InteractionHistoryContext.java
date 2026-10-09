@@ -71,7 +71,12 @@ final class InteractionHistoryContext {
                                 .put("runtimeId", surface.runtimeId()).put("contextId", surface.contextId())
                                 .put("surfaceId", surface.surfaceId()).put("logicalTargetId", surface.logicalTargetId())
                                 .put("documentId", surface.documentId()).put("generation", surface.generation())
-                                .put("openerSurfaceId", surface.relatedSurfaceId())
+                                .put("relatedSurfaceId", surface.relatedSurfaceId())
+                                .put("relationship", surface.relation().name())
+                                .put("openerSurfaceId", surface.relation() == InteractionSurfaceEvent.Relation.OPENER
+                                        ? surface.relatedSurfaceId() : "")
+                                .put("parentSurfaceId", surface.relation() == InteractionSurfaceEvent.Relation.PARENT
+                                        ? surface.relatedSurfaceId() : "")
                                 .put("relationshipProof", surface.relationProof().name())
                                 .put("applicationId", SensitiveDataRedactor.redactText(surface.applicationId()))
                                 .put("origin", SensitiveDataRedactor.redactText(surface.urlOrigin()));
@@ -83,7 +88,8 @@ final class InteractionHistoryContext {
                             || surface.causeProof() != InteractionSurfaceEvent.CauseProof.UNKNOWN
                             || surface.kind() == InteractionSurfaceEvent.Kind.PAGE_CLOSED
                             || surface.kind() == InteractionSurfaceEvent.Kind.SURFACE_CLOSED
-                            || surface.kind() == InteractionSurfaceEvent.Kind.CONTEXT_CLOSED)) {
+                            || surface.kind() == InteractionSurfaceEvent.Kind.CONTEXT_CLOSED
+                            || desktopWindowLifecycle(surface.kind()))) {
                         addBounded(payload, relations, base(entry.ownerRunId().value(), entry.evidenceRef())
                                 .put("mode", surface.mode().name()).put("event", surface.kind().name())
                                 .put("runtimeId", surface.runtimeId()).put("contextId", surface.contextId())
@@ -92,6 +98,8 @@ final class InteractionHistoryContext {
                                 .put("relationshipProof", surface.relationProof().name())
                                 .put("actionAssociation", surface.causeProof().name())
                                 .put("sourceSurfaceId", surface.sourceSurfaceId())
+                                .put("sourceInvocationId", surface.causedByInvocationId())
+                                .put("creationCausalityProven", surface.causeProof() == InteractionSurfaceEvent.CauseProof.DIRECT_CREATE)
                                 .put("invocationId", surface.causedByInvocationId()));
                     }
                 } else if (relations.size() < 6 && "core.tool.receipt".equals(entry.kind())) {
@@ -112,7 +120,11 @@ final class InteractionHistoryContext {
                 + "所有旧ID、关闭页面和旧窗口只用于重新发现；不能作为当前句柄、输入基线、权限或验收证明。"
                 + "先使用当前后端的发现/选择接口，并取得真实新观察。"
                 + "OPENER只证明来源页面关系；EXPECTED_POPUP_MATCH只证明预注册等待匹配，不证明点击导致弹窗；"
-                + "DIRECT_CREATE表示宿主直接创建。历史回执引用不重新结算未知效果。\n" + payload);
+                + "DIRECT_CREATE表示宿主直接创建浏览器页面，不能用于桌面窗口。"
+                + "PARENT只表示原生已证明的窗口父子关系，不表示哪个操作创建了窗口；"
+                + "OBSERVED_AFTER仅表示已派发输入后发现的窗口候选，创建因果未知，不能据此自动选择其中一个或重复输入。"
+                + "WINDOW_OPENED表示打开窗口会话，不能推断新建；WINDOW_UNAVAILABLE不能推断关闭；显隐不会变成新窗口。"
+                + "历史回执引用不重新结算未知效果。\n" + payload);
     }
 
     private static ObjectNode base(String runId, String ref) {
@@ -125,6 +137,13 @@ final class InteractionHistoryContext {
                 && surface.relation() == InteractionSurfaceEvent.Relation.UNKNOWN
                 && surface.relationProof() == InteractionSurfaceEvent.RelationProof.UNKNOWN
                 && surface.causeProof() == InteractionSurfaceEvent.CauseProof.UNKNOWN;
+    }
+
+    private static boolean desktopWindowLifecycle(InteractionSurfaceEvent.Kind kind) {
+        return switch (kind) {
+            case WINDOW_DISCOVERED, WINDOW_OPENED, WINDOW_HIDDEN, WINDOW_SHOWN, WINDOW_UNAVAILABLE, WINDOW_CLOSED -> true;
+            default -> false;
+        };
     }
 
     private static boolean ordinaryReceipt(com.javaclaw.framework.api.InteractionHistory.Entry entry) {

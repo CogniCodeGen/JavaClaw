@@ -6,6 +6,7 @@
 --include-function jc_desktop_probe
 --include-function jc_desktop_request_permissions
 --include-function jc_desktop_list_windows
+--include-function jc_desktop_window_exists
 --include-function jc_desktop_open
 --include-function jc_desktop_poll_frame
 --include-function jc_desktop_release_frame
@@ -24,6 +25,8 @@
 --include-constant JC_WINDOW_VISIBLE
 --include-constant JC_WINDOW_POPUP
 --include-constant JC_WINDOW_SYSTEM_SURFACE
+--include-constant JC_RELATION_UNKNOWN
+--include-constant JC_RELATION_NATIVE_PARENT
 --include-constant JC_CAP_CAPTURE
 --include-constant JC_CAP_SEMANTIC_INPUT
 --include-constant JC_CAP_DIRECTED_INPUT

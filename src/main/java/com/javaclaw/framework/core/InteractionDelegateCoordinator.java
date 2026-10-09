@@ -229,10 +229,18 @@ public final class InteractionDelegateCoordinator implements InteractionDelegate
                 || InteractionExecutionPolicy.activeMode(context.request(), runs.eventsAfter(context.runId(), 0))
                     != InteractionMode.DESKTOP)
             throw new SecurityException("native event waits require the desktop backend");
+        execution.cancellation().throwIfCancelled();
+        InteractionEventWaitMode waitMode = InteractionEventWaitMode.forInvocation(input);
+        long timeoutMillis = Math.min(30_000, Math.max(1, input.path("timeoutMillis").asLong(30_000)));
         ObjectNode wait = object().put("kind", "interaction.waiting_event")
+                .put("waitMode", waitMode.name())
                 .put("invocationId", execution.invocationId()).put("sessionId", input.path("sessionId").asText())
                 .put("afterCapturedAtMillis", input.path("afterCapturedAtMillis").asLong())
-                .put("timeoutMillis", Math.min(30_000, Math.max(1, input.path("timeoutMillis").asLong(30_000))));
+                .put("timeoutMillis", timeoutMillis);
+        if (waitMode == InteractionEventWaitMode.BOUNDED) {
+            Instant deadline = Instant.now().plusMillis(timeoutMillis);
+            wait.put("waitDeadline", (deadline.isBefore(execution.deadline()) ? deadline : execution.deadline()).toString());
+        }
         var baseline = InteractionModeFreshness.desktopBaselines(context.runId(),
                 runs.eventsAfter(context.runId(), 0)).stream().filter(frame ->
                         frame.sessionId().equals(wait.path("sessionId").asText())

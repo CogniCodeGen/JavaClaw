@@ -145,6 +145,56 @@ class ComputerUseSessionCursorTest {
     }
 
     @Test
+    void systemInputRequiredReopensControlledSessionWithoutDowngradingItsControlGrant() {
+        var rejected = systemInputRequiredClick();
+        var probe = tool(7, "probe", "desktop_session_probe", "SUCCEEDED",
+                NODES.objectNode().put("automation", "READY"));
+        var cursor = derive(List.of(open(1), observe(3), rejected.step(), probe),
+                List.of(openReceipt(2), observeReceipt(4), rejected.receipt()), observation(), List.of());
+
+        assertEquals(ComputerUseSessionCursor.Phase.OPEN_CONTROL, cursor.phase());
+        assertEquals("desktop_session_open", cursor.requiredTool());
+        assertEquals(SESSION, cursor.sessionId());
+        assertEquals(TARGET, cursor.targetId());
+        assertEquals(ComputerUseSessionCursor.ControlAccess.GRANTED, cursor.controlAccess());
+        assertTrue(cursor.pendingInvocationIds().isEmpty(), "the mode rejection sent no input");
+        assertEquals("", cursor.observationId());
+        assertFalse(cursor.inputAllowed());
+    }
+
+    @Test
+    void systemInputUpgradeStillRequiresANewObservationBeforeInput() {
+        var rejected = systemInputRequiredClick();
+        ObjectNode raw = ((ObjectNode) open(1).output().path("rawOutput")).deepCopy();
+        raw.put("foregroundGranted", true).put("inputMode", "SYSTEM_EVENTS");
+        var upgraded = withArguments(tool(7, "open-system-input", "desktop_session_open", "SUCCEEDED", raw),
+                NODES.objectNode().put("targetId", TARGET).put("control", true));
+        ObjectNode metadata = NODES.objectNode().put("sessionId", SESSION).put("targetId", TARGET)
+                .put("controlGranted", "true");
+        ObjectNode upgradePayload = (ObjectNode) receipt(8, "open-system-input",
+                "desktop_session_open", "ACCEPTED", metadata).payload();
+        upgradePayload.put("operation", "open");
+        var upgradeReceipt = event(RUN, 8, "core.tool.receipt", "framework.core", upgradePayload);
+        var steps = List.of(open(1), observe(3), rejected.step(), upgraded);
+        var receipts = List.of(openReceipt(2), observeReceipt(4), rejected.receipt(), upgradeReceipt);
+        var cursor = derive(steps, receipts, observation(), List.of());
+
+        assertEquals(ComputerUseSessionCursor.Phase.OBSERVE, cursor.phase());
+        assertEquals("desktop_session_observe", cursor.requiredTool());
+        assertTrue(cursor.pendingInvocationIds().isEmpty());
+        assertFalse(cursor.inputAllowed(), "selecting system events cannot reuse the earlier frame");
+
+        var observedSteps = new ArrayList<>(steps);
+        observedSteps.add(updatedObserve(11));
+        var observedReceipts = new ArrayList<>(receipts);
+        observedReceipts.add(updatedReceipt(12));
+        var ready = derive(observedSteps, observedReceipts, updatedObservation(), List.of());
+        assertEquals(ComputerUseSessionCursor.Phase.READY, ready.phase());
+        assertEquals(UPDATED_FRAME, ready.observationId());
+        assertTrue(ready.inputAllowed());
+    }
+
+    @Test
     void observationWithoutMatchingJournalStepAndHostReceiptCannotAuthorizeInput() {
         var cursor = derive(List.of(), List.of(), observation(), List.of());
         assertFalse(cursor.inputAllowed());
@@ -395,7 +445,8 @@ class ComputerUseSessionCursorTest {
                 null, List.of(inventory), true);
         assertEquals(ComputerUseSessionCursor.Phase.RECOVER_SESSION, cursor.phase());
         assertEquals("desktop_session_open", cursor.requiredTool());
-        assertEquals(TARGET, cursor.targetId());
+        assertEquals("", cursor.targetId(),
+                "discovery permits an explicit open selection; even one candidate cannot replace a missing prior target");
         assertEquals("", cursor.sessionId());
         assertFalse(cursor.inputAllowed());
     }
@@ -662,6 +713,26 @@ class ComputerUseSessionCursorTest {
                 .put("observationId", FRAME).put("nextStep", nextStep);
         if (!delivery.isBlank()) metadata.put("delivery", delivery);
         return new Action(step, receipt(sequence + 1, "click", "desktop_session_click", status, metadata));
+    }
+
+    private static Action systemInputRequiredClick() {
+        ObjectNode raw = NODES.objectNode().put("schemaVersion", 1).put("kind", "desktop.action")
+                .put("protocol", "computer-use").put("tool", "desktop_session_click")
+                .put("sessionId", SESSION).put("targetId", TARGET).put("observationId", FRAME)
+                .put("windowGeneration", 1).put("contentRevision", 1).put("actionKind", "CLICK")
+                .put("status", "DENIED").put("admission", "FAILED").put("mode", "NONE")
+                .put("effect", "UNKNOWN")
+                .put("reason", "SYSTEM_INPUT_REQUIRED").put("nextStep", "OPEN_SESSION")
+                .put("delivery", "NOT_SENT").put("dispatchAttempted", false);
+        var click = withArguments(tool(5, "click", "desktop_session_click", "FAILED", raw),
+                NODES.objectNode().put("sessionId", SESSION).put("observationId", FRAME));
+        var rejected = receipt(6, "click", "desktop_session_click", "FAILED", NODES.objectNode()
+                .put("sessionId", SESSION).put("targetId", TARGET).put("observationId", FRAME)
+                .put("desktopStatus", "DENIED").put("deliveryMode", "NONE").put("effect", "UNKNOWN")
+                .put("windowGeneration", "1")
+                .put("reasonCode", "SYSTEM_INPUT_REQUIRED").put("nextStep", "OPEN_SESSION")
+                .put("delivery", "NOT_SENT").put("dispatchAttempted", "false"));
+        return new Action(click, rejected);
     }
 
     private static AgentStep tool(long sequence, String invocation, String name,

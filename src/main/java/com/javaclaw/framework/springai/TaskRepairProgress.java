@@ -95,6 +95,10 @@ final class TaskRepairProgress {
             RunEventEnvelope event, RunEventEnvelope repair) {
         JsonNode payload = event.payload();
         String operation = payload.path("operation").asText("");
+        // A desktop input being accepted proves dispatch, not visible task progress. Its fresh
+        // subsequent observation must change real state; rotating handle IDs is insufficient.
+        if (payload.path("tool").asText("").startsWith("desktop_session_")
+                && Set.of("click", "type", "key", "scroll").contains(operation)) return false;
         if (Set.of("observe", "snapshot", "probe", "targets", "read", "list",
                 "search", "fetch", "fixed").contains(operation)) return false;
         JsonNode delivery = payload.path("metadata").path("delivery");

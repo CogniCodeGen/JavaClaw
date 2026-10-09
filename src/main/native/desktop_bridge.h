@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define JC_DESKTOP_ABI_VERSION 6
+#define JC_DESKTOP_ABI_VERSION 7
 #define JC_DESKTOP_APP_BYTES 128
 #define JC_DESKTOP_TITLE_BYTES 256
 #define JC_DESKTOP_ROLE_BYTES 64
@@ -24,6 +24,12 @@ enum jc_desktop_window_flag {
     JC_WINDOW_VISIBLE = 2,
     JC_WINDOW_POPUP = 4,
     JC_WINDOW_SYSTEM_SURFACE = 8
+};
+
+/* Evidence about a window relationship, never inferred from PID or Z order. */
+enum jc_desktop_window_relation {
+    JC_RELATION_UNKNOWN = 0,
+    JC_RELATION_NATIVE_PARENT = 1
 };
 
 enum jc_desktop_capability {
@@ -74,6 +80,9 @@ typedef struct jc_desktop_window {
     uint32_t flags;
     char app_utf8[JC_DESKTOP_APP_BYTES];
     char title_utf8[JC_DESKTOP_TITLE_BYTES];
+    /* Zero unless a public native owner/parent API establishes the relationship. */
+    uint64_t parent_window_id;
+    uint32_t relation_kind;
 } jc_desktop_window;
 
 /* Pixels are BGRA premultiplied, owned by the caller after a successful poll. */
@@ -131,6 +140,13 @@ JC_DESKTOP_EXPORT int32_t jc_desktop_request_permissions(uint32_t *capabilities,
 /* count receives the total count. Up to capacity entries are copied to windows. */
 JC_DESKTOP_EXPORT int32_t jc_desktop_list_windows(jc_desktop_window *windows,
                                                    uint32_t capacity, uint32_t *count);
+/* Read-only exact window liveness, including hidden/minimized windows. Returns
+ * 1 if the PID/window/process-instance still exists, 0 only if that identity
+ * has disappeared, and a negative code if permissions or native reads cannot
+ * establish existence. Enumeration absence from list_windows is not closure. */
+JC_DESKTOP_EXPORT int32_t jc_desktop_window_exists(uint64_t process_id,
+                                                   uint64_t window_id,
+                                                   uint64_t process_instance_id);
 /* Optional ABI v3 extension. Launch or activate an installed application by its
  * exact display name or bundle identifier, never by a caller-supplied path or
  * command. On success process_id is the actual running application's PID.
@@ -166,7 +182,9 @@ JC_DESKTOP_EXPORT int32_t jc_desktop_resolve_application_id(const char *applicat
 JC_DESKTOP_EXPORT int32_t jc_desktop_list_applications(char *catalog_utf8,
                                                        uint32_t capacity,
                                                        uint32_t *required_bytes);
-/* Refuses a PID/window pair whose process instance changed after discovery. */
+/* Refuses a PID/window pair whose process instance changed after discovery.
+ * The session remains bound to this exact window; it never follows another
+ * window of the process when this one is covered, minimized or closed. */
 JC_DESKTOP_EXPORT void *jc_desktop_open(uint64_t process_id, uint64_t window_id,
                                         uint64_t process_instance_id,
                                         char *detail_utf8, uint32_t detail_capacity);

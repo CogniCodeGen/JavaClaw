@@ -29,14 +29,41 @@ public final class InteractionJournal implements InteractionHistoryClient {
         StoredRun owner = readable(ownerRun);
         logicalRoot(owner); // A child cannot keep writing after its logical conversation was tombstoned.
         Objects.requireNonNull(surface);
-        if (!ownerRun.equals(com.javaclaw.framework.spi.InteractionInvocation.currentRun()))
-            surface = surface.withObservedDuringInvocation("");
+        boolean currentInvocation = ownerRun.equals(com.javaclaw.framework.spi.InteractionInvocation.currentRun());
+        if (surface.causeProof() == InteractionSurfaceEvent.CauseProof.OBSERVED_AFTER) {
+            String observing = currentInvocation ? surface.observedDuringInvocationId() : "";
+            String sourceInvocation = surface.causedByInvocationId();
+            String sourceSurface = surface.sourceSurfaceId();
+            boolean verifiedSource = desktopSourceStarted(ownerRun, surface);
+            // Background native polling has no active observing tool invocation. Its source
+            // was captured by the host at dispatch and is checked against the durable start.
+            // This retains only a low-confidence observation link, never an action receipt.
+            surface = surface.withObservedDuringInvocation("").withObservedDuringInvocation(observing);
+            if (verifiedSource) surface = surface.withObservedAfter(sourceInvocation, sourceSurface);
+        } else if (!currentInvocation) surface = surface.withObservedDuringInvocation("");
         var payload = json.createObjectNode();
         payload.put("schemaVersion", 1);
         payload.put("producer", PRODUCER);
         payload.put("ownerRunId", ownerRun.value());
         payload.set("surface", json.valueToTree(surface));
         threads.appendInteractionOnce(owner.request().scope(), surface.eventId(), TYPE, payload);
+    }
+
+    private boolean desktopSourceStarted(RunId ownerRun, InteractionSurfaceEvent surface) {
+        return runs.eventsAfter(ownerRun, 0).stream().anyMatch(event -> {
+            if (!event.runId().equals(ownerRun.value()) || event.schemaVersion() != 1
+                    || !event.type().equals("core.tool.started") || !event.producer().equals("framework.core")
+                    || event.timestamp().toEpochMilli() > surface.observedAt().toEpochMilli()) return false;
+            var payload = event.payload();
+            var arguments = payload.path("arguments");
+            return payload.path("trustedDesktopTool").isBoolean() && payload.path("trustedDesktopTool").booleanValue()
+                    && Set.of("desktop_session_click", "desktop_session_type", "desktop_session_key",
+                            "desktop_session_scroll").contains(payload.path("tool").asText())
+                    && surface.causedByInvocationId().equals(payload.path("invocationId").asText())
+                    && arguments.path("sessionId").isTextual() && !arguments.path("sessionId").asText().isBlank()
+                    && arguments.path("observationId").isTextual() && !arguments.path("observationId").asText().isBlank()
+                    && surface.contextId().equals(arguments.path("sessionId").asText());
+        });
     }
 
     @Override public InteractionHistory history(RunId runId, int limit) {
@@ -104,22 +131,25 @@ public final class InteractionJournal implements InteractionHistoryClient {
                 } catch (Exception invalid) { /* Old or incomplete records cannot become identity proof. */ }
             }
         }
-        Map<InvocationKey, LinkedHashMap<String, InteractionSurfaceEvent>> associations = new HashMap<>();
-        for (var entry : result) {
-            var surface = entry.surface();
-            if (surface == null || surface.observedDuringInvocationId().isBlank() || surface.surfaceId().isBlank()) continue;
-            var key = new InvocationKey(entry.ownerRunId(), surface.observedDuringInvocationId());
-            associations.computeIfAbsent(key, ignored -> new LinkedHashMap<>()).put(surface.surfaceId(), surface);
-        }
-        result.replaceAll(entry -> {
-            if (entry.surface() != null || entry.invocationId().isBlank()) return entry;
-            var associated = associations.get(new InvocationKey(entry.ownerRunId(), entry.invocationId()));
-            return associated == null ? entry : entry.withAssociatedSurfaces(associated.values().stream().limit(8).toList());
-        });
         result.sort(Comparator.comparing(InteractionHistory.Entry::observedAt)
                 .thenComparing(entry -> entry.ownerRunId().value())
                 .thenComparingLong(InteractionHistory.Entry::eventSequence)
                 .thenComparing(InteractionHistory.Entry::eventId));
+        Map<InvocationKey, LinkedHashMap<SurfaceKey, InteractionSurfaceEvent>> associations = new HashMap<>();
+        for (var entry : result) {
+            var surface = entry.surface();
+            if (surface == null || surface.surfaceId().isBlank()) continue;
+            associate(associations, entry.ownerRunId(), surface.observedDuringInvocationId(), surface);
+            // A later discovery belongs to its observing invocation and also to the source
+            // input. Multiple candidates are retained; the link never becomes a causal receipt.
+            if (surface.causeProof() != InteractionSurfaceEvent.CauseProof.UNKNOWN)
+                associate(associations, entry.ownerRunId(), surface.causedByInvocationId(), surface);
+        }
+        result.replaceAll(entry -> {
+            if (entry.surface() != null || entry.invocationId().isBlank()) return entry;
+            var associated = associations.get(new InvocationKey(entry.ownerRunId(), entry.invocationId()));
+            return associated == null ? entry : entry.withAssociatedSurfaces(associated.values().stream().limit(MAX_LIMIT).toList());
+        });
         boolean truncated = result.size() > limit;
         if (truncated) result = new ArrayList<>(result.subList(result.size() - limit, result.size()));
         // A deletion during the query invalidates the entire projection, including descendant data.
@@ -163,5 +193,13 @@ public final class InteractionJournal implements InteractionHistoryClient {
     private static boolean samePrincipal(RunScope a, RunScope b) {
         return a.workspaceId().equals(b.workspaceId()) && a.userId().equals(b.userId());
     }
+    private static void associate(Map<InvocationKey, LinkedHashMap<SurfaceKey, InteractionSurfaceEvent>> associations,
+            RunId ownerRun, String invocationId, InteractionSurfaceEvent surface) {
+        if (invocationId.isBlank()) return;
+        var key = new InvocationKey(ownerRun, invocationId);
+        var identity = new SurfaceKey(surface.mode(), surface.runtimeId(), surface.contextId(), surface.surfaceId());
+        associations.computeIfAbsent(key, ignored -> new LinkedHashMap<>()).put(identity, surface);
+    }
     private record InvocationKey(RunId runId, String invocationId) { }
+    private record SurfaceKey(InteractionSurfaceEvent.Mode mode, String runtimeId, String contextId, String surfaceId) { }
 }

@@ -23,6 +23,16 @@ final class RequiredDesktopOpenDiscovery {
     }
 
     static Discovery latest(RunId run, List<RunEventEnvelope> history, long boundary, String applicationId) {
+        return latest(run, history, boundary, applicationId, false);
+    }
+
+    /** Discovery data retained for explicit selection, never a restored window/input handle. */
+    static Discovery latestAll(RunId run, List<RunEventEnvelope> history) {
+        return latest(run, history, 0, "", true);
+    }
+
+    private static Discovery latest(RunId run, List<RunEventEnvelope> history, long boundary,
+            String applicationId, boolean allApplications) {
         List<RunEventEnvelope> events = history.stream().filter(event -> event.runId().equals(run.value())
                 && event.producer().equals("framework.core")).toList();
         Map<String, List<RunEventEnvelope>> groups = new LinkedHashMap<>();
@@ -74,11 +84,11 @@ final class RequiredDesktopOpenDiscovery {
         List<JsonNode> targets = new ArrayList<>();
         Set<String> ids = new java.util.HashSet<>();
         for (JsonNode target : latest.payload().path("output").path("targets")) {
-            if (!target.isObject() || !target.path("applicationId").asText().equals(applicationId)
+            if (!target.isObject() || !allApplications && !target.path("applicationId").asText().equals(applicationId)
                     || !identifier(target.path("targetId")) || !identifier(target.path("providerId"))
                     || !target.path("processId").isIntegralNumber() || !target.path("processId").canConvertToLong()
                     || target.path("processId").asLong() <= 0
-                    || !target.path("visible").isBoolean() || !target.path("visible").booleanValue()
+                    || !target.path("visible").isBoolean() || !allApplications && !target.path("visible").booleanValue()
                     || !target.path("systemSurface").isBoolean() || target.path("systemSurface").booleanValue()) continue;
             if (!ids.add(target.path("targetId").asText())) return null; // Conflicting native identities grant no hint.
             targets.add(target);

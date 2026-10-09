@@ -126,8 +126,13 @@ public final class InteractionTools implements ToolProviderFactory {
     private FrameworkTool waitEvent(ToolContext child) {
         ToolDescriptor descriptor = new ToolDescriptor(InteractionExecutionPolicy.WAIT_EVENT_TOOL,
                 "Wait for a newer frame or lifecycle event from an owned desktop session without polling. "
-                        + "Use the last observed capturedAtMillis. The host resumes this task when an event arrives "
-                        + "or the bounded wait expires; observe fresh state before the next action.",
+                        + "Use the last observed capturedAtMillis. If the current task's next action is already "
+                        + "available, take it instead of waiting. Default BOUNDED resumes on an event or after "
+                        + "timeoutMillis with WAIT_TIMEOUT; observe fresh state and replan before acting. "
+                        + "Choose UNTIL_CHANGE only when the task requires a real external change: timeoutMillis "
+                        + "is then a subscription slice that renews silently until an event or the run deadline, "
+                        + "not a promise to resume after that slice. Unchanged captures do not wake the wait. "
+                        + "A timeout is not task completion or acceptance evidence.",
                 waitSchema(), InteractionExecutionPolicy.TOOL_GROUP, PermissionSet.of("tool.read"), true);
         return new FrameworkTool() {
             @Override public ToolDescriptor descriptor() { return descriptor; }
@@ -192,9 +197,16 @@ public final class InteractionTools implements ToolProviderFactory {
         ObjectNode schema = object().put("type", "object").put("additionalProperties", false);
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("sessionId").put("type", "string").put("minLength", 1).put("maxLength", 256);
-        properties.putObject("afterCapturedAtMillis").put("type", "integer").put("minimum", 0);
+        properties.putObject("afterCapturedAtMillis").put("type", "integer").put("minimum", 0)
+                .put("description", "Exact capturedAtMillis from this session's successful host observation.");
+        properties.putObject("waitMode").put("type", "string").put("default", "BOUNDED")
+                .put("description", "BOUNDED returns WAIT_TIMEOUT when the whole wait expires. UNTIL_CHANGE "
+                        + "silently renews subscription slices; use only for a task requiring an external change.")
+                .putArray("enum").add("BOUNDED").add("UNTIL_CHANGE");
         properties.putObject("timeoutMillis").put("type", "integer").put("minimum", 1)
-                .put("maximum", 30_000).put("default", 30_000);
+                .put("maximum", 30_000).put("default", 30_000)
+                .put("description", "Whole wait bound for BOUNDED; subscription slice for UNTIL_CHANGE. "
+                        + "Both remain within the run's original deadline.");
         schema.putArray("required").add("sessionId").add("afterCapturedAtMillis");
         return schema;
     }

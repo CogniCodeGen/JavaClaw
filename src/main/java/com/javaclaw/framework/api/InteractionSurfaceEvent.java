@@ -4,7 +4,11 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Host-observed surface identity. It is history, never fresh observation or input authority. */
+/**
+ * Host-observed surface identity. It is history, never fresh observation or input authority.
+ * The legacy causedByInvocationId component names the source invocation for OBSERVED_AFTER;
+ * in that case it records observation order and does not assert creation causality.
+ */
 public record InteractionSurfaceEvent(
         String eventId, Instant observedAt, Mode mode, Kind kind,
         String runtimeId, String contextId, String surfaceId, String documentId,
@@ -14,10 +18,12 @@ public record InteractionSurfaceEvent(
         String causedByInvocationId, String sourceSurfaceId, CauseProof causeProof) {
     public enum Mode { BROWSER, DESKTOP }
     public enum Kind { CONTEXT_OPENED, CONTEXT_CLOSED, PAGE_OPENED, PAGE_NAVIGATED, PAGE_CLOSED,
-        PAGE_CREATED, PAGE_POPUP_MATCHED, SURFACE_OBSERVED, SURFACE_CHECKPOINT, SURFACE_CLOSED }
-    public enum Relation { OPENER, UNKNOWN }
+        PAGE_CREATED, PAGE_POPUP_MATCHED, SURFACE_OBSERVED, SURFACE_CHECKPOINT, SURFACE_CLOSED,
+        WINDOW_DISCOVERED, WINDOW_OPENED, WINDOW_HIDDEN, WINDOW_SHOWN, WINDOW_UNAVAILABLE, WINDOW_CLOSED }
+    public enum Relation { OPENER, PARENT, UNKNOWN }
     public enum RelationProof { HOST_PROVEN, UNKNOWN }
-    public enum CauseProof { DIRECT_CREATE, EXPECTED_POPUP_MATCH, UNKNOWN }
+    /** OBSERVED_AFTER records order and source, never that the source created the window. */
+    public enum CauseProof { DIRECT_CREATE, EXPECTED_POPUP_MATCH, OBSERVED_AFTER, UNKNOWN }
 
     public InteractionSurfaceEvent(String eventId, Instant observedAt, Mode mode, Kind kind,
             String runtimeId, String contextId, String surfaceId, String documentId,
@@ -49,9 +55,13 @@ public record InteractionSurfaceEvent(
             relatedSurfaceId = "";
             relation = Relation.UNKNOWN;
             relationProof = RelationProof.UNKNOWN;
-        } else if (relatedSurfaceId.isBlank() || mode != Mode.BROWSER) {
-            throw new IllegalArgumentException("only an observed browser opener has a proven relationship");
+        } else if (relatedSurfaceId.isBlank() || relatedSurfaceId.equals(surfaceId)
+                || relation == Relation.OPENER && mode != Mode.BROWSER
+                || relation == Relation.PARENT && mode != Mode.DESKTOP) {
+            throw new IllegalArgumentException("a distinct host-proven opener or native parent is required");
         }
+        if (desktopWindowKind(kind) && mode != Mode.DESKTOP)
+            throw new IllegalArgumentException("native window lifecycle requires desktop mode");
         observedDuringInvocationId = bounded(observedDuringInvocationId, 512);
         urlOrigin = bounded(urlOrigin, 1024);
         urlHash = bounded(urlHash, 128);
@@ -61,13 +71,24 @@ public record InteractionSurfaceEvent(
         if (causeProof == CauseProof.UNKNOWN) {
             causedByInvocationId = "";
             sourceSurfaceId = "";
-        } else if (mode != Mode.BROWSER || causedByInvocationId.isBlank()
-                || causeProof == CauseProof.DIRECT_CREATE && kind != Kind.PAGE_CREATED
-                || causeProof == CauseProof.EXPECTED_POPUP_MATCH && (kind != Kind.PAGE_POPUP_MATCHED
-                    || sourceSurfaceId.isBlank() || !sourceSurfaceId.equals(relatedSurfaceId)
-                    || relation != Relation.OPENER || relationProof != RelationProof.HOST_PROVEN)) {
-            throw new IllegalArgumentException("page creation or preregistered opener proof is required");
+        } else if (causedByInvocationId.isBlank()
+                || causeProof == CauseProof.DIRECT_CREATE && (mode != Mode.BROWSER || kind != Kind.PAGE_CREATED)
+                || causeProof == CauseProof.EXPECTED_POPUP_MATCH && (mode != Mode.BROWSER
+                    || kind != Kind.PAGE_POPUP_MATCHED || sourceSurfaceId.isBlank()
+                    || !sourceSurfaceId.equals(relatedSurfaceId)
+                    || relation != Relation.OPENER || relationProof != RelationProof.HOST_PROVEN)
+                || causeProof == CauseProof.OBSERVED_AFTER && (mode != Mode.DESKTOP
+                    || kind != Kind.WINDOW_DISCOVERED || sourceSurfaceId.isBlank()
+                    || sourceSurfaceId.equals(surfaceId))) {
+            throw new IllegalArgumentException("host page proof or desktop after-observation source is required");
         }
+    }
+
+    private static boolean desktopWindowKind(Kind kind) {
+        return switch (kind) {
+            case WINDOW_DISCOVERED, WINDOW_OPENED, WINDOW_HIDDEN, WINDOW_SHOWN, WINDOW_UNAVAILABLE, WINDOW_CLOSED -> true;
+            default -> false;
+        };
     }
 
     private static String bounded(String value, int maximum) {
@@ -97,5 +118,13 @@ public record InteractionSurfaceEvent(
                 surfaceId, documentId, logicalTargetId, applicationId, generation, contentRevision,
                 relatedSurfaceId, relation, relationProof, observedDuringInvocationId, urlOrigin, urlHash,
                 invocationId, sourceId, CauseProof.EXPECTED_POPUP_MATCH);
+    }
+
+    /** A newly discovered candidate observed after a dispatched input, without creation causality. */
+    public InteractionSurfaceEvent withObservedAfter(String invocationId, String sourceId) {
+        return new InteractionSurfaceEvent(eventId, observedAt, mode, kind, runtimeId, contextId,
+                surfaceId, documentId, logicalTargetId, applicationId, generation, contentRevision,
+                relatedSurfaceId, relation, relationProof, observedDuringInvocationId, urlOrigin, urlHash,
+                invocationId, sourceId, CauseProof.OBSERVED_AFTER);
     }
 }

@@ -42,6 +42,7 @@ import com.javaclaw.framework.spi.RunEventDraft;
 import com.javaclaw.framework.spi.EffectReconciliationV1;
 import com.javaclaw.framework.spi.EffectReceiptV1;
 import com.javaclaw.framework.spi.ToolEffectPolicy;
+import com.javaclaw.framework.spi.InteractionEventSource;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.framework.store.JdbcAgentDefinitionStore;
 import com.javaclaw.framework.store.JdbcExecutionPlanStore;
@@ -67,6 +68,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -79,6 +81,363 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentEngineIntegrationTest {
+
+    @Test
+    void boundedEventTimeoutSettlesItsReservedToolAndResumesExactlyOnce() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger reasoningCalls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        ObjectNode wait = eventWait("BOUNDED", 100);
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, eventWaitReasoning(reasoningCalls, wait), source)) {
+            RunHandle handle = engine.start(fixture.request("bounded-event-timeout"));
+            PendingInteractionEvent pending = source.next();
+            assertEquals(RunState.WAITING_EVENT, engine.get(handle.id()).state());
+
+            // An event source may return an early timeout; it must not shorten the requested wait.
+            pending.result().complete(eventTimeout(pending.lease()));
+            assertEquals(RunState.WAITING_EVENT, engine.get(handle.id()).state());
+            assertEquals(1, reasoningCalls.get());
+
+            assertEquals(RunState.COMPLETED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - pending.startedAtNanos()) >= 95,
+                    "an early source timeout must wait for the requested subscription boundary");
+            assertEquals(2, reasoningCalls.get());
+            assertEquals(1, source.subscriptions.get(), "a bounded timeout never silently renews");
+            assertEventWaitSettledOnce(fixture, handle.id(), "WAIT_TIMEOUT");
+            var step = new RunStepQuery(fixture.runs).steps(handle.id()).stream()
+                    .filter(value -> value.id().equals(com.javaclaw.framework.api.StepId.tool(
+                            handle.id(), wait.path("invocationId").asText())))
+                    .findFirst().orElseThrow();
+            assertEquals(com.javaclaw.framework.api.AgentStep.State.COMPLETED, step.state());
+        }
+    }
+
+    @Test
+    void boundedEventWaitExpiresEvenWhenTheHostSubscriptionNeverCompletes() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions,
+                     eventWaitReasoning(calls, eventWait("BOUNDED", 150)), source)) {
+            RunHandle handle = engine.start(fixture.request("bounded-unresponsive-event-source"));
+            PendingInteractionEvent pending = source.next();
+            assertEquals(RunState.WAITING_EVENT, engine.get(handle.id()).state());
+
+            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS).state());
+            assertTrue(pending.result().isCancelled(), "the host-owned deadline closes the stale subscription");
+            assertFalse(pending.result().complete(JsonNodeFactory.instance.objectNode().put("event", "FRAME_AVAILABLE")));
+            assertEquals(2, calls.get(), "the expired wait starts only one continuation");
+            assertEquals(1, source.subscriptions.get());
+            assertEventWaitSettledOnce(fixture, handle.id(), "WAIT_TIMEOUT");
+        }
+    }
+
+    @Test
+    void persistedBoundedEventDeadlineDoesNotRestartTheOriginalTimeout() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        ObjectNode wait = eventWait("BOUNDED", 30_000);
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, eventWaitReasoning(calls, wait), source)) {
+            wait.put("waitDeadline", Instant.now().plusMillis(200).toString());
+            RunHandle handle = engine.start(fixture.request("persisted-bounded-event-deadline"));
+            PendingInteractionEvent pending = source.next();
+            assertTrue(pending.lease().path("timeoutMillis").asLong() <= 200,
+                    "reattaching a persisted wait must use its remaining absolute deadline");
+            assertEquals(wait.path("waitDeadline"), pending.lease().path("waitDeadline"));
+
+            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS).state());
+            assertTrue(pending.result().isCancelled());
+            assertEquals(2, calls.get());
+            assertEquals(1, source.subscriptions.get());
+            assertEventWaitSettledOnce(fixture, handle.id(), "WAIT_TIMEOUT");
+        }
+    }
+
+    @Test
+    void expiredPersistedEventDeadlineSettlesWithoutOpeningAnotherSubscription() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        ObjectNode wait = eventWait("BOUNDED", 30_000)
+                .put("waitDeadline", Instant.now().minusSeconds(1).toString());
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, eventWaitReasoning(calls, wait), source)) {
+            RunHandle handle = engine.start(fixture.request("expired-persisted-event-deadline"));
+            assertEquals(RunState.COMPLETED, handle.completion().toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS).state());
+            assertEquals(0, source.subscriptions.get(), "an expired wait must not subscribe beyond its deadline");
+            assertEquals(2, calls.get());
+            assertEventWaitSettledOnce(fixture, handle.id(), "WAIT_TIMEOUT");
+        }
+    }
+
+    @Test
+    void boundedTimerKeepsAnArrivedFrameWhenItsSourceCallbackIsStillQueued() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        AtomicBoolean holdCallbacks = new AtomicBoolean();
+        java.util.concurrent.BlockingQueue<Runnable> queued = new java.util.concurrent.LinkedBlockingQueue<>();
+        Executor executor = command -> {
+            if (holdCallbacks.get()) queued.add(command);
+            else command.run();
+        };
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions,
+                     eventWaitReasoning(calls, eventWait("BOUNDED", 200)), executor, source)) {
+            RunHandle handle = engine.start(fixture.request("frame-before-queued-callback"));
+            PendingInteractionEvent pending = source.next();
+            CompletableFuture<JsonNode> settled = new CompletableFuture<>();
+            var subscription = handle.events(0).filter(event -> event.type().equals("core.tool.completed"))
+                    .subscribe(event -> settled.complete(event.payload().path("output")));
+            try {
+                holdCallbacks.set(true);
+                pending.result().complete(JsonNodeFactory.instance.objectNode().put("event", "FRAME_AVAILABLE")
+                        .put("sessionId", pending.lease().path("sessionId").asText())
+                        .put("capturedAtMillis", pending.lease().path("afterCapturedAtMillis").asLong() + 1));
+                assertFalse(queued.isEmpty(), "the event-source completion must remain queued for this race");
+
+                assertEquals("FRAME_AVAILABLE", settled.get(2, TimeUnit.SECONDS).path("event").asText(),
+                        "the host timer must preserve the already-arrived frame instead of synthesizing a timeout");
+                assertEquals(1, calls.get(), "the continuation stays queued until the executor is drained");
+                var completion = handle.completion().toCompletableFuture();
+                while (!completion.isDone()) {
+                    Runnable callback = queued.poll(2, TimeUnit.SECONDS);
+                    assertNotNull(callback, "the queued continuation must remain runnable");
+                    callback.run();
+                }
+                assertEquals(RunState.COMPLETED, completion.get(2, TimeUnit.SECONDS).state());
+                assertEquals(2, calls.get());
+                assertEquals(1, source.subscriptions.get());
+                assertEventWaitSettledOnce(fixture, handle.id(), "FRAME_AVAILABLE");
+            } finally {
+                holdCallbacks.set(false);
+                Runnable callback;
+                while ((callback = queued.poll()) != null) callback.run();
+                subscription.dispose();
+            }
+        }
+    }
+
+    @Test
+    void watchAndLegacyEventTimeoutsRenewTheSameWaitUntilARealFrameArrives() throws Exception {
+        List<Fixture> fixtures = new java.util.ArrayList<>();
+        List<ExtensionManager> extensions = new java.util.ArrayList<>();
+        List<AgentEngine> engines = new java.util.ArrayList<>();
+        List<ControlledInteractionEvents> sources = new java.util.ArrayList<>();
+        List<AtomicInteger> reasoningCalls = new java.util.ArrayList<>();
+        List<RunHandle> handles = new java.util.ArrayList<>();
+        List<PendingInteractionEvent> initial = new java.util.ArrayList<>();
+        try {
+            // Run both modes concurrently so the renewal guard costs only one subscription interval.
+            for (String mode : List.of("UNTIL_CHANGE", "LEGACY")) {
+                Fixture fixture = new Fixture();
+                fixture.publishDefinition(Map.of());
+                fixtures.add(fixture);
+                ExtensionManager extension = fixture.extensionManager();
+                extensions.add(extension);
+                ControlledInteractionEvents source = new ControlledInteractionEvents();
+                sources.add(source);
+                AtomicInteger calls = new AtomicInteger();
+                reasoningCalls.add(calls);
+                engines.add(fixture.engine(extension,
+                        eventWaitReasoning(calls, eventWait(mode.equals("LEGACY") ? null : mode, 20)), source));
+            }
+            for (int index = 0; index < engines.size(); index++) {
+                handles.add(engines.get(index).start(fixtures.get(index).request("watch-event-timeout")));
+                PendingInteractionEvent pending = sources.get(index).next();
+                initial.add(pending);
+                pending.result().complete(eventTimeout(pending.lease()));
+                assertEquals(RunState.WAITING_EVENT, engines.get(index).get(handles.get(index).id()).state());
+                assertEquals(1, reasoningCalls.get(index).get());
+                assertEquals(0, eventCount(fixtures.get(index), handles.get(index).id(), "core.run.resumed"));
+            }
+            for (int index = 0; index < engines.size(); index++) {
+                PendingInteractionEvent renewed = sources.get(index).next();
+                assertEquals(initial.get(index).lease(), renewed.lease(),
+                        "renewal preserves invocation, observation baseline and wait mode");
+                assertEquals(1, reasoningCalls.get(index).get(), "subscription renewal is not a model turn");
+                renewed.result().complete(JsonNodeFactory.instance.objectNode().put("event", "FRAME_AVAILABLE")
+                        .put("sessionId", renewed.lease().path("sessionId").asText())
+                        .put("capturedAtMillis", renewed.lease().path("afterCapturedAtMillis").asLong() + 1));
+                assertEquals(RunState.COMPLETED, handles.get(index).completion().toCompletableFuture()
+                        .get(2, TimeUnit.SECONDS).state());
+                assertEquals(2, reasoningCalls.get(index).get());
+                assertEquals(2, sources.get(index).subscriptions.get());
+                assertEventWaitSettledOnce(fixtures.get(index), handles.get(index).id(), "FRAME_AVAILABLE");
+            }
+        } finally {
+            for (AgentEngine engine : engines) engine.close();
+            for (ExtensionManager extension : extensions) extension.close();
+        }
+    }
+
+    @Test
+    void mismatchedEventTimeoutFailsClosedWithoutResumingReasoning() throws Exception {
+        for (String mismatch : List.of("session", "duration", "duration-type")) {
+            Fixture fixture = new Fixture();
+            fixture.publishDefinition(Map.of());
+            AtomicInteger calls = new AtomicInteger();
+            ControlledInteractionEvents source = new ControlledInteractionEvents();
+            try (ExtensionManager extensions = fixture.extensionManager();
+                 AgentEngine engine = fixture.engine(extensions,
+                         eventWaitReasoning(calls, eventWait("BOUNDED", 1_000)), source)) {
+                RunHandle handle = engine.start(fixture.request("invalid-event-timeout-" + mismatch));
+                PendingInteractionEvent pending = source.next();
+                ObjectNode output = eventTimeout(pending.lease());
+                if (mismatch.equals("session")) output.put("sessionId", "another-session");
+                else if (mismatch.equals("duration"))
+                    output.put("timeoutMillis", pending.lease().path("timeoutMillis").asLong() + 1);
+                else output.put("timeoutMillis", "1000");
+                pending.result().complete(output);
+                var outcome = handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS);
+                assertEquals(RunState.FAILED, outcome.state(), mismatch);
+                assertTrue(outcome.error().contains("invalid subscription timeout"), outcome.error());
+                assertEquals(1, calls.get());
+                assertEquals(1, source.subscriptions.get());
+                assertEquals(0, eventCount(fixture, handle.id(), "core.run.resumed"));
+                assertEquals(0, eventCount(fixture, handle.id(), "core.tool.completed"));
+            }
+        }
+    }
+
+    @Test
+    void cancellingEventWaitDisposesItsPendingSourceAndIgnoresLateFrames() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions,
+                     eventWaitReasoning(calls, eventWait("BOUNDED", 100)), source)) {
+            RunHandle handle = engine.start(fixture.request("cancel-pending-event-wait"));
+            PendingInteractionEvent pending = source.next();
+            assertTrue(engine.cancel(handle.id(), new CancelReason("USER_CANCELLED", "stop waiting")));
+            assertTrue(pending.result().isCancelled(), "cancellation closes the host subscription");
+            assertFalse(pending.result().complete(JsonNodeFactory.instance.objectNode().put("event", "FRAME_AVAILABLE")));
+            assertEquals(RunState.CANCELLED, handle.completion().toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS).state());
+            assertEquals(1, calls.get());
+            assertEquals(1, source.subscriptions.get());
+            assertEquals(0, eventCount(fixture, handle.id(), "core.run.resumed"));
+            assertEquals(0, eventCount(fixture, handle.id(), "core.tool.completed"));
+        }
+    }
+
+    @Test
+    void cancellingAnEarlyBoundedTimeoutPreventsItsScheduledDelivery() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AtomicInteger calls = new AtomicInteger();
+        ControlledInteractionEvents source = new ControlledInteractionEvents();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions,
+                     eventWaitReasoning(calls, eventWait("BOUNDED", 100)), source)) {
+            RunHandle handle = engine.start(fixture.request("cancel-scheduled-event-timeout"));
+            PendingInteractionEvent pending = source.next();
+            pending.result().complete(eventTimeout(pending.lease()));
+            assertEquals(RunState.WAITING_EVENT, engine.get(handle.id()).state());
+            assertTrue(engine.cancel(handle.id(), new CancelReason("USER_CANCELLED", "stop waiting")));
+            CompletableFuture.runAsync(() -> { }, CompletableFuture.delayedExecutor(150, TimeUnit.MILLISECONDS))
+                    .get(2, TimeUnit.SECONDS);
+            assertEquals(RunState.CANCELLED, engine.get(handle.id()).state());
+            assertEquals(1, calls.get());
+            assertEquals(1, source.subscriptions.get());
+            assertEquals(0, eventCount(fixture, handle.id(), "core.run.resumed"));
+            assertEquals(0, eventCount(fixture, handle.id(), "core.tool.completed"));
+        }
+    }
+
+    private static ObjectNode eventWait(String mode, long timeoutMillis) {
+        ObjectNode wait = JsonNodeFactory.instance.objectNode().put("kind", "interaction.waiting_event")
+                .put("invocationId", "fixture-event-wait").put("sessionId", "native-session")
+                .put("afterCapturedAtMillis", 1234).put("timeoutMillis", timeoutMillis)
+                .put("afterWindowGeneration", 3).put("afterContentRevision", 7);
+        if (mode != null) wait.put("waitMode", mode);
+        return wait;
+    }
+
+    private static ObjectNode eventTimeout(JsonNode wait) {
+        return JsonNodeFactory.instance.objectNode().put("event", "WAIT_TIMEOUT")
+                .put("sessionId", wait.path("sessionId").asText())
+                .put("timeoutMillis", wait.path("timeoutMillis").asLong());
+    }
+
+    private static ReasoningGateway eventWaitReasoning(AtomicInteger calls, ObjectNode wait) {
+        return request -> {
+            if (calls.incrementAndGet() > 1) {
+                assertNotNull(request.resumeCommand());
+                assertEquals("interaction.event", request.resumeCommand().type());
+                return CompletableFuture.completedFuture(ReasoningResult.completed(
+                        JsonNodeFactory.instance.objectNode().put("text", "event received")));
+            }
+            String invocation = wait.path("invocationId").asText();
+            var input = JsonNodeFactory.instance.objectNode().put("tool", "interaction_wait_event")
+                    .put("invocationId", invocation);
+            input.set("arguments", wait);
+            var started = input.deepCopy().put("fingerprint", invocation).put("effectKey", invocation)
+                    .put("effectPolicy", "LEGACY").put("resourceKey", "").put("idempotent", true);
+            request.events().toolStarted(StepEvents.startedPayload(
+                    com.javaclaw.framework.api.StepId.tool(request.runId(), invocation),
+                    com.javaclaw.framework.api.AgentStep.Kind.TOOL, input, null), started);
+            var suspended = JsonNodeFactory.instance.objectNode().put("tool", "interaction_wait_event")
+                    .put("invocationId", invocation);
+            suspended.set("wait", wait);
+            request.events().emit("core.tool.suspended", 1, "framework.core", suspended);
+            return CompletableFuture.completedFuture(new ReasoningResult(
+                    RunState.WAITING_EVENT, wait, "INTERACTION_EVENT_PENDING"));
+        };
+    }
+
+    private static long eventCount(Fixture fixture, RunId run, String type) {
+        return fixture.runs.eventsAfter(run, 0).stream().filter(event -> event.type().equals(type)).count();
+    }
+
+    private static void assertEventWaitSettledOnce(Fixture fixture, RunId run, String eventName) {
+        assertEquals(1, eventCount(fixture, run, "core.tool.started"));
+        assertEquals(1, eventCount(fixture, run, "core.tool.completed"));
+        assertEquals(1, eventCount(fixture, run, "core.interaction.event_received"));
+        assertEquals(1, eventCount(fixture, run, "core.run.resumed"));
+        var result = fixture.runs.eventsAfter(run, 0).stream()
+                .filter(event -> event.type().equals("core.tool.completed")).findFirst().orElseThrow();
+        assertEquals("fixture-event-wait", result.payload().path("invocationId").asText());
+        assertEquals(eventName, result.payload().path("output").path("event").asText());
+    }
+
+    private static final class ControlledInteractionEvents implements InteractionEventSource {
+        private final AtomicInteger subscriptions = new AtomicInteger();
+        private final java.util.concurrent.BlockingQueue<PendingInteractionEvent> pending =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+
+        @Override public java.util.concurrent.CompletionStage<JsonNode> await(RunRequest request,
+                JsonNode wait, com.javaclaw.framework.spi.CancellationToken cancellation) {
+            CompletableFuture<JsonNode> result = new CompletableFuture<>();
+            subscriptions.incrementAndGet();
+            pending.add(new PendingInteractionEvent(wait.deepCopy(), result, System.nanoTime()));
+            return result;
+        }
+
+        private PendingInteractionEvent next() throws InterruptedException {
+            PendingInteractionEvent value = pending.poll(2, TimeUnit.SECONDS);
+            assertNotNull(value, "expected the host to create an event subscription");
+            return value;
+        }
+    }
+
+    private record PendingInteractionEvent(JsonNode lease, CompletableFuture<JsonNode> result,
+                                           long startedAtNanos) { }
 
     @Test
     void unreliableContractPausesBeforeAnyReasoningOrBusinessAction() throws Exception {
@@ -1711,6 +2070,18 @@ class AgentEngineIntegrationTest {
                 ExtensionManager extensions, ReasoningGateway reasoning, Executor executor) {
             return new AgentEngine(new AgentCompiler(definitions, extensions, json), runs, plans,
                     reasoning, executor, json, clock, new RunUsageLedger());
+        }
+
+        private AgentEngine engine(ExtensionManager extensions, ReasoningGateway reasoning,
+                InteractionEventSource interactionEvents) {
+            return engine(extensions, reasoning, Runnable::run, interactionEvents);
+        }
+
+        private AgentEngine engine(ExtensionManager extensions, ReasoningGateway reasoning,
+                Executor executor, InteractionEventSource interactionEvents) {
+            return new AgentEngine(new AgentCompiler(definitions, extensions, json), runs, plans,
+                    reasoning, executor, json, clock, new RunUsageLedger(), null,
+                    (request, evidence) -> { }, interactionEvents);
         }
 
         private AgentEngine harnessEngine(ExtensionManager extensions, ReasoningGateway reasoning) {

@@ -14,7 +14,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /** OS-gated provider backed by one versioned, signed-distribution C bridge. */
 public final class NativeDesktopProvider implements DesktopPlatformProvider {
@@ -22,7 +21,10 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
     private final String id;
     private final String osPrefix;
     private final String library;
-    private final Map<String, DesktopBridge.NativeWindow> known = new ConcurrentHashMap<>();
+    private volatile Map<String, DesktopBridge.NativeWindow> known = Map.of();
+    // Keep a bounded identity-only history so disappearance from the on-screen
+    // inventory can be checked natively; it is never reused for open or capture.
+    private volatile Map<String, WindowIdentity> identityHistory = Map.of();
     private volatile DesktopBridge bridge;
 
     public static NativeDesktopProvider macos(ApplicationHome home) {
@@ -69,12 +71,47 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
 
     @Override public List<DesktopTarget> discoverTargets() {
         List<DesktopBridge.NativeWindow> windows = bridge().listWindows();
-        known.clear();
-        return windows.stream().map(window -> {
-            String targetId = opaqueId(window);
-            known.put(targetId, window);
-            return target(targetId, window);
-        }).toList();
+        Map<String, DesktopBridge.NativeWindow> discovered = new java.util.LinkedHashMap<>();
+        windows.forEach(window -> discovered.put(opaqueId(window), window));
+        Map<String, DesktopBridge.NativeWindow> snapshot = Map.copyOf(discovered);
+        synchronized (this) {
+            Map<String, WindowIdentity> history = new java.util.LinkedHashMap<>(identityHistory);
+            discovered.forEach((targetId, window) -> {
+                history.remove(targetId);
+                history.put(targetId, new WindowIdentity(window.processId(), window.windowId(),
+                        window.processInstanceId(), window.applicationId()));
+            });
+            while (history.size() > 4_096) history.remove(history.keySet().iterator().next());
+            identityHistory = java.util.Collections.unmodifiableMap(history);
+            known = snapshot;
+        }
+        return windows.stream().map(window -> target(opaqueId(window), window, snapshot)).toList();
+    }
+
+    @Override public java.util.Optional<Boolean> targetExists(DesktopTarget target) {
+        if (target == null || !id.equals(target.providerId())) return java.util.Optional.empty();
+        WindowIdentity window = identityHistory.get(target.id());
+        if (window == null || window.processId() != target.processId()
+                || window.processInstanceId() == 0
+                || !window.applicationId().equals(target.applicationId())) return java.util.Optional.empty();
+        try { return bridge().windowExists(window.processId(), window.windowId(), window.processInstanceId()); }
+        catch (RuntimeException | LinkageError unavailable) { return java.util.Optional.empty(); }
+    }
+
+    private record WindowIdentity(long processId, long windowId, long processInstanceId, String applicationId) { }
+
+    /** Discovery identity only: zero capture fields confer no observation or input authority. */
+    @Override public java.util.Optional<com.javaclaw.desktop.api.DesktopSurfaceSnapshot> surfaceForTarget(
+            DesktopTarget target) {
+        if (target == null || !id.equals(target.providerId())) return java.util.Optional.empty();
+        Map<String, DesktopBridge.NativeWindow> snapshot = known;
+        DesktopBridge.NativeWindow window = snapshot.get(target.id());
+        if (window == null || window.processId() != target.processId() || window.processInstanceId() == 0
+                || !window.applicationId().equals(target.applicationId())) return java.util.Optional.empty();
+        DesktopTarget actual = target(target.id(), window, snapshot);
+        return java.util.Optional.of(new com.javaclaw.desktop.api.DesktopSurfaceSnapshot(id,
+                runtimeId(window), opaqueId(window), target.id(), window.applicationId(), 0, 0, 0,
+                actual.parentTargetId(), actual.relationProof()));
     }
 
     @Override public DesktopApplicationLaunch launchApplication(String application) {
@@ -125,9 +162,28 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
     }
 
     private DesktopTarget target(String targetId, DesktopBridge.NativeWindow window) {
+        return target(targetId, window, known);
+    }
+
+    private DesktopTarget target(String targetId, DesktopBridge.NativeWindow window,
+            Map<String, DesktopBridge.NativeWindow> snapshot) {
+        String parent = "";
+        if (window.relationKind() == 1 && window.parentWindowId() != 0
+                && window.parentWindowId() != window.windowId()) {
+            List<DesktopBridge.NativeWindow> parents = snapshot.values().stream()
+                    .filter(value -> value.windowId() == window.parentWindowId()
+                            && value.processInstanceId() != 0).toList();
+            if (parents.size() == 1) parent = opaqueId(parents.getFirst());
+        }
         return new DesktopTarget(id, targetId, window.processId(), window.application(),
                 window.title(), window.x(), window.y(), window.width(), window.height(),
-                window.flags(), window.applicationId());
+                window.flags(), window.applicationId(), parent,
+                parent.isEmpty() ? DesktopTarget.UNKNOWN : DesktopTarget.NATIVE_PARENT);
+    }
+
+    private String runtimeId(DesktopBridge.NativeWindow window) {
+        return "desktop:process:" + id + ":" + window.processId()
+                + ":" + Long.toUnsignedString(window.processInstanceId());
     }
 
     private final class NativeSession implements DesktopPlatformSession {
@@ -144,15 +200,16 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
             this.targetId = targetId;
             this.handle = handle;
             this.openedWindow = openedWindow;
-            // ABI6 binds captures to this actual process instance. The desktop session
+            // ABI7 binds captures to this exact native window and process instance. The desktop session
             // remains the separate context/consent identity; this ID grants no authority.
-            this.runtimeId = "desktop:process:" + id + ":" + openedWindow.processId()
-                    + ":" + Long.toUnsignedString(openedWindow.processInstanceId());
+            this.runtimeId = runtimeId(openedWindow);
         }
 
         @Override public synchronized DesktopTarget currentTarget() {
             requireOpen();
-            return target(targetId, bridge.current(handle));
+            DesktopBridge.NativeWindow current = bridge.current(handle);
+            requireSelectedWindow(current);
+            return target(targetId, current);
         }
 
         @Override public synchronized java.util.Optional<com.javaclaw.desktop.api.DesktopFrame> pollFrame(
@@ -160,15 +217,18 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
             requireOpen();
             return bridge.pollCaptured(handle, targetId, timeoutMillis).map(captured -> {
                 var frame = captured.frame();
-                if (captured.windowId() != 0) {
-                    // Native session is bound to this process instance. Frame.window_id is the
-                    // actual selected window, while targetId intentionally remains consent-bound.
-                    var actual = new DesktopBridge.NativeWindow(openedWindow.processId(), captured.windowId(),
-                            openedWindow.processInstanceId(), 0, 0, 0, 0, 0, "", "", openedWindow.applicationId());
+                if (captured.windowId() == openedWindow.windowId()) {
+                    DesktopBridge.NativeWindow actual = bridge.current(handle);
+                    requireSelectedWindow(actual);
+                    DesktopTarget current = target(targetId, actual);
                     lastSurface = new com.javaclaw.desktop.api.DesktopSurfaceSnapshot(id, runtimeId,
                             opaqueId(actual), targetId, openedWindow.applicationId(), frame.windowGeneration(),
-                            frame.contentRevision(), frame.capturedAtMillis());
-                } else lastSurface = null;
+                            frame.contentRevision(), frame.capturedAtMillis(),
+                            current.parentTargetId(), current.relationProof());
+                } else {
+                    lastSurface = null;
+                    throw new IllegalStateException("桌面会话返回了不同窗口，请重新发现并打开目标");
+                }
                 return frame;
             });
         }
@@ -212,6 +272,15 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
 
         private void requireOpen() {
             if (closed) throw new IllegalStateException("native desktop session is closed");
+        }
+
+        private void requireSelectedWindow(DesktopBridge.NativeWindow window) {
+            if (window.windowId() != openedWindow.windowId()
+                    || window.processId() != openedWindow.processId()
+                    || window.processInstanceId() != openedWindow.processInstanceId()) {
+                lastSurface = null;
+                throw new IllegalStateException("桌面窗口身份已变化，请重新发现目标");
+            }
         }
     }
 }

@@ -29,7 +29,8 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
         List<String> evidenceRefs, boolean sessionExpired,
         List<String> observedPendingInvocationIds, ControlAccess controlAccess) {
     enum Phase { BOOTSTRAP, DISCOVER_TARGETS, OPEN_SESSION, OBSERVE, READY,
-        RECONCILE, RECOVER_SESSION, DISCOVER_APPLICATIONS, SELECT_APPLICATION, OPEN_CONTROL }
+        RECONCILE, RECOVER_SESSION, DISCOVER_APPLICATIONS, SELECT_APPLICATION, OPEN_CONTROL,
+        WINDOW_CANDIDATES, WINDOW_SELECTION }
     enum ControlAccess { UNKNOWN, READ_ONLY, GRANTED }
 
     ComputerUseSessionCursor {
@@ -104,6 +105,9 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
         long discoveredAt = 0;
         JsonNode discoveredTargets = JsonNodeFactory.instance.nullNode();
         long closedAt = 0;
+        long observedAt = 0;
+        long candidateReadAt = 0;
+        String candidateSession = "";
         boolean engaged = false;
         ControlAccess control = ControlAccess.UNKNOWN;
         boolean controlUpgrade = false;
@@ -156,7 +160,12 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                     if (tool.equals("desktop_session_open")) {
                         openedAt = step.lastSequence();
                         controlUpgrade = false;
-                    }
+                    } else observedAt = step.lastSequence();
+                }
+                if (tool.equals("desktop_session_window_candidates") && status.equals("OBSERVED") && succeeded
+                        && trustedWindowCandidateRead(step, receipt, ownedEvents)) {
+                    candidateReadAt = step.lastSequence();
+                    candidateSession = arguments.path("sessionId").asText();
                 }
                 if (tool.equals("desktop_session_targets") && status.equals("OBSERVED") && succeeded) {
                     discoveredAt = step.lastSequence();
@@ -195,10 +204,12 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                 }
                 if (OnDemandDesktopPrerequisites.desktopFrameAction(tool)
                         && session.equals(arguments.path("sessionId").asText())
-                        && target.equals(metadata.path("targetId").asText())
-                        && controlRequired(step, receipt)) {
-                    control = ControlAccess.READ_ONLY;
-                    controlUpgrade = true;
+                        && target.equals(metadata.path("targetId").asText())) {
+                    boolean missingControl = controlRequired(step, receipt);
+                    if (missingControl || requiresSessionOpen(step, receipt, "SYSTEM_INPUT_REQUIRED")) {
+                        if (missingControl) control = ControlAccess.READ_ONLY;
+                        controlUpgrade = true;
+                    }
                 }
             }
             if (OnDemandDesktopPrerequisites.desktopFrameAction(tool)
@@ -248,13 +259,23 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                 recovering = false;
                 phase = Phase.OBSERVE;
             }
-            if (required.equals("desktop_session_open"))
-                target = recovered.size() == 1 ? recovered.getFirst().path("targetId").asText() : "";
+            if (required.equals("desktop_session_open")) {
+                String originalTarget = target;
+                target = !originalTarget.isBlank() && recovered.stream().anyMatch(window ->
+                        window.path("targetId").asText().equals(originalTarget)) ? originalTarget : "";
+            }
             // A missing handle is diagnostic data, never an argument for the next call.
             if (recovering) {
                 session = "";
                 control = ControlAccess.UNKNOWN;
             }
+        } else if (candidateReadAt > Math.max(openedAt, Math.max(observedAt, closedAt))
+                && !session.isBlank() && session.equals(candidateSession)) {
+            // Reading the candidate inventory is an explicit request to choose, not
+            // permission for the host to select the last/only different application window.
+            phase = Phase.WINDOW_SELECTION;
+            required = "desktop_session_open";
+            target = "";
         } else if (controlUpgrade && !session.isBlank() && !target.isBlank()) {
             phase = Phase.OPEN_CONTROL;
             required = "desktop_session_open";
@@ -396,13 +417,17 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
     }
 
     private static boolean controlRequired(AgentStep step, JsonNode receipt) {
+        return requiresSessionOpen(step, receipt, "SESSION_CONTROL_REQUIRED");
+    }
+
+    private static boolean requiresSessionOpen(AgentStep step, JsonNode receipt, String reason) {
         if (step.state() != AgentStep.State.COMPLETED || step.output() == null
                 || !receipt.path("status").asText().equals("FAILED")) return false;
         JsonNode raw = step.output().path("rawOutput");
         JsonNode metadata = receipt.path("metadata");
         return raw.path("schemaVersion").asInt() == 1 && raw.path("kind").asText().equals("desktop.action")
-                && raw.path("reason").asText().equals("SESSION_CONTROL_REQUIRED")
-                && metadata.path("reasonCode").asText().equals("SESSION_CONTROL_REQUIRED")
+                && raw.path("reason").asText().equals(reason)
+                && metadata.path("reasonCode").asText().equals(reason)
                 && raw.path("delivery").asText().equals("NOT_SENT")
                 && metadata.path("delivery").asText().equals("NOT_SENT")
                 && raw.path("dispatchAttempted").isBoolean() && !raw.path("dispatchAttempted").booleanValue()
@@ -480,7 +505,51 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                     || !applicationId.isBlank() && window.path("applicationId").asText()
                             .equalsIgnoreCase(applicationId))) matching.add(window);
         }
+        if (!targetId.isBlank()) {
+            var exact = matching.stream().filter(window -> window.path("targetId").asText().equals(targetId)).toList();
+            if (!exact.isEmpty()) return exact;
+        }
         return List.copyOf(matching);
+    }
+
+    static boolean trustedWindowCandidateRead(AgentStep step, JsonNode receipt,
+            List<RunEventEnvelope> events) {
+        String invocation = step.input().path("invocationId").asText();
+        String session = step.input().path("arguments").path("sessionId").asText();
+        var raw = step.output().path("rawOutput");
+        if (invocation.isBlank() || session.isBlank() || !receipt.path("operation").asText().equals("window_candidates")
+                || !session.equals(receipt.path("metadata").path("sessionId").asText())
+                || !receipt.path("metadata").path("delivery").asText().equals("NOT_SENT")
+                || !raw.path("schemaVersion").isInt() || raw.path("schemaVersion").intValue() != 1
+                || !raw.path("kind").asText().equals("desktop.window_candidates")
+                || !raw.path("protocol").asText().equals("computer-use")
+                || !session.equals(raw.path("sessionId").asText()) || !raw.path("candidates").isArray()
+                || !raw.path("inputAuthority").isBoolean() || raw.path("inputAuthority").booleanValue()
+                || !raw.path("freshObservation").isBoolean() || raw.path("freshObservation").booleanValue()) return false;
+        var starts = events.stream().filter(event -> event.type().equals("core.tool.started")
+                && event.schemaVersion() == 1 && event.producer().equals("framework.core")
+                && event.payload().path("invocationId").asText().equals(invocation)).toList();
+        var completions = events.stream().filter(event -> event.type().equals("core.tool.completed")
+                && event.schemaVersion() == 2 && event.producer().equals("framework.core")
+                && event.payload().path("invocationId").asText().equals(invocation)).toList();
+        var settled = events.stream().filter(event -> event.type().equals("core.tool.receipt")
+                && event.schemaVersion() == 1 && event.producer().equals("framework.core")
+                && event.payload().path("invocationId").asText().equals(invocation)).toList();
+        return starts.size() == 1 && completions.size() == 1 && settled.size() == 1
+                && starts.getFirst().sequence() < completions.getFirst().sequence()
+                && completions.getFirst().sequence() < settled.getFirst().sequence()
+                && settled.getFirst().payload().equals(receipt)
+                && starts.getFirst().payload().path("tool").asText().equals("desktop_session_window_candidates")
+                && starts.getFirst().payload().path("trustedDesktopTool").isBoolean()
+                && starts.getFirst().payload().path("trustedDesktopTool").booleanValue()
+                && starts.getFirst().payload().path("arguments").equals(step.input().path("arguments"))
+                && completions.getFirst().payload().path("tool").asText().equals("desktop_session_window_candidates")
+                && completions.getFirst().payload().path("status").asText().equals("SUCCEEDED")
+                && completions.getFirst().payload().path("output").equals(raw)
+                && receipt.path("metadata").path("discoveryDigest").asText().equals(
+                    com.javaclaw.framework.spi.InteractionStageContext.sha256(raw.toString()))
+                && receipt.path("evidenceRef").asText().equals("core.tool.completed:"
+                        + step.turnId().value() + ":" + invocation);
     }
 
     private static boolean validObservation(OnDemandHistoryCatalog.DesktopObservation observation,
@@ -579,6 +648,9 @@ record ComputerUseSessionCursor(Phase phase, String requiredTool, String session
                     .put("sessionIdSource", "successful host desktop_session_open only")
                     .put("targetIdSource", "current host desktop_session_targets only");
         }
+        if (phase == Phase.WINDOW_SELECTION || phase == Phase.WINDOW_CANDIDATES)
+            data.put("windowSelection", "EXPLICIT_ONLY").put("candidateAuthority", "DISCOVERY_ONLY")
+                    .put("automaticCandidateSelection", false).put("unknownEffectsPreserved", true);
         return data;
     }
 }
