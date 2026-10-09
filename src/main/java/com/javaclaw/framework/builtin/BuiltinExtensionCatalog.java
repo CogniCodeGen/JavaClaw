@@ -188,22 +188,7 @@ public final class BuiltinExtensionCatalog {
         extensions.add(declarative("tool.result-eviction", "Tool Result Eviction",
                 "Size-aware tool-result post-processing without losing durable events",
                 resultEvictionSchema(), 60, List.of(), registrar ->
-                        registrar.toolResultPostProcessor((current, tool, context, request) -> {
-                            if (context.internalContextRead()) return current;
-                            String rendered = current.isTextual()
-                                    ? current.asText() : current.toString();
-                            int limit = com.javaclaw.framework.api.CapabilityRuntime.configuration(
-                                    request, "tool.result-eviction")
-                                    .path("maxCharacters").asInt(16_000);
-                            if (rendered.length() <= limit) return current;
-                            ObjectNode bounded = JsonNodeFactory.instance.objectNode();
-                            bounded.put("truncated", true);
-                            bounded.put("tool", tool.name());
-                            bounded.put("originalCharacters", rendered.length());
-                            bounded.put("preview", rendered.substring(0, limit));
-                            bounded.put("note", "Full output is retained in core.tool.completed");
-                            return bounded;
-                        })));
+                        registrar.toolResultPostProcessor(ToolResultEviction::process)));
         extensions.add(declarative("sandbox.execution", "Sandbox",
                 "ToolExecution provider for process/container isolation",
                 schema(false), 70, List.of(), registrar -> {}));

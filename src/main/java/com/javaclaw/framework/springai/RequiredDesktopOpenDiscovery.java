@@ -18,7 +18,8 @@ import java.util.Set;
 final class RequiredDesktopOpenDiscovery {
     private RequiredDesktopOpenDiscovery() { }
 
-    record Discovery(List<JsonNode> targets, String evidenceRef) {
+    record Discovery(List<JsonNode> targets, String evidenceRef, boolean complete, boolean hasMore,
+            int nextOffset, String query, int offset, int totalCount, String inventoryId) {
         Discovery { targets = targets.stream().map(target -> (JsonNode) target.deepCopy()).toList(); }
     }
 
@@ -71,11 +72,14 @@ final class RequiredDesktopOpenDiscovery {
                     || !raw.path("kind").asText().equals("desktop.targets")
                     || !raw.path("targets").isArray() || !raw.path("count").isIntegralNumber() || !raw.path("count").canConvertToInt()
                     || raw.path("count").asLong() != raw.path("targets").size()
+                    || !validPage(raw, start.payload().path("arguments"))
                     || !receipt.payload().path("metadata").path("discoveryDigest").asText().equals(
                         InteractionStageContext.sha256(raw.toString()))) continue;
             try {
-                Instant observed = Instant.parse(receipt.payload().path("observedAt").asText());
-                if (observed.isBefore(start.timestamp()) || observed.isAfter(complete.timestamp())) continue;
+                // Run event timestamps retain milliseconds, while receipts may retain nanoseconds.
+                long observedMillis = Instant.parse(receipt.payload().path("observedAt").asText()).toEpochMilli();
+                if (observedMillis < start.timestamp().toEpochMilli()
+                        || observedMillis > complete.timestamp().toEpochMilli()) continue;
             } catch (RuntimeException invalid) { continue; }
             valid.add(complete);
         }
@@ -93,8 +97,60 @@ final class RequiredDesktopOpenDiscovery {
             if (!ids.add(target.path("targetId").asText())) return null; // Conflicting native identities grant no hint.
             targets.add(target);
         }
+        JsonNode output = latest.payload().path("output");
+        boolean paged = output.has("inventoryId");
         return new Discovery(targets, "core.tool.completed:" + run.value() + ":"
-                + latest.payload().path("invocationId").asText());
+                + latest.payload().path("invocationId").asText(),
+                !paged || output.path("complete").asBoolean(), paged && output.path("hasMore").asBoolean(),
+                paged && output.has("nextOffset") ? output.path("nextOffset").intValue() : -1,
+                output.path("query").asText(""), output.path("offset").asInt(0),
+                output.path("totalCount").asInt(output.path("count").intValue()),
+                output.path("inventoryId").asText(""));
+    }
+
+    /** Old unpaged receipts remain readable; new pages must describe exactly the rows actually returned. */
+    private static boolean validPage(JsonNode output, JsonNode arguments) {
+        boolean paged = List.of("inventoryId", "query", "offset", "inventoryTotalCount", "totalCount",
+                "complete", "hasMore", "nextOffset", "truncated").stream().anyMatch(output::has);
+        if (!paged) return true;
+        if (!output.path("inventoryId").isTextual() || !output.path("inventoryId").asText().matches("[a-f0-9]{64}")
+                || !output.path("query").isTextual()
+                || output.path("query").asText().length() > 256
+                || output.path("query").asText().codePoints().anyMatch(Character::isISOControl)
+                || !nonnegativeInt(output.path("offset")) || !nonnegativeInt(output.path("totalCount"))
+                || !nonnegativeInt(output.path("inventoryTotalCount"))
+                || !output.path("complete").isBoolean() || !output.path("hasMore").isBoolean()
+                || !output.path("truncated").isBoolean()
+                || !output.path("inputAuthority").isBoolean() || output.path("inputAuthority").booleanValue()
+                || !output.path("freshObservation").isBoolean() || output.path("freshObservation").booleanValue()) return false;
+        int count = output.path("count").intValue(), offset = output.path("offset").intValue();
+        int total = output.path("totalCount").intValue();
+        long next = (long) offset + count;
+        boolean complete = offset == 0 && count == total;
+        boolean hasMore = next < total;
+        if (count > 32 || next > total || output.path("inventoryTotalCount").intValue() < total
+                || hasMore && count == 0
+                || output.path("complete").booleanValue() != complete
+                || output.path("truncated").booleanValue() == complete
+                || output.path("hasMore").booleanValue() != hasMore
+                || hasMore != output.has("nextOffset")
+                || hasMore && (!nonnegativeInt(output.path("nextOffset"))
+                    || output.path("nextOffset").longValue() != next)) return false;
+        JsonNode requestedOffset = arguments.path("offset");
+        JsonNode requestedQuery = arguments.path("query");
+        JsonNode requestedLimit = arguments.path("limit");
+        if (!requestedOffset.isMissingNode() && !requestedOffset.isNull() && !nonnegativeInt(requestedOffset)
+                || !requestedQuery.isMissingNode() && !requestedQuery.isNull() && !requestedQuery.isTextual()
+                || !requestedLimit.isMissingNode() && !requestedLimit.isNull()
+                    && (!nonnegativeInt(requestedLimit) || requestedLimit.intValue() < 1 || requestedLimit.intValue() > 32))
+            return false;
+        return offset == requestedOffset.asInt(0)
+                && output.path("query").asText().equals(requestedQuery.asText("").strip())
+                && count <= requestedLimit.asInt(16);
+    }
+
+    private static boolean nonnegativeInt(JsonNode value) {
+        return value.isIntegralNumber() && value.canConvertToInt() && value.intValue() >= 0;
     }
 
     private static RunEventEnvelope unique(List<RunEventEnvelope> events, String type, int schema) {
@@ -104,7 +160,7 @@ final class RequiredDesktopOpenDiscovery {
     }
 
     private static boolean identifier(JsonNode value) {
-        return value.isTextual() && !value.asText().isBlank() && value.asText().length() <= 512
+        return value.isTextual() && !value.asText().isBlank()
                 && value.asText().equals(value.asText().strip())
                 && value.asText().codePoints().noneMatch(Character::isISOControl);
     }

@@ -57,7 +57,17 @@ final class GuardedToolCallingManager implements ToolCallingManager {
                         .collect(Collectors.toSet())
                 : Set.of();
         if (assistant.getToolCalls().stream().allMatch(call -> offered.contains(call.name()))) {
-            return delegate.executeToolCalls(prompt, response);
+            try {
+                return journal.afterToolBatch(delegate.executeToolCalls(prompt, response));
+            } catch (RuntimeException failure) {
+                // A later call can fail after an earlier click was delivered. Persist
+                // its read-only follow-up without hiding the original batch failure.
+                try { journal.observeCompletedClicks(); }
+                catch (RuntimeException observationFailure) {
+                    if (failure != observationFailure) failure.addSuppressed(observationFailure);
+                }
+                throw failure;
+            }
         }
         return journal.rejectUnavailableToolBatch(prompt, assistant);
     }

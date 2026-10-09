@@ -105,9 +105,10 @@ final class StepContextAssembler {
         int last = manifested.size() - 1;
         manifested.set(last, dynamic(HostContextBlock.Kind.TOOL_MANIFEST, manifested.get(last), true, List.of()));
         // 最新工具交换也可能直接加入 assembled，统一在最终入口保留有界浏览器正文。
-        List<Message> source = ComputerUseEvidenceProjection.compactForModel(BrowserObservationProjection.project(
-                normalize(manifested), projector.toolResultCharacterLimit()));
         try {
+            List<Message> source = ComputerUseEvidenceProjection.compactForModel(BrowserObservationProjection.project(
+                    ComputerUseEvidenceProjection.project(normalize(manifested), projector.toolResultCharacterLimit()),
+                    projector.toolResultCharacterLimit()));
             var projected = projector.project(source);
             projector.validateRequiredEvidence(source, projected.messages());
             return projected.messages();

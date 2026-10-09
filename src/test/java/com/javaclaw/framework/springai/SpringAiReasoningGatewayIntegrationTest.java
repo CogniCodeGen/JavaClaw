@@ -74,6 +74,62 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class SpringAiReasoningGatewayIntegrationTest {
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deliveredDesktopClickIsObservedThroughTheOrdinaryGatewayBeforeNextReasoning(boolean streaming) throws Exception {
+        AtomicInteger modelCalls = new AtomicInteger(), observeCalls = new AtomicInteger(), clickCalls = new AtomicInteger();
+        AtomicInteger streamCalls = new AtomicInteger();
+        ChatModel responses = prompt -> switch (modelCalls.incrementAndGet()) {
+            case 1 -> namedToolCallResponse("desktop_session_observe", "{\"sessionId\":\"sample-session\"}", 2, 1);
+            case 2 -> namedToolCallResponse("desktop_session_click", "{\"sessionId\":\"sample-session\","
+                    + "\"observationId\":\"00000000-0000-4000-8000-000000000001\","
+                    + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}", 2, 1);
+            case 3 -> {
+                JsonNode click = SpringAiToolCallback.parseArguments(new ObjectMapper(), prompt.getInstructions().stream()
+                        .filter(ToolResponseMessage.class::isInstance).map(ToolResponseMessage.class::cast)
+                        .flatMap(message -> message.getResponses().stream())
+                        .filter(response -> response.name().equals("desktop_session_click"))
+                        .findFirst().orElseThrow().responseData());
+                assertEquals("SUCCEEDED", click.path("status").asText());
+                JsonNode read = click.path("postClickObservation");
+                assertEquals("UNKNOWN", read.path("effect").asText());
+                assertEquals("SUCCEEDED", read.path("result").path("status").asText());
+                assertEquals(2, observeCalls.get());
+                yield textResponse("已查看设置页面", 2, 1);
+            }
+            default -> throw new AssertionError("unexpected model call");
+        };
+        ChatModel model = streaming ? new ReplyStreamingChatModel() {
+            @Override public ChatResponse call(Prompt prompt) { throw new AssertionError("sync transport used"); }
+            @Override public reactor.core.publisher.Flux<ChatResponse> stream(Prompt prompt, DecisionReplyStream reply) {
+                streamCalls.incrementAndGet();
+                return reactor.core.publisher.Flux.just(responses.call(prompt));
+            }
+        } : responses;
+        try (Fixture fixture = new Fixture(model, toolCallBudget(3), new AtomicInteger(),
+                new FixtureConfig().simulatedDesktopSession(observeCalls, clickCalls))) {
+            RunHandle handle = fixture.engine.start(fixture.request("查看设置页面"));
+            RunOutcome outcome = awaitCompletion(fixture, handle);
+            assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
+            assertEquals(1, clickCalls.get());
+            assertEquals(2, observeCalls.get());
+            assertEquals(streaming ? modelCalls.get() : 0, streamCalls.get());
+            var started = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.step.started")
+                            && event.payload().path("input").path("invocationId").asText().startsWith("post-click/")
+                            && event.payload().path("input").path("tool").asText().equals("desktop_session_observe"))
+                    .findFirst().orElseThrow().payload().path("input");
+            long after = started.path("capturedAfterMillis").asLong(-1);
+            assertTrue(after > 0, "freshness must survive request recovery in the ordinary tool start record");
+            var receipt = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.receipt")
+                            && started.path("invocationId").asText().equals(event.payload().path("invocationId").asText()))
+                    .findFirst().orElseThrow().payload();
+            assertEquals("OBSERVED", receipt.path("status").asText());
+            assertTrue(receipt.path("metadata").path("capturedAtMillis").asLong(-1) > after);
+        }
+    }
+
     @Test
     void pendingEffectControlSignalPausesWithoutRetryingProviderOrDispatchingTools() {
         AtomicInteger providerCalls = new AtomicInteger();
@@ -689,20 +745,20 @@ class SpringAiReasoningGatewayIntegrationTest {
 
     @Test
     @org.junit.jupiter.api.Timeout(30)
-    void dispatchedActionAfterRepairAllowsASecondRepairForItsResultingView() throws Exception {
+    void dispatchedActionAfterRepairAutomaticallyObservesItsResultingView() throws Exception {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger observeCalls = new AtomicInteger();
         AtomicInteger clickCalls = new AtomicInteger();
         ChatModel model = prompt -> switch (modelCalls.incrementAndGet()) {
-            case 1, 5 -> namedToolCallResponse("desktop_session_observe",
+            case 1 -> namedToolCallResponse("desktop_session_observe",
                     "{\"sessionId\":\"sample-session\"}", 2, 1);
-            case 2, 4 -> textResponse("尚未取得设置页面证据", 2, 1);
+            case 2 -> textResponse("尚未取得设置页面证据", 2, 1);
             case 3 -> namedToolCallResponse("desktop_session_click",
                     "{\"sessionId\":\"sample-session\",\"observationId\":"
                             + "\"00000000-0000-4000-8000-000000000001\","
                             + "\"elementId\":\"00000000-0000-4000-8000-000000000001:v7\"}",
                     2, 1);
-            case 6 -> textResponse("已查看设置页面", 2, 1);
+            case 4 -> textResponse("已查看设置页面", 2, 1);
             default -> throw new AssertionError("unexpected repair call");
         };
         FixtureConfig config = new FixtureConfig()
@@ -718,11 +774,11 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(6, modelCalls.get());
+            assertEquals(4, modelCalls.get());
             assertEquals(2, observeCalls.get());
             assertEquals(1, clickCalls.get());
             var events = fixture.runs.eventsAfter(handle.id(), 0);
-            assertEquals(2, events.stream().filter(event ->
+            assertEquals(1, events.stream().filter(event ->
                     event.type().equals("core.task.repair_requested")).count());
             assertEquals(TaskOutcome.VERIFIED_COMPLETE,
                     fixture.engine.taskResult(handle.id()).orElseThrow().outcome());
@@ -4532,12 +4588,10 @@ class SpringAiReasoningGatewayIntegrationTest {
                 }
                 case 3 -> {
                     assertEquals(1, clickCalls.get());
-                    assertTrue(toolNames(prompt).contains("desktop_session_observe"));
-                    yield namedToolCallResponse("desktop_session_observe",
-                            "{\"sessionId\":\"sample-session\"}", 2, 1);
-                }
-                case 4 -> {
                     assertEquals(2, observeCalls.get());
+                    assertTrue(lastToolResponse(prompt).responseData().contains("postClickObservation"));
+                    assertTrue(lastToolResponse(prompt).responseData().contains("设置页面"),
+                            "the host's independent read must supply the clicked view before more reasoning");
                     yield textResponse("已查看 示例应用 设置页面", 2, 1);
                 }
                 default -> throw new AssertionError("unexpected provider call");
@@ -4553,7 +4607,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             RunOutcome outcome = awaitCompletion(fixture, handle);
 
             assertEquals(RunState.COMPLETED, outcome.state(), outcome.error());
-            assertEquals(4, providerCalls.get());
+            assertEquals(3, providerCalls.get());
             assertEquals(2, observeCalls.get());
             assertEquals(1, clickCalls.get());
             assertTrue(fixture.runs.eventsAfter(handle.id(), 0).stream()
@@ -8274,6 +8328,7 @@ class SpringAiReasoningGatewayIntegrationTest {
     }
 
     private static final class Fixture implements AutoCloseable {
+        private final String profileId;
         private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
         private final Clock clock = Clock.systemUTC();
         private final ExtensionManager extensions;
@@ -8298,6 +8353,7 @@ class SpringAiReasoningGatewayIntegrationTest {
 
         private Fixture(ChatModel model, RunBudget budget, AtomicInteger toolCalls,
                         FixtureConfig config) {
+            profileId = model instanceof ReplyStreamingChatModel ? "chat" : "test.profile";
             DriverManagerDataSource dataSource = new DriverManagerDataSource(
                     "jdbc:h2:mem:spring-reasoning-" + UUID.randomUUID()
                             + ";DB_CLOSE_DELAY=-1", "sa", "");
@@ -8331,7 +8387,7 @@ class SpringAiReasoningGatewayIntegrationTest {
             definitions.saveAgentDraft("workspace", agent, false);
             definitions.publishAgent("workspace", agent.id());
             RunProfileDraft profile = new RunProfileDraft(
-                    "test.profile", "Test", PermissionSet.UNRESTRICTED,
+                    profileId, "Test", PermissionSet.UNRESTRICTED,
                     budget, Map.of(), JsonNodeFactory.instance.objectNode());
             definitions.saveProfileDraft("workspace", profile, false);
             definitions.publishProfile("workspace", profile.id());
@@ -8436,6 +8492,15 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
 
         private static ChatModel toolCapable(ChatModel delegate) {
+            if (delegate instanceof ReplyStreamingChatModel streaming) return new ReplyStreamingChatModel() {
+                @Override public ChatResponse call(Prompt prompt) { return delegate.call(prompt); }
+                @Override public reactor.core.publisher.Flux<ChatResponse> stream(Prompt prompt, DecisionReplyStream reply) {
+                    return streaming.stream(prompt, reply);
+                }
+                @Override public org.springframework.ai.chat.prompt.ChatOptions getOptions() {
+                    return ToolCallingChatOptions.builder().build();
+                }
+            };
             return new ChatModel() {
                 @Override
                 public ChatResponse call(Prompt prompt) {
@@ -8478,7 +8543,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                                    PermissionSet ceiling) {
             return RunRequest.builder()
                     .agent(AgentDefinitionRef.latest("test.agent"))
-                    .profile(RunProfileRef.latest("test.profile"))
+                    .profile(RunProfileRef.latest(profileId))
                     .source(InvocationSource.chat())
                     .scope(new RunScope("workspace", "user", "session"))
                     .inputs(inputs)
@@ -9063,6 +9128,8 @@ class SpringAiReasoningGatewayIntegrationTest {
                                     || !"sample-session".equals(args[1])) {
                                 return CompletableFuture.completedFuture(java.util.Optional.empty());
                             }
+                            if (args.length == 3 && System.currentTimeMillis() <= (long)args[2])
+                                return CompletableFuture.completedFuture(java.util.Optional.empty());
                             int number = config.simulatedObserveCalls.incrementAndGet();
                             String observationId = "00000000-0000-4000-8000-%012d"
                                     .formatted(number);

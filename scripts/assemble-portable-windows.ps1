@@ -69,10 +69,9 @@ try {
     $inputDirectory = Join-Path $stage "input"
     $portableHome = Join-Path $stage "home"
     $runtime = Join-Path $portableHome "runtime"
-    $nativeDirectory = Join-Path $runtime "native/windows"
     $plugins = Join-Path $portableHome "plugins"
     $data = Join-Path $portableHome "data"
-    New-Item -ItemType Directory -Path $inputDirectory, $nativeDirectory, $plugins, $data -Force | Out-Null
+    New-Item -ItemType Directory -Path $inputDirectory, $runtime, $plugins, $data -Force | Out-Null
     Copy-Item -LiteralPath $HostJar -Destination (Join-Path $inputDirectory "javaclaw.jar")
     $mavenArgs = @("--batch-mode", "--no-transfer-progress", "-q", "-f", (Join-Path $projectRoot "pom.xml"))
     if ($Offline) { $mavenArgs += "-o" }
@@ -94,12 +93,9 @@ try {
     Move-Item -LiteralPath $appImage -Destination (Join-Path $runtime "JavaClaw")
     Assert-BundledJava $portableHome
 
-    Invoke-Checked (Join-Path $projectRoot "src/main/native/windows/build.ps1") @()
-    $native = Join-Path $nativeDirectory "javaclaw_desktop.dll"
-    Copy-Item -LiteralPath (Join-Path $target "native/windows/javaclaw_desktop.dll") -Destination $native
     $launcher = Join-Path $runtime "JavaClaw/JavaClaw.exe"
     $bundledJava = Join-Path $runtime "JavaClaw/runtime/bin/java.exe"
-    foreach ($file in @($launcher, $native, $bundledJava)) {
+    foreach ($file in @($launcher, $bundledJava)) {
         Invoke-Checked $SignToolPath @("sign", "/fd", "SHA256", "/sha1", $CertificateThumbprint,
             "/tr", $TimestampUrl, "/td", "SHA256", $file)
         Invoke-Checked $SignToolPath @("verify", "/pa", "/v", $file)

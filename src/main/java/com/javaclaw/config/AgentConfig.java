@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Properties;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 
 import static com.javaclaw.config.AgentConfigSchema.*;
 
@@ -63,8 +64,8 @@ public final class AgentConfig {
 
     public static final String DESKTOP_AGENT_DESCRIPTION =
             "通过目标绑定会话观察和操作 Windows 11 或 macOS 14 应用窗口。" +
-            "设置中的电脑应用访问开关开启且系统权限就绪时，可直接使用会话能力，前台接管也由此开关授权。" +
-            "交互会话默认使用系统鼠标键盘输入；只读会话仅观察，支持实时预览和按需截图。" +
+            "设置中的电脑应用访问开关开启且对应权限就绪时，可使用会话能力；前台接管还需用户显式选择SYSTEM_EXPLICIT输入策略。" +
+            "默认使用公开辅助功能后台操作，不移动系统鼠标或抢占焦点；系统输入必须由用户在设置中显式选择。" +
             "不处理网页（由 Web 专家负责）、不做本地文件读写（由系统操作专家负责）。";
 
     public static final String COMMAND_AGENT_NAME = "命令行专家";
@@ -691,6 +692,21 @@ public final class AgentConfig {
 
     public synchronized void setComputerAppAccessEnabled(boolean value) {
         properties.setProperty(KEY_COMPUTER_APP_ACCESS_ENABLED, String.valueOf(value));
+    }
+
+    /** Host-selected policy; missing or invalid saved values fail closed to public background input. */
+    public synchronized DesktopInputPolicy getDesktopInputPolicy() {
+        try {
+            return DesktopInputPolicy.valueOf(properties.getProperty(
+                    KEY_DESKTOP_INPUT_POLICY, "BACKGROUND_STRICT"));
+        } catch (IllegalArgumentException invalid) {
+            return DesktopInputPolicy.BACKGROUND_STRICT;
+        }
+    }
+
+    public synchronized void setDesktopInputPolicy(DesktopInputPolicy policy) {
+        properties.setProperty(KEY_DESKTOP_INPUT_POLICY,
+                java.util.Objects.requireNonNull(policy, "policy").name());
     }
 
     /** 界面风格主题 ID（emerald/midnight/carbon/sapphire/ocean/plum/terracotta/honey/graphite，默认 emerald，按工作区记忆） */

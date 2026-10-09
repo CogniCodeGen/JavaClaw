@@ -29,7 +29,7 @@ public final class AgentConfigBehaviorSettingsAdapter implements BehaviorSetting
                         config.getSkillEvolutionSuccessThreshold(),
                         config.isSkillNudgeEnabled(), config.isSkillBundlesEnabled()),
                 new GeneralSettings(config.isTrayMinimizeOnClose(),
-                        config.isComputerAppAccessEnabled()),
+                        config.isComputerAppAccessEnabled(), config.getDesktopInputPolicy()),
                 config.getConfigFilePath());
     }
 
@@ -60,13 +60,16 @@ public final class AgentConfigBehaviorSettingsAdapter implements BehaviorSetting
         synchronized (config) {
             boolean previousTray = config.isTrayMinimizeOnClose();
             boolean previousDesktopAccess = config.isComputerAppAccessEnabled();
+            var previousInputPolicy = config.getDesktopInputPolicy();
             config.setTrayMinimizeOnClose(value.minimizeToTrayOnClose());
             config.setComputerAppAccessEnabled(value.computerAppAccessEnabled());
+            config.setDesktopInputPolicy(value.inputPolicy());
             try {
                 config.saveChecked();
             } catch (RuntimeException failure) {
                 config.setTrayMinimizeOnClose(previousTray);
                 config.setComputerAppAccessEnabled(previousDesktopAccess);
+                config.setDesktopInputPolicy(previousInputPolicy);
                 throw failure;
             }
         }

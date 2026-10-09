@@ -14,8 +14,26 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SpringAiToolCallbackEnvelopeTest {
+    @Test
+    void evictedResultDoesNotReattachTheOriginalFullDisplayMessage() {
+        var data = JsonNodeFactory.instance.objectNode().put("truncated", true)
+                .put("preview", "bounded preview").put("originalCharacters", 30_000);
+        String originalDisplay = "full original display ".repeat(2_000);
+        var result = new ToolInvocationResult(data, Duration.ZERO, ToolExecutionStatus.FAILED,
+                "EXACT_ERROR", originalDisplay);
+
+        var visible = SpringAiToolCallback.modelVisibleResult(result);
+
+        assertEquals("FAILED", visible.path("status").asText());
+        assertEquals("EXACT_ERROR", visible.path("errorCode").asText());
+        assertEquals(data, visible.path("data"));
+        assertTrue(visible.path("displayMessage").asText().length() < 100);
+        assertEquals(originalDisplay, result.displayMessage());
+    }
+
     @Test
     void everyBusinessToolResponseHasAllFourTypedFields() {
         var result = new ToolInvocationResult(

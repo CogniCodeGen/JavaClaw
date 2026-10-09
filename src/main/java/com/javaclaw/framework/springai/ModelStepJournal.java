@@ -63,6 +63,7 @@ final class ModelStepJournal {
     private final LegacyDesktopBatchRecovery legacyDesktopRecovery;
     private final BatchObservationReuse observationReuse;
     private final BrowserNavigationFeedback navigationFeedback;
+    private DesktopPostClickObservation postClickObservation;
     private StepId currentModel;
     private final List<AssistantMessage.ToolCall> pendingCalls = new ArrayList<>();
 
@@ -81,6 +82,14 @@ final class ModelStepJournal {
         this.navigationFeedback = new BrowserNavigationFeedback(request, steps, json);
     }
     HarnessDecisionToolCallback decisionCallback() { return decisionCallback; }
+    ToolExecutionResult afterToolBatch(ToolExecutionResult result) {
+        if (postClickObservation == null || result.returnDirect()) return result;
+        return ToolExecutionResult.builder().returnDirect(result.returnDirect())
+                .conversationHistory(postClickObservation.afterBatch(result.conversationHistory(), currentModel)).build();
+    }
+    void observeCompletedClicks() {
+        if (postClickObservation != null) postClickObservation.afterBatch(List.of(), currentModel);
+    }
     ObjectMapper json() { return json; }
     StepId started(Prompt prompt, int attempt, String toolCandidateStepId) {
         StepId id = StepId.random();
@@ -705,6 +714,7 @@ final class ModelStepJournal {
 
     Recovery recover(List<FrameworkTool> tools, ToolInvocationGateway gateway,
             ToolCatalogSession catalog, boolean appendResume) {
+        postClickObservation = new DesktopPostClickObservation(request, runs, json, tools, gateway);
         List<AgentStep> history = steps.steps(request.runId());
         AgentStep last = null;
         for (AgentStep step : history) if (step.kind() == AgentStep.Kind.MODEL) last = step;
@@ -730,6 +740,7 @@ final class ModelStepJournal {
         }
         boolean legacyDesktopBatch = legacyDesktopRecovery.legacyDesktopBatch(last);
         if (!legacyDesktopBatch) providerTools.validate(last, catalog, decisionCallback);
+        postClickObservation.afterBatch(List.of(), last.id());
         List<Message> messages = new ArrayList<>(StepMessageCodec.messages(last.input().path("messages")));
         if (request.plan().descriptor().stepContextPolicy() != null
                 || OriginalTaskSnapshot.hasAttachments(request)
@@ -871,6 +882,8 @@ final class ModelStepJournal {
                     responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), visible));
                 }
                 messages.add(ToolResponseMessage.builder().responses(responses).build());
+                if (!rejected && !rejectedLegacy) messages = new ArrayList<>(
+                        postClickObservation.afterBatch(messages, last.id()));
                 if (!rejected && !rejectedLegacy && decisions == 1) {
                     // returnDirect control calls terminate the live provider loop. A restart
                     // after that call must use its persisted decision, not ask the model again.

@@ -2,6 +2,7 @@ package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService.GeneralSettings;
 import com.javaclaw.ui.javafx.theme.ThemeOption;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -20,6 +21,8 @@ public final class GeneralSettingsViewModel {
     private final ObjectProperty<ThemeOption> selectedTheme = new SimpleObjectProperty<>();
     private final BooleanProperty minimizeToTrayOnClose = new SimpleBooleanProperty();
     private final BooleanProperty computerAppAccessEnabled = new SimpleBooleanProperty();
+    private final ObjectProperty<DesktopInputPolicy> inputPolicy =
+            new SimpleObjectProperty<>(DesktopInputPolicy.BACKGROUND_STRICT);
     private final StringProperty computerAppAccessStatus = new SimpleStringProperty("");
     private final StringProperty error = new SimpleStringProperty("");
     private final BooleanProperty busy = new SimpleBooleanProperty();
@@ -29,6 +32,7 @@ public final class GeneralSettingsViewModel {
         selectedTheme.set(current);
         minimizeToTrayOnClose.set(settings.minimizeToTrayOnClose());
         computerAppAccessEnabled.set(settings.computerAppAccessEnabled());
+        inputPolicy.set(settings.inputPolicy());
         error.set("");
     }
 
@@ -38,6 +42,7 @@ public final class GeneralSettingsViewModel {
     public BooleanProperty computerAppAccessEnabledProperty() {
         return computerAppAccessEnabled;
     }
+    public ObjectProperty<DesktopInputPolicy> inputPolicyProperty() { return inputPolicy; }
     public StringProperty computerAppAccessStatusProperty() {
         return computerAppAccessStatus;
     }

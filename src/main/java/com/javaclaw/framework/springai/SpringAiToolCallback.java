@@ -128,7 +128,13 @@ final class SpringAiToolCallback implements ToolCallback, SpringAiToolCatalog.Gr
         modelResult.put("status", result.status().name());
         modelResult.set("data", result.output());
         modelResult.put("errorCode", result.errorCode());
-        modelResult.put("displayMessage", result.displayMessage());
+        JsonNode data = result.output();
+        boolean discovery = DesktopDiscoveryModelProjection.recognizes("desktop_session_targets", data)
+                || DesktopDiscoveryModelProjection.recognizes("desktop_session_window_candidates", data);
+        // The original display remains in the durable tool event. Reattaching it would undo result eviction.
+        modelResult.put("displayMessage", discovery ? DesktopDiscoveryModelProjection.DISPLAY
+                : data.path("truncated").asBoolean(false) && data.has("preview")
+                ? "工具结果已裁剪；完整内容保存在执行日志。" : result.displayMessage());
         modelResult.putArray("evidenceRefs");
         return modelResult;
     }

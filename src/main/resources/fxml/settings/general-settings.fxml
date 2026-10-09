@@ -66,6 +66,13 @@
                                       accessibleText="允许智能体访问电脑应用"/>
                     </children>
                 </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <Label text="输入方式：" minWidth="70.0" styleClass="settings-label"/>
+                    <ComboBox fx:id="desktopInputPolicyCombo" prefWidth="300.0"
+                              accessibleText="电脑应用输入方式" styleClass="combo-box, settings-combo"/>
+                </HBox>
+                <Label text="后台模式仅支持应用公开的控件动作；不会移动鼠标或抢占焦点。系统输入会影响当前操作，需在此显式选择。保存后对新会话生效；旧会话策略不可更改。"
+                       wrapText="true" styleClass="settings-hint"/>
                 <Label fx:id="computerAppAccessStatus" wrapText="true"
                        accessibleText="电脑应用系统权限状态" styleClass="settings-hint"/>
                 <Button fx:id="computerAppAccessPermissionButton" text="检查并继续授权"

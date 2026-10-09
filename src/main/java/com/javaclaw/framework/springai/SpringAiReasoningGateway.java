@@ -23,6 +23,7 @@ import com.javaclaw.framework.core.RunStepQuery;
 import com.javaclaw.framework.core.RunUsageLedger;
 import com.javaclaw.framework.core.TaskEvidenceCollector;
 import com.javaclaw.framework.core.TaskResultEvaluator;
+import com.javaclaw.framework.core.InteractionExecutionPolicy;
 import com.javaclaw.framework.core.TrustedCapabilityRegistry;
 import com.javaclaw.framework.core.ToolApprovalRequiredException;
 import com.javaclaw.framework.core.ToolGroupAccess;
@@ -145,8 +146,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             StepContextProjector projector = new StepContextProjector(
                     request.plan().descriptor().stepContextPolicy(), json);
             ProviderContextBoundary boundary = new ProviderContextBoundary();
+            InteractionStreamWait interactionWait = new InteractionStreamWait();
             List<FrameworkTool> runTools = new ArrayList<>(createTools(request));
             ChatResponse response = null;
+            InteractionBlockedReview.Candidate blockedContinuation = null;
             Throwable callFailure = null;
             try {
                 ToolCatalogSession catalog = null;
@@ -221,6 +224,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                     // Exactly one recursive advisor owns tool execution. Its manager uses our registry.
                     var advisorBuilder = SpringAiToolCallingAdvisor
                             .builder(projector, catalog, boundary, onDemand)
+                            .interactionWait(interactionWait)
                             .toolCallingManager(new GuardedToolCallingManager(
                                     ToolCallingManager.builder()
                                             .observationRegistry(observations).build(), journal));
@@ -245,7 +249,15 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
 
                     response = callWithRetry(client, systemPrompt, messages, callbacks, request,
                             currentAttempt, journal, runTools, catalog, onDemand,
-                            DecisionReplyStream.eligible(request, rawModel));
+                            DecisionReplyStream.eligible(request, rawModel), interactionWait);
+                }
+                if (InteractionExecutionPolicy.isInteraction(request.runRequest())) {
+                    var events = runStore.eventsAfter(request.runId(), 0);
+                    var submitted = latestSubmittedDecision(request, events).orElse(null);
+                    if (submitted != null && submitted.value().decision() == ModelDecisionV1.Decision.BLOCKED) {
+                        blockedContinuation = InteractionBlockedReview.availableStep(request, catalog,
+                                runStore, submitted.event().payload().path("modelStepId").asText(), events);
+                    }
                 }
             } catch (Throwable failure) {
                 callFailure = failure;
@@ -269,6 +281,13 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                         "The model did not submit a valid harness decision");
             }
             ModelDecisionV1 decision = submitted.value();
+            if (decision.decision() == ModelDecisionV1.Decision.BLOCKED
+                    && blockedContinuation != null
+                    && InteractionBlockedReview.requestRepair(request, json, runEvents, blockedContinuation,
+                            hasInputHeadroomForRepair(request, runEvents))) {
+                request.control().enterTaskRepair();
+                return reason(request);
+            }
             if (decision.decision() == ModelDecisionV1.Decision.NEEDS_INPUT) {
                 return ReasoningResult.waitingForInput(
                         JsonNodeFactory.instance.objectNode()
@@ -711,7 +730,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             List<FrameworkTool> runTools,
             ToolCatalogSession catalog,
             OnDemandContextSession onDemand,
-            boolean streamReply) throws Throwable {
+            boolean streamReply,
+            InteractionStreamWait interactionWait) throws Throwable {
         int attempt = 1;
         while (true) {
             request.control().throwIfCancelled();
@@ -721,6 +741,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 if (!streamReply) return prompt.call().chatResponse();
                 AtomicReference<ChatResponse> aggregate = new AtomicReference<>();
                 new MessageAggregator().aggregate(prompt.stream().chatResponse(), aggregate::set).blockLast();
+                interactionWait.throwIfWaiting();
                 return aggregate.get();
             } catch (Throwable failure) {
                 Throwable cause = unwrap(failure);

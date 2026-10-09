@@ -2,43 +2,64 @@ package com.javaclaw.desktop.nativebridge;
 
 import com.javaclaw.desktop.api.DesktopActionResult;
 import org.junit.jupiter.api.Test;
-
+import static com.javaclaw.desktop.nativebridge.DesktopBridgeTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DesktopBridgeActionAdmissionTest {
-    @Test
-    void aPlatformAcknowledgementConfirmsTransportWithoutClaimingAControlReadback() throws Exception {
-        String header = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/native/desktop_bridge.h"));
-        assertTrue(header.contains("#define JC_DESKTOP_ABI_VERSION 6"),
-                "old clients must not read the new ACCEPTED code as FAILED/NOT_SENT");
-        assertTrue(header.contains("JC_ACTION_ACCEPTED = 6"));
-        var result = new DesktopActionResult(
-                DesktopBridge.actionStatus(6),
-                "AXPress accepted; target effect is not confirmed", 1);
-
-        assertEquals(DesktopActionResult.Status.ACCEPTED, result.status());
-        assertNotEquals(DesktopActionResult.Status.VERIFIED, result.status());
-        assertEquals(DesktopActionResult.Delivery.SENT, result.delivery());
-        assertTrue(result.dispatchAttempted());
-        assertEquals(DesktopActionResult.Reason.NONE, result.reason());
+    @Test void platformAcknowledgementConfirmsTransportWithoutClaimingControlReadback() {
+        var api = new Api();
+        var bridge = new DesktopBridge(api);
+        try (var session = bridge.open(WINDOW)) {
+            var result = bridge.perform(session, click(), false);
+            assertEquals(DesktopActionResult.Status.ACCEPTED, result.status());
+            assertEquals(DesktopActionResult.Delivery.SENT, result.delivery());
+            assertTrue(result.dispatchAttempted());
+            assertEquals(1, api.session.attempts);
+        }
         assertThrows(IllegalArgumentException.class, () -> new DesktopActionResult(
                 DesktopActionResult.Status.ACCEPTED, "missing dispatch proof", 1,
                 DesktopActionResult.Mode.NONE, DesktopActionResult.Reason.NONE,
-                false, "observation", DesktopActionResult.NextStep.OBSERVE));
+                false, OBS, DesktopActionResult.NextStep.OBSERVE));
     }
 
-    @Test
-    void unknownNativeCodesCannotCreateDefiniteNotSentRetryPermission() {
-        for (int code : new int[]{-1, 7, Integer.MAX_VALUE}) {
-            var result = new DesktopActionResult(DesktopBridge.actionStatus(code), "unknown", 1);
-            assertEquals(DesktopActionResult.Status.UNKNOWN, result.status());
-            assertEquals(DesktopActionResult.Delivery.MAYBE_SENT, result.delivery());
-            assertTrue(result.dispatchAttempted());
+    @Test void attemptedFailureCannotCreateDefiniteNotSentRetryPermission() {
+        for (var status : new DesktopActionResult.Status[] { DesktopActionResult.Status.FAILED,
+                DesktopActionResult.Status.DENIED, DesktopActionResult.Status.STALE_FRAME }) {
+            var api = new Api();
+            api.session.result = new DesktopActionResult(status, "result lost after dispatch", 1,
+                    DesktopActionResult.Mode.BACKGROUND_SEMANTIC, DesktopActionResult.Reason.PLATFORM_FAILURE,
+                    true, OBS, DesktopActionResult.NextStep.OBSERVE);
+            var bridge = new DesktopBridge(api);
+            try (var session = bridge.open(WINDOW)) {
+                var result = bridge.perform(session, click(), false);
+                assertEquals(DesktopActionResult.Status.UNKNOWN, result.status());
+                assertEquals(DesktopActionResult.Delivery.MAYBE_SENT, result.delivery());
+                assertEquals(1, api.session.attempts);
+            }
         }
-        var rejected = new DesktopActionResult(
-                DesktopBridge.actionStatus(5), "pre-dispatch failure", 1);
-        assertEquals(DesktopActionResult.Status.FAILED, rejected.status());
-        assertEquals(DesktopActionResult.Delivery.NOT_SENT, rejected.delivery());
-        assertFalse(rejected.dispatchAttempted());
+    }
+
+    @Test void missingOrReplacedTargetPreventsDispatch() {
+        var api = new Api();
+        var bridge = new DesktopBridge(api);
+        assertEquals(DesktopActionResult.Delivery.NOT_SENT, bridge.perform(null, click(), true).delivery());
+        try (var session = bridge.open(WINDOW)) {
+            api.session.window = new DesktopBridge.NativeWindow(42, 99, 315, 10, 20, 80, 60,
+                    2, "Reader", "", "com.example.reader");
+            assertEquals(DesktopActionResult.Status.STALE_FRAME, bridge.perform(session, click(), true).status());
+            assertEquals(0, api.session.attempts);
+        }
+    }
+
+    @Test void lostResultPropagatesWithoutRetryOrFallback() {
+        var api = new Api();
+        api.session.failure = new IllegalStateException("result lost after sending");
+        var bridge = new DesktopBridge(api);
+        try (var session = bridge.open(WINDOW)) {
+            assertSame(api.session.failure, assertThrows(IllegalStateException.class,
+                    () -> bridge.perform(session, click(), false)));
+            assertEquals(1, api.session.attempts);
+            assertEquals(0, api.session.prepares);
+        }
     }
 }

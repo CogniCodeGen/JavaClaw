@@ -29,6 +29,7 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     private static final long LAUNCH_DISCOVERY_INTERVAL_MILLIS = 200;
     private final List<DesktopPlatformProvider> providers;
     final DesktopConsentPort consent;
+    private final java.util.function.Supplier<DesktopInputPolicy> inputPolicy;
     final DesktopSessionObserver observer;
     final Clock clock;
     final ExecutorService workers;
@@ -69,12 +70,23 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     public DefaultDesktopSessionService(List<DesktopPlatformProvider> providers,
                                         DesktopConsentPort consent, Clock clock,
                                         DesktopSessionObserver observer) {
+        this(providers, consent, clock, observer, () -> DesktopInputPolicy.BACKGROUND_STRICT);
+    }
+
+    public DefaultDesktopSessionService(List<DesktopPlatformProvider> providers,
+            DesktopConsentPort consent, Clock clock, DesktopSessionObserver observer,
+            java.util.function.Supplier<DesktopInputPolicy> inputPolicy) {
+        this.inputPolicy = Objects.requireNonNull(inputPolicy);
         this.providers = List.copyOf(providers);
         this.consent = Objects.requireNonNull(consent);
         this.clock = Objects.requireNonNull(clock);
         this.observer = Objects.requireNonNull(observer);
         this.workers = Executors.newVirtualThreadPerTaskExecutor();
         windowWatch.scheduleWithFixedDelay(this::watchWindows, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    @Override public DesktopInputPolicy defaultInputPolicy() {
+        return Objects.requireNonNullElse(inputPolicy.get(), DesktopInputPolicy.BACKGROUND_STRICT);
     }
 
     @Override public DesktopAvailability availability() { return selection().availability(); }
@@ -588,8 +600,14 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     @Override public CompletionStage<DesktopSessionInfo> open(
             DesktopSessionOwner owner, String targetId, boolean requestControl) {
+        return open(owner, targetId, requestControl, DesktopInputPolicy.BACKGROUND_STRICT);
+    }
+
+    @Override public CompletionStage<DesktopSessionInfo> open(DesktopSessionOwner owner,
+            String targetId, boolean requestControl, DesktopInputPolicy policy) {
         Objects.requireNonNull(owner);
         Objects.requireNonNull(targetId);
+        Objects.requireNonNull(policy);
         SessionKey key = new SessionKey(owner, targetId);
         long workspaceEpoch;
         long scopeEpoch;
@@ -597,28 +615,31 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
         synchronized (this) {
             ensureOpen();
             requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
-            if (requestControl) requireEnabled(DesktopConsentPort.Purpose.CONTROL);
+            if (requestControl) requireControlEnabled(policy);
             workspaceEpoch = workspaceEpochs.getOrDefault(owner.workspaceId(), 0L);
             scopeEpoch = scopeEpochs.getOrDefault(scope, 0L);
         }
         CompletableFuture<ManagedSession> opening = openings.computeIfAbsent(key, ignored ->
-                CompletableFuture.supplyAsync(() -> openOrReuse(owner, targetId, requestControl,
+                CompletableFuture.supplyAsync(() -> openOrReuse(owner, targetId, requestControl, policy,
                         scope, workspaceEpoch, scopeEpoch), workers));
         opening.whenComplete((ignored, failure) -> openings.remove(key, opening));
-        return opening.thenApplyAsync(session -> ensureAccess(session, requestControl,
+        return opening.thenApplyAsync(session -> ensureAccess(session, requestControl, policy,
                 scope, workspaceEpoch, scopeEpoch), workers);
     }
 
     private ManagedSession openOrReuse(DesktopSessionOwner owner, String targetId,
-            boolean requestControl, ScopeKey scope, long workspaceEpoch, long scopeEpoch) {
+            boolean requestControl, DesktopInputPolicy policy, ScopeKey scope,
+            long workspaceEpoch, long scopeEpoch) {
         ensureOpen();
         requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
-        if (requestControl) requireEnabled(DesktopConsentPort.Purpose.CONTROL);
+        if (requestControl) requireControlEnabled(policy);
         ManagedSession existing = sessions.values().stream()
                 .filter(session -> !session.closed && session.owner.equals(owner)
                         && session.target.id().equals(targetId))
                 .findFirst().orElse(null);
         if (existing != null) {
+            if (existing.inputPolicy != policy)
+                throw new IllegalStateException("会话输入策略不可变；请关闭当前会话后按宿主设置重新打开，并先核验已有输入");
             if (!consent.request(owner, existing.target, DesktopConsentPort.Purpose.OBSERVE))
                 throw new SecurityException("用户未授权观察该目标");
             return existing;
@@ -631,20 +652,23 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
                 .orElseThrow(() -> new IllegalArgumentException("目标已不存在，请重新发现窗口"));
         if (!consent.request(owner, target, DesktopConsentPort.Purpose.OBSERVE))
             throw new SecurityException("用户未授权观察该目标");
-        if (requestControl && !consent.request(owner, target, DesktopConsentPort.Purpose.CONTROL))
+        if (requestControl && !consent.request(owner, target, controlPurpose(policy)))
             throw new SecurityException("用户未授权控制该目标");
         requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
-        if (requestControl) requireEnabled(DesktopConsentPort.Purpose.CONTROL);
+        if (requestControl) requireControlEnabled(policy);
         DesktopPlatformSession platform = s.provider().open(target);
-        ManagedSession session = new ManagedSession(this, owner, target, requestControl, platform);
+        ManagedSession session = new ManagedSession(this, owner, target, requestControl, policy, platform);
         try {
             requireSameTarget(target, session.platform.currentTarget());
+            if (requestControl && policy == DesktopInputPolicy.SYSTEM_EXPLICIT) {
+                synchronized (session.coordinator) { requireInitialSystemInput(session); }
+            }
             DesktopSessionInfo info = session.info();
             synchronized (DefaultDesktopSessionService.this) {
                 if (closed
                         || !consent.accessStatus(DesktopConsentPort.Purpose.OBSERVE).available()
                         || (requestControl && !consent.accessStatus(
-                                DesktopConsentPort.Purpose.CONTROL).available())
+                                controlPurpose(policy)).available())
                         || workspaceEpochs.getOrDefault(owner.workspaceId(), 0L) != workspaceEpoch
                         || scopeEpochs.getOrDefault(scope, 0L) != scopeEpoch)
                     throw new IllegalStateException("桌面会话所属工作区或运行作用域已关闭");
@@ -667,13 +691,16 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     }
 
     private DesktopSessionInfo ensureAccess(ManagedSession session, boolean requestControl,
-            ScopeKey scope, long workspaceEpoch, long scopeEpoch) {
+            DesktopInputPolicy policy, ScopeKey scope, long workspaceEpoch, long scopeEpoch) {
         requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
-        if (requestControl) requireEnabled(DesktopConsentPort.Purpose.CONTROL);
+        if (requestControl) requireControlEnabled(policy);
         session.requireOpen();
+        if (session.inputPolicy != policy)
+            throw new IllegalStateException("会话输入策略不可变，请关闭后重新打开");
         requireSameTarget(session.target, session.platform.currentTarget());
-        if (requestControl && !session.controlGranted
-                && !consent.request(session.owner, session.target, DesktopConsentPort.Purpose.CONTROL))
+        if (requestControl && (!session.controlGranted
+                || policy == DesktopInputPolicy.SYSTEM_EXPLICIT && !session.foregroundGranted)
+                && !consent.request(session.owner, session.target, controlPurpose(policy)))
             throw new SecurityException("用户未授权控制该目标");
         synchronized (this) {
             if (closed || session.closed || sessions.get(session.id) != session
@@ -681,8 +708,14 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
                     || scopeEpochs.getOrDefault(scope, 0L) != scopeEpoch)
                 throw new IllegalStateException("桌面会话所属工作区或运行作用域已关闭");
             requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
-            if (requestControl) requireEnabled(DesktopConsentPort.Purpose.CONTROL);
-            synchronized (session) {
+            if (requestControl) requireControlEnabled(policy);
+            synchronized (session.coordinator) {
+              synchronized (session) {
+                if (requestControl && policy == DesktopInputPolicy.SYSTEM_EXPLICIT
+                        && !session.foregroundGranted) {
+                    requireInitialSystemInput(session);
+                    session.foregroundGranted = true;
+                }
                 if (requestControl && !session.controlGranted) {
                     session.controlGranted = true;
                     session.pendingObservation = null;
@@ -691,6 +724,7 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
                             "会话已获得控制能力；输入前请重新观察目标窗口");
                 }
                 return session.info();
+              }
             }
         }
     }
@@ -711,11 +745,33 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     @Override public CompletionStage<Optional<DesktopObservation>> captureObservation(
             DesktopSessionOwner owner, String sessionId) {
+        return captureObservation(owner, sessionId, -1);
+    }
+
+    @Override public CompletionStage<Optional<DesktopObservation>> captureObservation(
+            DesktopSessionOwner owner, String sessionId, long capturedAfterMillis) {
         requireEnabled();
         ManagedSession session = owned(owner, sessionId);
-        return CompletableFuture.supplyAsync(() -> {
-            synchronized (session.coordinator) { return session.captureObservation(); }
-        }, workers);
+        CompletableFuture<Optional<DesktopObservation>> capture = new CompletableFuture<>();
+        workers.execute(() -> {
+            Optional<DesktopObservation> observation;
+            try {
+                synchronized (session.coordinator) {
+                    if (capture.isCancelled()) return;
+                    observation = session.captureObservation(capturedAfterMillis);
+                }
+            } catch (Throwable failure) {
+                capture.completeExceptionally(failure);
+                return;
+            }
+            // Complete outside the coordinator: caller continuations may take service locks.
+            // A cancelled catalog read must not leave a late pending observation. Matching the
+            // ID also preserves a newer capture that won the coordinator in the meantime.
+            if (!capture.complete(observation)) synchronized (session.coordinator) {
+                observation.ifPresent(value -> session.discardPendingObservation(value.observationId()));
+            }
+        });
+        return capture;
     }
 
     @Override public CompletionStage<Boolean> commitObservation(
@@ -746,16 +802,34 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     @Override public CompletionStage<Void> releaseForeground(
             DesktopSessionOwner owner, String sessionId) {
+        return releaseForegroundChecked(owner, sessionId, null);
+    }
+
+    @Override public CompletionStage<Void> releaseForeground(
+            DesktopSessionOwner owner, String sessionId, String observationId) {
+        return releaseForegroundChecked(owner, sessionId, Objects.requireNonNull(observationId));
+    }
+
+    private CompletionStage<Void> releaseForegroundChecked(
+            DesktopSessionOwner owner, String sessionId, String observationId) {
         ManagedSession session = owned(owner, sessionId);
         return CompletableFuture.runAsync(() -> {
-            synchronized (session) {
-                try { session.endForegroundLease(); }
-                finally {
-                    session.pendingObservation = null;
-                    session.committedObservation = null;
-                    if (session.foregroundGranted && !session.closed) {
-                        session.state(DesktopSessionState.Kind.FOREGROUND_READY,
-                                "前台观察已结束；下次操作前请重新观察");
+            synchronized (session.coordinator) {
+                synchronized (session) {
+                    if (observationId != null) {
+                        DesktopObservation newest = session.pendingObservation != null
+                                ? session.pendingObservation : session.committedObservation;
+                        if (observationId.isBlank() ? newest != null
+                                : newest == null || !observationId.equals(newest.observationId())) return;
+                    }
+                    try { session.endForegroundLease(); }
+                    finally {
+                        session.pendingObservation = null;
+                        session.committedObservation = null;
+                        if (session.foregroundGranted && !session.closed) {
+                            session.state(DesktopSessionState.Kind.FOREGROUND_READY,
+                                    "前台观察已结束；下次操作前请重新观察");
+                        }
                     }
                 }
             }
@@ -766,25 +840,102 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
             DesktopSessionOwner owner, String sessionId, DesktopAction action) {
         Objects.requireNonNull(action);
         ManagedSession session = owned(owner, sessionId);
-        try { requireEnabled(DesktopConsentPort.Purpose.CONTROL); }
+        try { requireControlEnabled(session.inputPolicy); }
         catch (SecurityException denied) {
             session.rejected(action);
             throw denied;
         }
         unacknowledgedActions.putIfAbsent(new ActionKey(owner, sessionId,
                 action.observationId()), session.targetKey);
+        return CompletableFuture.supplyAsync(() -> performTracked(session, action, false, null), workers);
+    }
+
+    private DesktopActionResult performTracked(ManagedSession session, DesktopAction action,
+            boolean manualAuthorized, String manualLease) {
+        DesktopActionResult result;
+        DesktopWindowTracker refresh = null;
+        synchronized (session.coordinator) {
+            if (manualAuthorized) {
+                try {
+                    session.requireOpen();
+                    requireManualLease(session, session.owner, manualLease);
+                } catch (RuntimeException denied) {
+                    session.rejected(action);
+                    throw denied;
+                }
+            }
+            result = session.perform(action, manualAuthorized);
+            DesktopWindowTracker tracker = windowTrackers.get(session.owner);
+            if (tracker != null) try {
+                if (tracker.actualOutcome(session.id, action.observationId(), result, clock.millis()))
+                    refresh = tracker;
+            } catch (RuntimeException unavailable) { /* Tracking never changes physical input outcome. */ }
+        }
+        // Closing a session takes the service monitor before its target coordinator.
+        // Supplemental discovery must acquire the service monitor only after releasing input.
+        if (refresh != null) queueWindowTracking(session.owner, refresh, session);
+        return result;
+    }
+
+    @Override public CompletionStage<String> acquireManualControl(
+            DesktopSessionOwner owner, String sessionId) {
+        ManagedSession session = owned(owner, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             synchronized (session.coordinator) {
-                DesktopActionResult result = session.perform(action);
-                DesktopWindowTracker tracker = windowTrackers.get(owner);
-                if (tracker != null) try {
-                    if (tracker.actualOutcome(sessionId, action.observationId(), result, clock.millis())) {
-                        queueWindowTracking(owner, tracker, session);
-                    }
-                } catch (RuntimeException unavailable) { /* Preserve exact physical input outcome. */ }
-                return result;
+                session.requireOpen();
+                requireControlEnabled(session.inputPolicy);
+                if (!session.controlGranted) throw new SecurityException("会话没有控制权限");
+                if (session.coordinator.manualLease != null)
+                    throw new IllegalStateException("该目标已有人工输入面板");
+                String token = java.util.UUID.randomUUID().toString();
+                session.coordinator.manualLease = new ManualLease(owner, sessionId, token);
+                session.coordinator.actionEpoch++;
+                synchronized (session) {
+                    session.pendingObservation = null;
+                    session.committedObservation = null;
+                }
+                return token;
             }
         }, workers);
+    }
+
+    @Override public CompletionStage<DesktopActionResult> performManual(
+            DesktopSessionOwner owner, String sessionId, String lease, DesktopAction action) {
+        ManagedSession session = owned(owner, sessionId);
+        Objects.requireNonNull(action);
+        try { requireControlEnabled(session.inputPolicy); }
+        catch (SecurityException denied) {
+            session.rejected(action);
+            throw denied;
+        }
+        unacknowledgedActions.putIfAbsent(new ActionKey(owner, sessionId,
+                action.observationId()), session.targetKey);
+        return CompletableFuture.supplyAsync(() -> performTracked(session, action, true, lease), workers);
+    }
+
+    @Override public CompletionStage<Void> releaseManualControl(
+            DesktopSessionOwner owner, String sessionId, String lease) {
+        ManagedSession session = owned(owner, sessionId);
+        return CompletableFuture.runAsync(() -> {
+            synchronized (session.coordinator) {
+                session.requireOpen();
+                requireManualLease(session, owner, lease);
+                session.coordinator.manualLease = null;
+                session.coordinator.actionEpoch++;
+                synchronized (session) {
+                    session.pendingObservation = null;
+                    session.committedObservation = null;
+                }
+            }
+        }, workers);
+    }
+
+    private static void requireManualLease(ManagedSession session, DesktopSessionOwner owner,
+            String token) {
+        ManualLease lease = session.coordinator.manualLease;
+        if (lease == null || !lease.owner().equals(owner) || !lease.sessionId().equals(session.id)
+                || !lease.token().equals(token))
+            throw new SecurityException("人工输入租约已失效或不属于该会话");
     }
 
     @Override public void markDeliveryUncertain(DesktopSessionOwner owner, String sessionId,
@@ -860,8 +1011,10 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     private CompletionStage<Boolean> authorizeForeground(
             DesktopSessionOwner owner, String sessionId, boolean initialSystemInput) {
-        requireEnabled(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
         ManagedSession session = owned(owner, sessionId);
+        if (session.inputPolicy != DesktopInputPolicy.SYSTEM_EXPLICIT)
+            return CompletableFuture.completedFuture(false);
+        requireEnabled(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
         return CompletableFuture.supplyAsync(() -> {
             requireEnabled(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER);
             session.requireOpen();
@@ -904,6 +1057,12 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     @Override public Flow.Publisher<DesktopFrame> frames(DesktopSessionOwner owner, String sessionId) {
         requireEnabled();
         return owned(owner, sessionId).frames;
+    }
+
+    @Override public Flow.Publisher<DesktopVirtualInputState> virtualInputs(
+            DesktopSessionOwner owner, String sessionId) {
+        requireEnabled();
+        return owned(owner, sessionId).virtualInputs;
     }
 
     @Override public Flow.Publisher<DesktopSessionState> states(
@@ -1013,6 +1172,15 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
 
     void requireEnabled() {
         requireEnabled(DesktopConsentPort.Purpose.OBSERVE);
+    }
+
+    static DesktopConsentPort.Purpose controlPurpose(DesktopInputPolicy policy) {
+        return policy == DesktopInputPolicy.SYSTEM_EXPLICIT
+                ? DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER : DesktopConsentPort.Purpose.CONTROL;
+    }
+
+    void requireControlEnabled(DesktopInputPolicy policy) {
+        requireEnabled(controlPurpose(policy));
     }
 
     void requireEnabled(DesktopConsentPort.Purpose purpose) {
@@ -1147,9 +1315,11 @@ public final class DefaultDesktopSessionService implements DesktopSessionService
     static final class TargetCoordinator {
         long actionEpoch;
         long lastDispatchAtMillis;
+        ManualLease manualLease;
         /** Retained across close/reopen in a task, cleared only when its scope ends. */
         final java.util.Set<DesktopSessionOwner> backgroundInputOwners = ConcurrentHashMap.newKeySet();
     }
+    record ManualLease(DesktopSessionOwner owner, String sessionId, String token) {}
     record PendingInput(DesktopSessionOwner owner, String actionObservationId,
                         long attemptedAtMillis) {}
     record RefreshedInput(PendingInput pending, DesktopSessionOwner observer,

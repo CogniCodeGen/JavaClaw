@@ -17,6 +17,8 @@ public interface DesktopPlatformSession extends AutoCloseable {
     default List<DesktopElement> elements(DesktopFrame frame) { return List.of(); }
     /** Diagnostics for the last accessibility catalog read, without field values or user text. */
     default String elementDiagnostics() { return ""; }
+    /** Read-only target application activation. Empty means the provider cannot prove it. */
+    default Optional<Boolean> isTargetActive() { return Optional.empty(); }
     /** Focuses the exact target window for one observed foreground action. */
     default void prepareForeground() {
         throw new UnsupportedOperationException("platform cannot confirm exact foreground window");
@@ -26,5 +28,9 @@ public interface DesktopPlatformSession extends AutoCloseable {
         throw new UnsupportedOperationException("platform cannot restore foreground focus");
     }
     DesktopActionResult perform(DesktopAction action, boolean foreground);
+    /** Refreshes and validates the selected region in Java before using the existing input path. */
+    default DesktopActionResult performClick(DesktopAction action, boolean foreground, DesktopClickGuard guard) {
+        return DesktopClickGuard.perform(this, action, foreground, guard);
+    }
     @Override void close();
 }

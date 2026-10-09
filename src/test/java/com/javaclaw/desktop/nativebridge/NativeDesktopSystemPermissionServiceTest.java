@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.nativebridge;
 
 import com.javaclaw.desktop.api.DesktopAvailability;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 import com.javaclaw.platform.data.ApplicationHome;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ class NativeDesktopSystemPermissionServiceTest {
     }
 
     @Test
-    void macosRequiresCaptureAccessibilityAndPostEventForFullComputerAccess() {
+    void strictRequiresPublicSemanticButDoesNotRequirePostEvent() {
         int capture = DesktopAvailability.CAPTURE;
         int accessibility = DesktopAvailability.SEMANTIC_INPUT;
         int foreground = DesktopAvailability.FOREGROUND_INPUT;
@@ -39,7 +40,7 @@ class NativeDesktopSystemPermissionServiceTest {
                         "缺少辅助功能"))
                 .available());
         assertTrue(NativeDesktopSystemPermissionService.requireCaptureAndInput(
-                new DesktopAvailability(true, "macos", capture | accessibility | foreground, ""))
+                new DesktopAvailability(true, "macos", capture | accessibility | DesktopAvailability.PUBLIC_SEMANTIC, ""))
                 .available());
     }
 
@@ -50,20 +51,21 @@ class NativeDesktopSystemPermissionServiceTest {
                 .available());
         assertTrue(NativeDesktopSystemPermissionService.requireCaptureAndInput(
                 new DesktopAvailability(true, "windows", DesktopAvailability.CAPTURE
-                        | DesktopAvailability.FOREGROUND_INPUT, ""))
+                        | DesktopAvailability.FOREGROUND_INPUT, ""), DesktopInputPolicy.SYSTEM_EXPLICIT)
                 .available());
     }
 
     @Test
-    void unsupportedSystemDoesNotLoadNativeLibraryOrPrompt() throws Exception {
+    void unsupportedSystemDoesNotLoadSystemApiOrPrompt() throws Exception {
         var service = new NativeDesktopSystemPermissionService(ApplicationHome.at(temp), "Linux");
         assertFalse(service.status().available());
         assertFalse(service.requestPermissions().available());
     }
 
     @Test
-    void nativeLibraryFailureIsNotReportedAsThreeMissingPermissions() throws Exception {
-        var service = new NativeDesktopSystemPermissionService(ApplicationHome.at(temp), "Mac OS X");
+    void systemApiFailureIsNotReportedAsThreeMissingPermissions() throws Exception {
+        String otherOs = System.getProperty("os.name", "").startsWith("Windows") ? "Mac OS X" : "Windows";
+        var service = new NativeDesktopSystemPermissionService(ApplicationHome.at(temp), otherOs);
         DesktopAvailability result = service.status();
         assertFalse(result.available());
         assertEquals("", result.providerId());

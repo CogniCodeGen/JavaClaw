@@ -2,6 +2,7 @@ package com.javaclaw.desktop.agent;
 
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.desktop.api.DesktopAvailability;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 import com.javaclaw.desktop.api.DesktopConsentPort;
 import com.javaclaw.desktop.api.DesktopSessionOwner;
 import com.javaclaw.desktop.api.DesktopSystemPermissionService;
@@ -28,7 +29,8 @@ public final class ConfiguredDesktopAccess implements DesktopConsentPort {
         if (!enabled()) {
             return new DesktopAvailability(false, "", 0, "请先在设置中开启电脑应用访问");
         }
-        DesktopAvailability status = permissions.status();
+        DesktopAvailability status = permissions.status(purpose == Purpose.FOREGROUND_TAKEOVER
+                ? DesktopInputPolicy.SYSTEM_EXPLICIT : DesktopInputPolicy.BACKGROUND_STRICT);
         boolean ready = purpose == Purpose.OBSERVE
                 ? status.available() || (status.capabilities() & DesktopAvailability.CAPTURE) != 0
                 : status.available();

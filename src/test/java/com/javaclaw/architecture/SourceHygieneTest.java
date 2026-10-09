@@ -33,10 +33,6 @@ class SourceHygieneTest {
     void sourceFilesStayWithinReviewableSizeLimits() throws IOException {
         List<String> violations = new ArrayList<>();
         for (Path file : files(JAVA_ROOT, ".java")) {
-            // jextract emits ABI bindings from the native header; their layout is
-            // controlled by the generator rather than by hand-maintained Java code.
-            if (file.startsWith(JAVA_ROOT.resolve(
-                    "com/javaclaw/desktop/nativebridge/generated"))) continue;
             long nonEmpty = Files.readAllLines(file).stream().filter(line -> !line.isBlank()).count();
             int limit = file.getFileName().toString().endsWith("Controller.java") ? 350 : 800;
             if (nonEmpty > limit) {

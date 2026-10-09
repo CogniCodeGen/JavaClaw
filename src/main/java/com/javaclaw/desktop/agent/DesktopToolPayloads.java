@@ -42,10 +42,83 @@ final class DesktopToolPayloads {
     }
 
     static ObjectNode targets(List<DesktopTarget> targets) {
+        return targets(targets, 0, 16, null);
+    }
+
+    /** Each call pages a fresh host discovery, never a persistent window/control snapshot. */
+    static ObjectNode targets(List<DesktopTarget> targets, int offset, int limit, String requestedQuery) {
+        return targets(targets, offset, limit, requestedQuery, 8_000);
+    }
+
+    static ObjectNode targets(List<DesktopTarget> targets, int offset, int limit, String requestedQuery,
+            int maxCharacters) {
+        String query = requestedQuery == null ? "" : requestedQuery.strip();
+        if (query.length() > 256 || query.codePoints().anyMatch(Character::isISOControl))
+            throw new IllegalArgumentException("窗口 query 超出范围");
+        String search = normalized(query);
+        // Titles are untrusted content, not an owning application's identity.
+        var matches = targets.stream().filter(target -> search.isBlank()
+                || normalized(target.application()).contains(search)
+                || normalized(target.applicationId()).contains(search)).toList();
+        if (offset < 0 || offset > matches.size() || limit < 1 || limit > 32)
+            throw new IllegalArgumentException("窗口 offset 或 limit 超出范围；目录变化时从 offset=0 重新查询");
         ObjectNode data = base("desktop.targets");
-        appendTargets(data.putArray("targets"), targets);
-        data.put("count", targets.size());
+        data.put("inventoryId", targetInventoryId(targets)).put("query", query).put("offset", offset)
+                .put("inventoryTotalCount", targets.size()).put("totalCount", matches.size())
+                .put("inputAuthority", false).put("freshObservation", false);
+        ArrayNode rows = data.putArray("targets");
+        targetPageMetadata(data, offset, matches.size(), 0);
+        if (data.toString().length() > maxCharacters)
+            throw new TargetMessageBudgetException(maxCharacters, data.toString().length(), offset);
+        for (int index = offset; index < Math.min(matches.size(), offset + limit); index++) {
+            DesktopTarget value = matches.get(index);
+            ObjectNode row = target(value);
+            row.put("application", boundedCodePoints(value.application(), 128))
+                    .put("title", boundedCodePoints(value.title(), 256));
+            row.put("applicationTruncated", !row.path("application").asText().equals(safe(value.application())))
+                    .put("titleTruncated", !row.path("title").asText().equals(safe(value.title())));
+            rows.add(row);
+            targetPageMetadata(data, offset, matches.size(), rows.size());
+            int required = data.toString().length();
+            if (required > maxCharacters) {
+                rows.remove(rows.size() - 1);
+                if (rows.isEmpty()) throw new TargetMessageBudgetException(maxCharacters, required, offset);
+                targetPageMetadata(data, offset, matches.size(), rows.size());
+                break;
+            }
+        }
         return data;
+    }
+
+    private static void targetPageMetadata(ObjectNode data, int offset, int total, int count) {
+        int next = offset + count;
+        boolean complete = offset == 0 && count == total;
+        data.put("count", count).put("hasMore", next < total).put("complete", complete)
+                .put("truncated", !complete).put("nextStep", "SELECT_TARGET");
+        if (next < total) data.put("nextOffset", next);
+        else data.remove("nextOffset");
+    }
+
+    static final class TargetMessageBudgetException extends IllegalStateException {
+        TargetMessageBudgetException(int limit, int required, int offset) {
+            super("窗口身份不能完整放入结果；limit=" + limit + ", required=" + required + ", offset=" + offset);
+        }
+    }
+
+    private static String targetInventoryId(List<DesktopTarget> targets) {
+        ArrayNode inventory = NODES.arrayNode();
+        for (DesktopTarget value : targets) {
+            ObjectNode snapshot = target(value).put("application", value.application()).put("title", value.title())
+                    .put("x", value.x()).put("y", value.y()).put("width", value.width()).put("height", value.height())
+                    .put("flags", value.flags());
+            inventory.add(snapshot);
+        }
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(inventory.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 
     static ObjectNode windowCandidates(com.javaclaw.desktop.api.DesktopWindowCandidates value) {
@@ -222,6 +295,7 @@ final class DesktopToolPayloads {
         data.set("target", target(session.target()));
         data.put("controlGranted", session.controlGranted());
         data.put("foregroundGranted", session.foregroundGranted());
+        data.put("inputPolicy", session.inputPolicy().name());
         data.put("inputMode", session.foregroundGranted() ? "SYSTEM_EVENTS"
                 : session.controlGranted() ? "ACCESSIBILITY" : "READ_ONLY");
         data.put("nextStep", "OBSERVE");
@@ -253,6 +327,7 @@ final class DesktopToolPayloads {
         data.put("sessionId", session.sessionId());
         data.put("controlGranted", session.controlGranted());
         data.put("foregroundGranted", session.foregroundGranted());
+        data.put("inputPolicy", session.inputPolicy().name());
         data.put("inputMode", session.foregroundGranted() ? "SYSTEM_EVENTS"
                 : session.controlGranted() ? "ACCESSIBILITY" : "READ_ONLY");
         data.put("targetId", session.target().id());
@@ -265,6 +340,11 @@ final class DesktopToolPayloads {
         data.put("capturedAtMillis", frame.capturedAtMillis());
         data.set("frame", frame(frame));
         data.put("coordinateSpace", "WINDOW_FRAME_PIXELS");
+        var abilities = com.javaclaw.desktop.api.DesktopInputCapabilities.forElements(frame, elements);
+        data.putObject("inputCapabilities").put("windowGeneration", abilities.windowGeneration())
+                .put("press", abilities.press()).put("insertText", abilities.insertText())
+                .put("setText", abilities.setText()).put("scroll", abilities.scroll())
+                .put("detail", abilities.detail());
         String safeSummary = safe(summary);
         String safeText = safe(visibleText);
         int summaryLimit = Math.min(10_000, safeSummary.length());
@@ -284,7 +364,10 @@ final class DesktopToolPayloads {
                 .put("x", element.x()).put("y", element.y())
                 .put("width", element.width()).put("height", element.height())
                 .put("actions", element.actions())
-                .put("pressable", (element.actions() & DesktopElement.PRESS) != 0));
+                .put("pressable", (element.actions() & DesktopElement.PRESS) != 0)
+                .put("insertText", (element.actions() & DesktopElement.INSERT_TEXT) != 0)
+                .put("setText", (element.actions() & DesktopElement.SET_TEXT) != 0)
+                .put("scrollable", (element.actions() & DesktopElement.SCROLL) != 0));
         ArrayNode visual = data.putArray("visualTargets");
         regions.stream().limit(40).forEach(region -> visual.addObject()
                 .put("id", region.id())
@@ -323,6 +406,8 @@ final class DesktopToolPayloads {
         data.put("windowGeneration", result.windowGeneration());
         data.put("contentRevision", action.contentRevision());
         data.put("actionKind", action.kind().name());
+        if (action.kind() == DesktopAction.Kind.TYPE)
+            data.put("textOperation", action.textOperation().name());
         data.put("status", result.status().name());
         data.put("admission", admission(result).name());
         data.put("delivery", result.delivery().name());
@@ -433,6 +518,12 @@ final class DesktopToolPayloads {
     private static String bounded(String value, int max) {
         String redacted = safe(value);
         return redacted.length() <= max ? redacted : redacted.substring(0, max);
+    }
+
+    private static String boundedCodePoints(String value, int max) {
+        String redacted = safe(value);
+        int end = redacted.offsetByCodePoints(0, Math.min(max, redacted.codePointCount(0, redacted.length())));
+        return redacted.substring(0, end);
     }
 
     /** A typed owner ID is usable only when the caller supplied that ID verbatim. */

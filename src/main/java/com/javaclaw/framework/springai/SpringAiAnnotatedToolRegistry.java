@@ -432,7 +432,15 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
                  var observed = com.javaclaw.framework.spi.InteractionInvocation.begin(context.runId(), context.invocationId(), descriptor.name());
                  ToolEffectCapture.Scope capture = ToolEffectCapture.begin(descriptor.name())) {
                 try {
-                    result = callback.call(json.writeValueAsString(arguments));
+                    if (context.capturedAfterMillis() >= 0
+                            && descriptor.name().equals("desktop_session_observe") && isExactHostTool(this)
+                            && source.getClass() == com.javaclaw.desktop.agent.DesktopSessionTools.class) {
+                        result = ((com.javaclaw.desktop.agent.DesktopSessionTools) source).observeAfter(
+                                arguments.path("sessionId").asText(), arguments.path("question").asText(null),
+                                arguments.hasNonNull("extractAllText")
+                                        ? arguments.path("extractAllText").booleanValue() : null,
+                                context.capturedAfterMillis());
+                    } else result = callback.call(json.writeValueAsString(arguments));
                     if (capture.signal() != null) effectSignal.set(capture.signal());
                     if (capture.target() != null) effectTarget.set(capture.target());
                     if (capture.data() != null) structuredData.set(capture.data());

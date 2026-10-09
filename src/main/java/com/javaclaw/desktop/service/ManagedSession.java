@@ -2,11 +2,13 @@ package com.javaclaw.desktop.service;
 
 import com.javaclaw.desktop.api.*;
 import com.javaclaw.desktop.spi.DesktopPlatformSession;
+import com.javaclaw.desktop.spi.DesktopClickGuard;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import static com.javaclaw.desktop.service.DesktopClickProgress.*;
 
 import static com.javaclaw.desktop.service.DefaultDesktopSessionService.COMMITTED_OBSERVATION_MAX_AGE_MILLIS;
 import static com.javaclaw.desktop.service.DefaultDesktopSessionService.FOREGROUND_LEASE_SECONDS;
@@ -25,6 +27,7 @@ final class ManagedSession implements AutoCloseable {
     final String id = UUID.randomUUID().toString();
     final DesktopSessionOwner owner;
     final DesktopTarget target;
+    final DesktopInputPolicy inputPolicy;
     final TargetKey targetKey;
     final TargetCoordinator coordinator;
     volatile boolean controlGranted;
@@ -32,6 +35,7 @@ final class ManagedSession implements AutoCloseable {
     final LatestPublisher<DesktopFrame> frames;
     final LatestPublisher<DesktopSessionState> states;
     final BoundedPublisher<DesktopActionEvent> actions;
+    final LatestPublisher<DesktopVirtualInputState> virtualInputs;
     volatile DesktopFrame latest;
     private DesktopSurfaceSnapshot latestSurface;
     /** Last actual identity only; it survives frame loss for readonly candidate filtering. */
@@ -50,25 +54,31 @@ final class ManagedSession implements AutoCloseable {
     long committedActionEpoch;
     long committedObservationAtMillis;
     private AcceptedBackgroundClick acceptedBackgroundClick;
+    private long nextActionId;
+    private record FeedbackTarget(DesktopAction.Kind kind, int x, int y) { }
+    private FeedbackTarget feedbackTarget;
     volatile boolean closed;
 
     ManagedSession(DefaultDesktopSessionService service, DesktopSessionOwner owner,
-                   DesktopTarget target, boolean controlGranted, DesktopPlatformSession platform) {
+                   DesktopTarget target, boolean controlGranted, DesktopInputPolicy inputPolicy,
+                   DesktopPlatformSession platform) {
         this.service = Objects.requireNonNull(service);
         this.frames = new LatestPublisher<>(service.workers);
         this.states = new LatestPublisher<>(service.workers);
         this.actions = new BoundedPublisher<>(service.workers, 32);
+        this.virtualInputs = new LatestPublisher<>(service.workers);
         this.owner = owner;
         this.target = target;
         this.targetKey = new TargetKey(target.providerId(), target.id());
         this.coordinator = service.targets.computeIfAbsent(targetKey, ignored -> new TargetCoordinator());
         this.controlGranted = controlGranted;
+        this.inputPolicy = Objects.requireNonNull(inputPolicy);
         this.platform = platform;
     }
 
     DesktopSessionInfo info() {
         return new DesktopSessionInfo(id, platform.currentTarget(), controlGranted,
-                foregroundGranted);
+                foregroundGranted, inputPolicy);
     }
 
     void requireOpen() {
@@ -121,17 +131,25 @@ final class ManagedSession implements AutoCloseable {
     }
 
     synchronized Optional<DesktopObservation> captureObservation() {
+        return captureObservation(-1);
+    }
+
+    synchronized Optional<DesktopObservation> captureObservation(long capturedAfterMillis) {
         service.requireEnabled();
         requireOpen();
         if (foregroundGranted && !foregroundLease) prepareForegroundLease();
         DesktopFrame frame = latest;
-        if (frame == null || service.clock.millis() - frame.capturedAtMillis() > FRAME_STALE_MILLIS)
+        long captureBoundary = capturedAfterMillis;
+        if (capturedAfterMillis >= 0 && coordinator.lastDispatchAtMillis > 0)
+            captureBoundary = Math.max(captureBoundary, coordinator.lastDispatchAtMillis + UNKNOWN_SETTLE_MILLIS);
+        if (frame == null || frame.capturedAtMillis() <= captureBoundary
+                || service.clock.millis() - frame.capturedAtMillis() > FRAME_STALE_MILLIS)
             return Optional.empty();
         if (foregroundLease && frame.capturedAtMillis() < foregroundPreparedAtMillis)
             return Optional.empty();
         PendingInput uncertain = service.pendingInputs.get(targetKey);
         if (uncertain != null
-                && frame.capturedAtMillis() < Math.max(uncertain.attemptedAtMillis(),
+                && frame.capturedAtMillis() <= Math.max(uncertain.attemptedAtMillis(),
                         coordinator.lastDispatchAtMillis)
                         + UNKNOWN_SETTLE_MILLIS)
             return Optional.empty();
@@ -164,6 +182,11 @@ final class ManagedSession implements AutoCloseable {
         return Optional.of(pendingObservation);
     }
 
+    synchronized void discardPendingObservation(String observationId) {
+        if (pendingObservation != null && pendingObservation.observationId().equals(observationId))
+            pendingObservation = null;
+    }
+
     synchronized boolean commitObservation(String observationId,
                                            List<DesktopVisualRegion> visualRegions,
                                            boolean interpreted) {
@@ -183,7 +206,7 @@ final class ManagedSession implements AutoCloseable {
             return false;
         PendingInput uncertain = service.pendingInputs.get(targetKey);
         if (uncertain != null && (!interpreted
-                || pending.frame().capturedAtMillis() < Math.max(
+                || pending.frame().capturedAtMillis() <= Math.max(
                         uncertain.attemptedAtMillis(), coordinator.lastDispatchAtMillis)
                         + UNKNOWN_SETTLE_MILLIS)) return false;
         if (!validVisualRegions(pending, visualRegions)) return false;
@@ -394,7 +417,9 @@ final class ManagedSession implements AutoCloseable {
                         capturedAnyFrame = true;
                         lastFrameAt = service.clock.millis();
                         if (!service.pendingInputs.containsKey(targetKey)) frames.submit(value);
-                        if (!service.pendingInputs.containsKey(targetKey)
+                        if (inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT && controlGranted && targetActive())
+                            state(DesktopSessionState.Kind.PAUSED, "目标应用正在活动，后台输入已暂停");
+                        else if (!service.pendingInputs.containsKey(targetKey)
                                 && stateKind != DesktopSessionState.Kind.FOREGROUND_REQUIRED
                                 && stateKind != DesktopSessionState.Kind.FOREGROUND_READY)
                             state(DesktopSessionState.Kind.LIVE, "实时预览");
@@ -429,36 +454,58 @@ final class ManagedSession implements AutoCloseable {
     }
 
     synchronized void rejected(DesktopAction action) {
+        long actionId = ++nextActionId;
         long now = service.clock.millis();
         actions.submit(new DesktopActionEvent(id, action.kind(),
-                DesktopActionEvent.Phase.STARTED, null, action.windowGeneration(), now));
-        actions.submit(new DesktopActionEvent(id, action.kind(),
-                DesktopActionEvent.Phase.FINISHED, DesktopActionResult.Status.DENIED,
-                action.windowGeneration(), service.clock.millis()));
+                DesktopActionEvent.Phase.STARTED, null, action.windowGeneration(), now,
+                actionId, null, DesktopActionResult.Reason.NONE));
+        feedbackTarget = new FeedbackTarget(action.kind(), action.x(), action.y());
+        finishFeedback(actionId, new DesktopActionResult(DesktopActionResult.Status.DENIED,
+                "输入权限未授予", action.windowGeneration()));
     }
 
     synchronized DesktopActionResult perform(DesktopAction action) {
+        return perform(action, false);
+    }
+
+    synchronized DesktopActionResult perform(DesktopAction action, boolean manualAuthorized) {
+        long actionId = ++nextActionId;
+        feedbackTarget = new FeedbackTarget(action.kind(), action.x(), action.y());
         actions.submit(new DesktopActionEvent(id, action.kind(),
-                DesktopActionEvent.Phase.STARTED, null, action.windowGeneration(), service.clock.millis()));
+                DesktopActionEvent.Phase.STARTED, null, action.windowGeneration(), service.clock.millis(),
+                actionId, null, DesktopActionResult.Reason.NONE));
         try {
-            DesktopActionResult result = performChecked(action);
-            actions.submit(new DesktopActionEvent(id, action.kind(),
-                    DesktopActionEvent.Phase.FINISHED, result.status(),
-                    result.windowGeneration(), service.clock.millis()));
+            DesktopActionResult result = performChecked(action, manualAuthorized);
+            finishFeedback(actionId, result);
             return result;
         } catch (RuntimeException failure) {
-            actions.submit(new DesktopActionEvent(id, action.kind(),
-                    DesktopActionEvent.Phase.FINISHED,
+            finishFeedback(actionId, new DesktopActionResult(
                     failure instanceof SecurityException ? DesktopActionResult.Status.DENIED
-                            : DesktopActionResult.Status.FAILED,
-                    action.windowGeneration(), service.clock.millis()));
+                            : DesktopActionResult.Status.FAILED, "输入准备失败", action.windowGeneration()));
             throw failure;
         }
     }
 
-    private DesktopActionResult performChecked(DesktopAction action) {
-        service.requireEnabled(DesktopConsentPort.Purpose.CONTROL);
+    private void finishFeedback(long actionId, DesktopActionResult result) {
+        FeedbackTarget action = feedbackTarget;
+        long now = service.clock.millis();
+        actions.submit(new DesktopActionEvent(id, action.kind(), DesktopActionEvent.Phase.FINISHED,
+                result.status(), result.windowGeneration(), now, actionId, result.delivery(), result.reason()));
+        virtualInputs.submit(new DesktopVirtualInputState(id, result.windowGeneration(),
+                Math.max(0, action.x()), Math.max(0, action.y()),
+                result.delivery() != DesktopActionResult.Delivery.NOT_SENT, 0,
+                DesktopVirtualInputState.Phase.FINISHED, now, actionId, result.delivery()));
+    }
+
+    private DesktopActionResult performChecked(DesktopAction action, boolean manualAuthorized) {
+        service.requireControlEnabled(inputPolicy);
         requireOpen();
+        if (coordinator.manualLease != null && !manualAuthorized)
+            return new DesktopActionResult(DesktopActionResult.Status.DENIED,
+                    "该目标的自动输入已暂停，等待人工输入面板释放控制",
+                    action.windowGeneration(), DesktopActionResult.Mode.NONE,
+                    DesktopActionResult.Reason.POLICY_BLOCKED, false, action.observationId(),
+                    DesktopActionResult.NextStep.OBSERVE);
         if (!controlGranted)
             return new DesktopActionResult(DesktopActionResult.Status.DENIED,
                     "本会话只允许观察；请对该 targetId 调用 desktop_session_open(control=true)，"
@@ -471,6 +518,13 @@ final class ManagedSession implements AutoCloseable {
                     action.windowGeneration(), DesktopActionResult.Mode.NONE,
                     DesktopActionResult.Reason.DELIVERY_UNCERTAIN, false, action.observationId(),
                     DesktopActionResult.NextStep.OBSERVE);
+        if (foregroundGranted && action.kind() == DesktopAction.Kind.TYPE
+                && action.textOperation() == DesktopAction.TextOperation.SET_TEXT)
+            return new DesktopActionResult(DesktopActionResult.Status.UNSUPPORTED,
+                    "系统输入仅支持INSERT_TEXT；SET_TEXT需要后台公开的整值设置能力",
+                    action.windowGeneration(), DesktopActionResult.Mode.NONE,
+                    DesktopActionResult.Reason.UNSUPPORTED_ACTION, false,
+                    action.observationId(), DesktopActionResult.NextStep.OBSERVE);
         DesktopFrame frame = latest;
         if (frame == null || service.clock.millis() - frame.capturedAtMillis() > FRAME_STALE_MILLIS)
             return new DesktopActionResult(DesktopActionResult.Status.STALE_FRAME,
@@ -499,7 +553,9 @@ final class ManagedSession implements AutoCloseable {
                 || frame.windowGeneration() != observed.frame().windowGeneration()
                 || !Objects.equals(frame.targetId(), observed.frame().targetId())
                 || frame.width() != observed.frame().width()
-                || frame.height() != observed.frame().height())
+                || frame.height() != observed.frame().height()
+                || (action.kind() == DesktopAction.Kind.CLICK
+                    && !Objects.equals(frame.geometry(), observed.frame().geometry())))
             return new DesktopActionResult(DesktopActionResult.Status.STALE_FRAME,
                     "观察后的目标画面已变化，请重新定位", frame.windowGeneration())
                     .withContext(DesktopActionResult.Mode.NONE, action.observationId(),
@@ -525,7 +581,10 @@ final class ManagedSession implements AutoCloseable {
             if (element != null) {
                 int required = switch (action.kind()) {
                     case CLICK -> DesktopElement.PRESS;
-                    case TYPE -> DesktopElement.WRITE;
+                    case TYPE -> inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT
+                            ? action.textOperation() == DesktopAction.TextOperation.SET_TEXT
+                                ? DesktopElement.SET_TEXT : DesktopElement.INSERT_TEXT
+                            : DesktopElement.WRITE;
                     case SCROLL -> DesktopElement.SCROLL;
                     case KEY -> 0;
                 };
@@ -536,12 +595,14 @@ final class ManagedSession implements AutoCloseable {
                         case SCROLL -> "SCROLL 滚动";
                         case KEY -> "按键";
                     };
-                    return new DesktopActionResult(DesktopActionResult.Status.FAILED,
+                    return new DesktopActionResult(inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT
+                                ? DesktopActionResult.Status.UNSUPPORTED : DesktopActionResult.Status.FAILED,
                             "所选辅助功能目标不支持" + capability
                                     + "动作；请重新观察并选择具备该能力的控件",
                             frame.windowGeneration(), DesktopActionResult.Mode.NONE,
-                            DesktopActionResult.Reason.INVALID_TARGET, false,
-                            action.observationId(), DesktopActionResult.NextStep.OBSERVE);
+                            inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT
+                                ? DesktopActionResult.Reason.UNSUPPORTED_ACTION : DesktopActionResult.Reason.INVALID_TARGET,
+                            false, action.observationId(), DesktopActionResult.NextStep.OBSERVE);
                 }
                 x = element.centerX();
                 y = element.centerY();
@@ -584,7 +645,35 @@ final class ManagedSession implements AutoCloseable {
         }
         DesktopAction resolved = new DesktopAction(action.kind(), x, y, action.button(),
                 action.clicks(), action.amount(), action.text(), action.windowGeneration(),
-                action.observationId(), action.elementId(), frame.contentRevision());
+                action.observationId(), action.elementId(), frame.contentRevision(), action.textOperation());
+        DesktopClickGuard clickGuard = null;
+        if (resolved.kind() == DesktopAction.Kind.CLICK) {
+            try { clickGuard = DesktopClickGuard.capture(frame, latestSurface,
+                    regionX, regionY, regionWidth, regionHeight); }
+            catch (IllegalArgumentException invalidRegion) {
+                return new DesktopActionResult(DesktopActionResult.Status.FAILED,
+                        invalidRegion.getMessage(), frame.windowGeneration(), DesktopActionResult.Mode.NONE,
+                        DesktopActionResult.Reason.INVALID_TARGET, false, action.observationId(),
+                        DesktopActionResult.NextStep.OBSERVE);
+            }
+        }
+        if (inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT) {
+            if (targetActive()) {
+                state(DesktopSessionState.Kind.PAUSED, "目标窗口正在被用户使用，后台输入已暂停");
+                return new DesktopActionResult(DesktopActionResult.Status.DENIED,
+                        "目标窗口当前处于活动状态；切换到其他应用后重新观察再操作",
+                        frame.windowGeneration(), DesktopActionResult.Mode.NONE,
+                        DesktopActionResult.Reason.TARGET_ACTIVE, false,
+                        action.observationId(), DesktopActionResult.NextStep.OBSERVE);
+            }
+            if (!DesktopInputCapabilities.forElements(frame, observed.elements()).supports(resolved, observed.elements())) {
+                return new DesktopActionResult(DesktopActionResult.Status.UNSUPPORTED,
+                        "该目标未公开所需的后台语义能力；不会改用系统鼠标键盘",
+                        frame.windowGeneration(), DesktopActionResult.Mode.NONE,
+                        DesktopActionResult.Reason.UNSUPPORTED_ACTION, false,
+                        action.observationId(), DesktopActionResult.NextStep.OBSERVE);
+            }
+        }
         if (!foregroundGranted && unchangedAcceptedClick(resolved, observed, frame)) {
             // Equal pixels establish visible non-progress, never the absence of a
             // business effect. Refuse this new dispatch; the earlier SENT action
@@ -607,7 +696,14 @@ final class ManagedSession implements AutoCloseable {
                     .withContext(DesktopActionResult.Mode.NONE, action.observationId(),
                             DesktopActionResult.NextStep.OBSERVE);
         DesktopActionResult result;
-        try { result = platform.perform(resolved, foregroundGranted); }
+        feedbackTarget = new FeedbackTarget(resolved.kind(), resolved.x(), resolved.y());
+        virtualInputs.submit(new DesktopVirtualInputState(id, frame.windowGeneration(),
+                Math.max(0, resolved.x()), Math.max(0, resolved.y()), true,
+                resolved.kind() == DesktopAction.Kind.CLICK ? resolved.button() : 0,
+                DesktopVirtualInputState.Phase.TARGETING, service.clock.millis(), nextActionId, null));
+        try { result = resolved.kind() == DesktopAction.Kind.CLICK
+                ? platform.performClick(resolved, foregroundGranted, clickGuard)
+                : platform.perform(resolved, foregroundGranted); }
         catch (RuntimeException uncertain) {
             result = new DesktopActionResult(DesktopActionResult.Status.UNKNOWN,
                     "输入接口异常，可能已有部分操作生效: " + uncertain.getMessage(),
@@ -622,6 +718,10 @@ final class ManagedSession implements AutoCloseable {
                     result.windowGeneration(), result.mode(),
                     DesktopActionResult.Reason.DELIVERY_UNCERTAIN, true,
                     action.observationId(), DesktopActionResult.NextStep.OBSERVE);
+        }
+        if (inputPolicy == DesktopInputPolicy.BACKGROUND_STRICT
+                && targetActive()) {
+            state(DesktopSessionState.Kind.PAUSED, "目标应用已激活，后续后台输入已暂停；请重新观察");
         }
         if (foregroundGranted) {
             try { endForegroundLease(); }
@@ -651,34 +751,9 @@ final class ManagedSession implements AutoCloseable {
             latestSurface = null;
         }
         if (result.status() == DesktopActionResult.Status.UNSUPPORTED && !foregroundGranted) {
-            boolean allowed;
-            try { allowed = service.consent.request(owner, target,
-                    DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER); }
-            catch (RuntimeException denied) { allowed = false; }
-            if (allowed && service.consent.accessStatus(
-                    DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER).available()) {
-                foregroundGranted = true;
-                try {
-                    prepareForegroundLease();
-                    state(DesktopSessionState.Kind.FOREGROUND_READY,
-                            "后台语义操作不适用：" + result.detail()
-                                    + "；已自动切至目标窗口，请先重新观察");
-                    nextStep = DesktopActionResult.NextStep.OBSERVE;
-                } catch (RuntimeException failed) {
-                    foregroundGranted = false;
-                    String detail = "后台语义操作不适用：" + result.detail()
-                            + "；前台准备失败：" + failed.getMessage();
-                    state(DesktopSessionState.Kind.PAUSED, detail);
-                    result = new DesktopActionResult(DesktopActionResult.Status.FAILED,
-                            detail, frame.windowGeneration(), mode,
-                            DesktopActionResult.Reason.PLATFORM_FAILURE, false,
-                            action.observationId(), DesktopActionResult.NextStep.OBSERVE);
-                    nextStep = DesktopActionResult.NextStep.OBSERVE;
-                }
-            } else {
-                state(DesktopSessionState.Kind.PAUSED, "前台输入权限不可用");
-                nextStep = DesktopActionResult.NextStep.CHECK_PERMISSIONS;
-            }
+            state(DesktopSessionState.Kind.PAUSED,
+                    "后台公开语义能力不支持该操作：" + result.detail());
+            nextStep = DesktopActionResult.NextStep.OBSERVE;
         } else if (result.status() == DesktopActionResult.Status.UNKNOWN) {
             service.pendingInputs.put(targetKey, new PendingInput(owner,
                     action.observationId(), coordinator.lastDispatchAtMillis));
@@ -692,6 +767,11 @@ final class ManagedSession implements AutoCloseable {
             nextStep = DesktopActionResult.NextStep.CHECK_PERMISSIONS;
         }
         return result.withContext(mode, action.observationId(), nextStep);
+    }
+
+    private boolean targetActive() {
+        try { return platform.isTargetActive().orElse(false); }
+        catch (RuntimeException unavailable) { return true; }
     }
 
     private AcceptedBackgroundClick backgroundClickCandidate(DesktopAction action,
@@ -733,56 +813,14 @@ final class ManagedSession implements AutoCloseable {
                 && java.util.Arrays.equals(previous.pixels(), currentPixels);
     }
 
-    private static ClickControl clickControl(DesktopAction action, DesktopObservation observation) {
-        if (!action.elementId().startsWith(observation.observationId() + ":e")) return null;
-        DesktopElement selected = observation.elements().stream()
-                .filter(element -> element.id().equals(action.elementId())).findFirst().orElse(null);
-        if (selected == null || selected.role().isBlank() || selected.label().isBlank()
-                || (selected.actions() & DesktopElement.PRESS) == 0) return null;
-        ClickControl control = ClickControl.of(selected);
-        // Observation tokens change on every capture. Only a unique exact semantic
-        // identity in the captured catalog can match a previous control.
-        return observation.elements().stream().filter(element -> control.equals(ClickControl.of(element)))
-                .limit(2).count() == 1 ? control : null;
-    }
-
-    private static boolean sameClickSurface(DesktopSurfaceSnapshot before, DesktopSurfaceSnapshot after) {
-        return before.providerId().equals(after.providerId())
-                && before.runtimeId().equals(after.runtimeId())
-                && before.surfaceId().equals(after.surfaceId())
-                && before.logicalTargetId().equals(after.logicalTargetId())
-                && before.applicationId().equals(after.applicationId())
-                && before.generation() == after.generation()
-                && before.contentRevision() == after.contentRevision();
-    }
-
-    private static byte[] pixelDigest(DesktopFrame frame) {
-        try {
-            return java.security.MessageDigest.getInstance("SHA-256").digest(frame.bgraPremultiplied());
-        } catch (java.security.NoSuchAlgorithmException | RuntimeException unavailable) {
-            // Optional progress detection must never invent an equality proof.
-            return null;
-        }
-    }
-
-    private record ClickControl(String role, String label, int x, int y,
-                                int width, int height, int actions) {
-        static ClickControl of(DesktopElement element) {
-            return new ClickControl(element.role(), element.label(), element.x(), element.y(),
-                    element.width(), element.height(), element.actions());
-        }
-    }
-
-    private record AcceptedBackgroundClick(DesktopSurfaceSnapshot surface, int width, int height,
-            int stride, byte[] pixels, ClickControl control, long actionEpoch, long completedAtMillis) {
-        AcceptedBackgroundClick dispatched(long epoch, long completedAt) {
-            return new AcceptedBackgroundClick(surface, width, height, stride, pixels, control,
-                    epoch, completedAt);
-        }
-    }
-
-    @Override public synchronized void close() {
+    @Override public void close() {
+      synchronized (coordinator) {
+       synchronized (this) {
         if (closed) return;
+        if (coordinator.manualLease != null && coordinator.manualLease.sessionId().equals(id)) {
+            coordinator.manualLease = null;
+            coordinator.actionEpoch++;
+        }
         closed = true;
         latest = null;
         latestSurface = null;
@@ -796,8 +834,11 @@ final class ManagedSession implements AutoCloseable {
                 frames.close();
                 states.close();
                 actions.close();
+                virtualInputs.close();
                 service.observer.closed(id);
             }
         }
+       }
+      }
     }
 }

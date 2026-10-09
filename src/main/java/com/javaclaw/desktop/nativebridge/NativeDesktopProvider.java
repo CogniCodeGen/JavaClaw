@@ -7,7 +7,6 @@ import com.javaclaw.desktop.spi.DesktopPlatformProvider;
 import com.javaclaw.desktop.spi.DesktopPlatformSession;
 import com.javaclaw.platform.data.ApplicationHome;
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
@@ -15,12 +14,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-/** OS-gated provider backed by one versioned, signed-distribution C bridge. */
+/** OS-gated provider backed by Java implementations and direct system FFM calls. */
 public final class NativeDesktopProvider implements DesktopPlatformProvider {
-    private final ApplicationHome home;
     private final String id;
     private final String osPrefix;
-    private final String library;
     private volatile Map<String, DesktopBridge.NativeWindow> known = Map.of();
     // Keep a bounded identity-only history so disappearance from the on-screen
     // inventory can be checked natively; it is never reused for open or capture.
@@ -28,18 +25,17 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
     private volatile DesktopBridge bridge;
 
     public static NativeDesktopProvider macos(ApplicationHome home) {
-        return new NativeDesktopProvider(home, "macos", "mac", "libjavaclaw_desktop.dylib");
+        return new NativeDesktopProvider(home, "macos", "mac");
     }
 
     public static NativeDesktopProvider windows(ApplicationHome home) {
-        return new NativeDesktopProvider(home, "windows", "windows", "javaclaw_desktop.dll");
+        return new NativeDesktopProvider(home, "windows", "windows");
     }
 
-    private NativeDesktopProvider(ApplicationHome home, String id, String osPrefix, String library) {
-        this.home = Objects.requireNonNull(home);
+    private NativeDesktopProvider(ApplicationHome home, String id, String osPrefix) {
+        Objects.requireNonNull(home);
         this.id = id;
         this.osPrefix = osPrefix;
-        this.library = library;
     }
 
     @Override public String id() { return id; }
@@ -141,7 +137,9 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
                 || window.processInstanceId() == 0)
             throw new IllegalArgumentException("目标已过期，请重新发现窗口");
         DesktopBridge nativeBridge = bridge();
-        MemorySegment handle = nativeBridge.open(window);
+        if (!nativeBridge.supportsPublicApi())
+            throw new IllegalStateException("系统公开桌面 API 不可用");
+        DesktopBridge.Session handle = nativeBridge.open(window);
         return new NativeSession(nativeBridge, target.id(), handle, window);
     }
 
@@ -150,7 +148,7 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
         if (existing != null) return existing;
         synchronized (this) {
             if (bridge != null) return bridge;
-            try { return bridge = new DesktopBridge(home, id, library); }
+            try { return bridge = new DesktopBridge(id); }
             catch (IOException failure) { throw new IllegalStateException(failure.getMessage(), failure); }
         }
     }
@@ -189,18 +187,18 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
     private final class NativeSession implements DesktopPlatformSession {
         private final DesktopBridge bridge;
         private final String targetId;
-        private final MemorySegment handle;
+        private final DesktopBridge.Session handle;
         private final DesktopBridge.NativeWindow openedWindow;
         private final String runtimeId;
         private volatile com.javaclaw.desktop.api.DesktopSurfaceSnapshot lastSurface;
         private volatile boolean closed;
 
-        NativeSession(DesktopBridge bridge, String targetId, MemorySegment handle, DesktopBridge.NativeWindow openedWindow) {
+        NativeSession(DesktopBridge bridge, String targetId, DesktopBridge.Session handle, DesktopBridge.NativeWindow openedWindow) {
             this.bridge = bridge;
             this.targetId = targetId;
             this.handle = handle;
             this.openedWindow = openedWindow;
-            // ABI7 binds captures to this exact native window and process instance. The desktop session
+            // The system implementation binds captures to this exact window and process instance. The desktop session
             // remains the separate context/consent identity; this ID grants no authority.
             this.runtimeId = runtimeId(openedWindow);
         }
@@ -247,6 +245,11 @@ public final class NativeDesktopProvider implements DesktopPlatformProvider {
         @Override public synchronized String elementDiagnostics() {
             requireOpen();
             return bridge.elementDiagnostics(handle);
+        }
+
+        @Override public synchronized java.util.Optional<Boolean> isTargetActive() {
+            requireOpen();
+            return bridge.isTargetActive(handle);
         }
 
         @Override public synchronized void prepareForeground() {

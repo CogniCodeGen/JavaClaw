@@ -262,6 +262,10 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
         started.put("trustedDesktopTool", com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry
                 .isExactHostTool(request.tool()));
         started.put("trustedBrowserNavigation", trustedBrowserNavigation);
+        if (descriptor.name().equals("desktop_session_observe")
+                && com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.isExactHostTool(request.tool())
+                && request.context().capturedAfterMillis() >= 0)
+            started.put("capturedAfterMillis", request.context().capturedAfterMillis());
         if (navigationNoOp != null) started.put("readOnlyNavigationNoOp", true);
         started.set("arguments", request.arguments());
         StepId stepId = StepId.tool(request.context().runId(), request.context().invocationId());
@@ -314,7 +318,7 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
         ToolExecutionContext resultContext = new ToolExecutionContext(
                 request.context().runId(), request.context().invocationId(),
                 request.context().cancellation(), request.context().deadline(),
-                request.context().causationStepId(), inline);
+                request.context().causationStepId(), inline, request.context().capturedAfterMillis());
         // 只豁免宿主准确实现的桌面观察；副作用工具和仅自称只读的插件仍等待物理终止。
         boolean boundedReadOnly = descriptor.name().equals("desktop_session_observe")
                 && com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.isExactHostTool(request.tool());

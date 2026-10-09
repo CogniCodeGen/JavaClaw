@@ -4,6 +4,7 @@ import com.javaclaw.desktop.api.*;
 import com.javaclaw.desktop.service.DefaultDesktopSessionService;
 import com.javaclaw.desktop.spi.DesktopPlatformProvider;
 import com.javaclaw.desktop.spi.DesktopPlatformSession;
+import com.javaclaw.desktop.spi.DesktopClickGuard;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
@@ -25,7 +26,9 @@ class DesktopVisualTargetBindingTest {
     void visualTargetSurvivesUnrelatedAnimationAndUsesCurrentNativeRevisionOnlyOnce() {
         FakeProvider provider = new FakeProvider();
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET.id(), true).toCompletableFuture().join().sessionId();
+            String id = service.open(OWNER, TARGET.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            service.captureObservation(OWNER, id).toCompletableFuture().join();
             provider.session.emit(frame(1, -1, -1));
             await(() -> revision(service, id) == 1);
             DesktopObservation observed = capture(service, id);
@@ -45,6 +48,14 @@ class DesktopVisualTargetBindingTest {
                     "native must validate the current frame revision after local pixel comparison");
             assertEquals(region.centerX(), provider.session.lastAction.x());
             assertEquals(region.centerY(), provider.session.lastAction.y());
+            DesktopClickGuard guard = provider.session.lastGuard;
+            assertNotNull(guard, "Java's validated capture must reach the dispatch boundary");
+            assertEquals(2, guard.contentRevision());
+            assertEquals(8, guard.x());
+            assertEquals(8, guard.y());
+            assertEquals(32, guard.width());
+            assertEquals(32, guard.height());
+            assertEquals(32 * 32 * 4, guard.bgra().length);
             assertEquals(DesktopActionResult.Status.STALE_FRAME,
                     service.perform(OWNER, id, action).toCompletableFuture().join().status());
             assertEquals(1, provider.session.dispatches.get(), "observation is single-use");
@@ -55,7 +66,9 @@ class DesktopVisualTargetBindingTest {
     void changedVisualTargetAndForeignIdCannotDispatchAndRequireNewObservation() {
         FakeProvider provider = new FakeProvider();
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET.id(), true).toCompletableFuture().join().sessionId();
+            String id = service.open(OWNER, TARGET.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            service.captureObservation(OWNER, id).toCompletableFuture().join();
             provider.session.emit(frame(1, -1, -1));
             await(() -> revision(service, id) == 1);
             DesktopObservation observed = capture(service, id);
@@ -90,7 +103,9 @@ class DesktopVisualTargetBindingTest {
     void invalidVisualCatalogAndLegacyCommitCannotUnlockUnknown() {
         FakeProvider provider = new FakeProvider();
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET.id(), true).toCompletableFuture().join().sessionId();
+            String id = service.open(OWNER, TARGET.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            service.captureObservation(OWNER, id).toCompletableFuture().join();
             provider.session.emit(frame(1, -1, -1));
             await(() -> revision(service, id) == 1);
             DesktopObservation observed = capture(service, id);
@@ -145,7 +160,9 @@ class DesktopVisualTargetBindingTest {
     void captureGapInvalidatesOldObservationEvenWhenSamePixelsReturn() {
         FakeProvider provider = new FakeProvider();
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET.id(), true).toCompletableFuture().join().sessionId();
+            String id = service.open(OWNER, TARGET.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            service.captureObservation(OWNER, id).toCompletableFuture().join();
             provider.session.emit(frame(1, -1, -1));
             await(() -> revision(service, id) == 1);
             DesktopObservation observed = capture(service, id);
@@ -167,6 +184,47 @@ class DesktopVisualTargetBindingTest {
     }
 
     private static DesktopConsentPort allowAll() { return (owner, target, purpose) -> true; }
+
+    @Test
+    void captureTimestampLowerBoundIsStrictAndDoesNotCommitOldFrames() {
+        FakeProvider provider = new FakeProvider();
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET.id(), true).toCompletableFuture().join().sessionId();
+            long capturedAt = System.currentTimeMillis();
+            provider.session.emit(frame(1, -1, -1, capturedAt));
+            await(() -> revision(service, id) == 1);
+            assertTrue(service.captureObservation(OWNER, id, capturedAt).toCompletableFuture().join().isEmpty());
+            provider.session.emit(frame(2, -1, -1, capturedAt + 1));
+            await(() -> revision(service, id) == 2);
+            assertEquals(capturedAt + 1, service.captureObservation(OWNER, id, capturedAt)
+                    .toCompletableFuture().join().orElseThrow().frame().capturedAtMillis());
+        }
+    }
+
+    @Test
+    void equalPixelsCannotReuseAnObservationAfterLogicalGeometryChanges() {
+        FakeProvider provider = new FakeProvider();
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            service.captureObservation(OWNER, id).toCompletableFuture().join();
+            DesktopFrame before = frame(1, -1, -1);
+            provider.session.emit(new DesktopFrame(before.targetId(), 1, before.capturedAtMillis(),
+                    128, 128, 512, before.bgraPremultiplied(), 1,
+                    new DesktopFrameGeometry(128, 128, 0, 0, 128, 128, true)));
+            await(() -> revision(service, id) == 1);
+            DesktopObservation observed = capture(service, id);
+            assertTrue(service.commitObservation(OWNER, id, observed.observationId(), List.of())
+                    .toCompletableFuture().join());
+            provider.session.emit(new DesktopFrame(before.targetId(), 1, System.currentTimeMillis(),
+                    128, 128, 512, before.bgraPremultiplied(), 2,
+                    new DesktopFrameGeometry(64, 64, 0, 0, 128, 128, true)));
+            await(() -> revision(service, id) == 2);
+            assertEquals(DesktopActionResult.Status.STALE_FRAME,
+                    service.perform(OWNER, id, click(observed, "")).toCompletableFuture().join().status());
+            assertEquals(0, provider.session.dispatches.get());
+        }
+    }
 
     private static DesktopAction click(DesktopObservation observed, String targetId) {
         return new DesktopAction(DesktopAction.Kind.CLICK, 0, 0, 1, 1, 0, "",
@@ -223,6 +281,7 @@ class DesktopVisualTargetBindingTest {
         final AtomicInteger dispatches = new AtomicInteger();
         volatile DesktopTarget current = TARGET;
         volatile DesktopAction lastAction;
+        volatile DesktopClickGuard lastGuard;
         volatile DesktopActionResult nextResult = new DesktopActionResult(
                 DesktopActionResult.Status.VERIFIED, "done", 1);
 
@@ -235,13 +294,17 @@ class DesktopVisualTargetBindingTest {
                 return Optional.empty();
             }
         }
+        @Override public void prepareForeground() { /* Fake target is already prepared. */ }
+        @Override public void restoreForeground() { /* No native focus in this fixture. */ }
         @Override public DesktopActionResult perform(DesktopAction action, boolean foreground) {
             lastAction = action;
             dispatches.incrementAndGet();
             return nextResult;
         }
-        @Override public void prepareForeground() { }
-        @Override public void restoreForeground() { }
+        @Override public DesktopActionResult performClick(DesktopAction action, boolean foreground, DesktopClickGuard guard) {
+            lastGuard = guard;
+            return perform(action, foreground);
+        }
         @Override public void close() { }
     }
 }

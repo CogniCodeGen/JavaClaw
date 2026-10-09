@@ -65,7 +65,7 @@ stage="$(mktemp -d "$project_dir/target/.portable-macos.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 input="$stage/input"
 portable_home="$stage/home"
-mkdir -p "$input" "$portable_home/runtime/native/macos" "$portable_home/plugins" "$portable_home/data"
+mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins" "$portable_home/data"
 
 cp "$host_jar" "$input/javaclaw.jar"
 maven_args=(--batch-mode --no-transfer-progress -q -f "$project_dir/pom.xml")
@@ -105,12 +105,6 @@ else
   codesign --force --options runtime --timestamp --sign "$identity" "$app"
 fi
 
-native="$portable_home/runtime/native/macos/libjavaclaw_desktop.dylib"
-"$project_dir/src/main/native/macos/build.sh" "$native" >/dev/null
-if ! "$development_unsigned"; then
-  codesign --force --options runtime --timestamp --sign "$identity" "$native"
-fi
-
 plugins="$project_dir/target/distribution/plugins"
 if [[ -d "$plugins" ]]; then
   cp -R "$plugins/." "$portable_home/plugins/"
@@ -127,8 +121,7 @@ done < <(find "$portable_home/runtime" -type l -print)
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign --verify --strict --verbose=2 "$bundled_java"
 if ! "$development_unsigned"; then
-  codesign --verify --strict --verbose=2 "$native"
-  for signed in "$app" "$native" "$bundled_java"; do
+  for signed in "$app" "$bundled_java"; do
     signature_details="$(codesign --display --verbose=4 "$signed" 2>&1)" \
       || fail "cannot inspect signature: $signed"
     [[ "$signature_details" == *"Authority=Developer ID Application:"* ]] \

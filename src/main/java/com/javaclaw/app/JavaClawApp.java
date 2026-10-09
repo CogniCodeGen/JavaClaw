@@ -16,6 +16,7 @@ import com.javaclaw.ui.javafx.workflow.WorkflowView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
+import com.javaclaw.ui.javafx.desktop.DesktopPreviewWindow;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -419,7 +420,7 @@ public class JavaClawApp extends Application {
     /**
      * 真正退出应用。
      *
-     * <p>后台线程先完成清理；已安装 AWT 托盘时才在清理完成后
+     * <p>后台线程先完成清理；曾使用 AWT 托盘或桌面预览时在清理完成后
      * {@link Runtime#halt(int)}，原因有二：</p>
      * <ul>
      *   <li>规避 macOS 上 AWT 托盘与 JavaFX 同时关闭时争用原生主线程导致的死锁
@@ -433,7 +434,7 @@ public class JavaClawApp extends Application {
         log.info("收到退出请求，开始关闭应用...");
 
         SystemTrayManager tray = trayManager;
-        boolean awtActive = tray != null && tray.wasEverInstalled();
+        boolean awtActive = (tray != null && tray.wasEverInstalled()) || DesktopPreviewWindow.wasAwtUsed();
         trayManager = null;
         if (tray != null) {
             try {
@@ -457,7 +458,7 @@ public class JavaClawApp extends Application {
                 return;
             }
             log.info("资源清理完成，退出进程");
-            if (awtActive) {
+            if (awtActive || DesktopPreviewWindow.wasAwtUsed()) {
                 // macOS 上退出 JavaFX 与 AWT 会争用原生主线程；此时数据库已关闭。
                 Runtime.getRuntime().halt(0);
             } else {

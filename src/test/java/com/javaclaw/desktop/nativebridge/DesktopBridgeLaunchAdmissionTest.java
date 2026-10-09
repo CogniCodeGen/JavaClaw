@@ -1,44 +1,40 @@
 package com.javaclaw.desktop.nativebridge;
 
-import com.javaclaw.desktop.api.DesktopApplicationLaunchRejectedException;
-import com.javaclaw.desktop.api.DesktopApplicationLaunchUncertainException;
+import com.javaclaw.desktop.api.*;
 import org.junit.jupiter.api.Test;
-
-import java.util.Map;
-
+import static com.javaclaw.desktop.nativebridge.DesktopBridgeTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DesktopBridgeLaunchAdmissionTest {
-    @Test
-    void onlyKnownPreDispatchNativeCodesProveRejection() {
-        Map<Integer, String> rejectedCodes = Map.of(-1, "INVALID_ARGUMENTS", -2, "UNSUPPORTED",
-                -3, "APPLICATION_NOT_FOUND", -4, "AMBIGUOUS_APPLICATION");
-        rejectedCodes.forEach((code, reason) -> {
-            var rejected = assertThrows(DesktopApplicationLaunchRejectedException.class,
-                    () -> DesktopBridge.launchResult(code, 0, "", "localized arbitrary detail"));
-            assertEquals(code.intValue(), rejected.nativeCode());
-            assertEquals(reason, rejected.reasonCode());
+    @Test void typedPreDispatchRejectionIsPreservedWithoutParsingMessage() {
+        for (var reason : DesktopApplicationLaunchRejectedException.Reason.values()) {
+            var api = new Api();
+            var rejected = new DesktopApplicationLaunchRejectedException(reason, "arbitrary localized detail");
+            api.launcher = name -> { throw rejected; };
+            assertSame(rejected, assertThrows(DesktopApplicationLaunchRejectedException.class,
+                    () -> new DesktopBridge(api).launchApplication("Reader")));
             assertFalse(rejected.dispatchAttempted());
-        });
-    }
-
-    @Test
-    void postDispatchAndUnknownNativeCodesStayUncertainEvenWithNotFoundText() {
-        for (int code : new int[]{-5, -6, -7, -8, -99, 1}) {
-            var uncertain = assertThrows(DesktopApplicationLaunchUncertainException.class,
-                    () -> DesktopBridge.launchResult(code, 202, "com.example.reader",
-                            "Exact application not found; NOT_SENT"));
-            assertEquals(202, uncertain.processId());
-            assertEquals("com.example.reader", uncertain.applicationId());
+            assertEquals(1, api.launchCalls);
         }
     }
 
-    @Test
-    void successRequiresAValidProcessWithoutClaimingWindowContent() {
-        assertThrows(DesktopApplicationLaunchUncertainException.class,
-                () -> DesktopBridge.launchResult(0, 0, "com.example.reader", "accepted"));
-        var launched = DesktopBridge.launchResult(0, 202, "com.example.reader", "accepted");
-        assertEquals(202, launched.processId());
-        assertEquals("com.example.reader", launched.applicationId());
+    @Test void postDispatchUncertaintyCannotBeDowngradedByNotFoundTextOrRetried() {
+        var api = new Api();
+        var uncertain = new DesktopApplicationLaunchUncertainException(
+                "Exact application not found; NOT_SENT", 202, "com.example.reader", null);
+        api.launcher = name -> { throw uncertain; };
+        assertSame(uncertain, assertThrows(DesktopApplicationLaunchUncertainException.class,
+                () -> new DesktopBridge(api).launchApplication("Reader")));
+        assertEquals(202, uncertain.processId());
+        assertEquals(1, api.launchCalls);
+    }
+
+    @Test void successRequiresValidProcessWithoutClaimingWindowContent() {
+        assertThrows(IllegalArgumentException.class, () -> new DesktopApplicationLaunch(0, "", ""));
+        var api = new Api();
+        var launch = new DesktopBridge(api).launchApplication("com.example.reader");
+        assertEquals(42, launch.processId());
+        assertEquals("com.example.reader", launch.applicationId());
+        assertEquals(0, api.session.captures);
     }
 }

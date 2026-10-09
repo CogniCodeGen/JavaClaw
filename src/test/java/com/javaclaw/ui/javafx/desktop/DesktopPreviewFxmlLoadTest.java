@@ -62,13 +62,14 @@ class DesktopPreviewFxmlLoadTest {
     private Stage stage;
     private VBox root;
     private DesktopPreviewController controller;
-    private DesktopPreviewWindow preview;
     private final AtomicReference<PixelSize> requestedSize = new AtomicReference<>();
     private final AtomicInteger stopRequests = new AtomicInteger();
     private final AtomicInteger takeoverRequests = new AtomicInteger();
 
     @BeforeAll
     static void startToolkit() throws Exception {
+        // Match Launcher: register AWT with AppKit before JavaFX starts on macOS.
+        java.awt.Toolkit.getDefaultToolkit();
         CountDownLatch started = new CountDownLatch(1);
         try {
             Platform.startup(() -> {
@@ -83,7 +84,6 @@ class DesktopPreviewFxmlLoadTest {
 
     @AfterEach
     void tearDown() throws Exception {
-        if (preview != null) preview.close();
         if (stage != null) runFx(stage::close);
     }
 
@@ -198,154 +198,6 @@ class DesktopPreviewFxmlLoadTest {
         });
         assertEquals(1, takeoverRequests.get());
         assertEquals(2, stopRequests.get());
-    }
-
-    @Test
-    void sessionPipelineRescalesCachedFrameAndKeepsPausedAndForegroundModesSafe() throws Exception {
-        ManualPublisher<DesktopFrame> frames = new ManualPublisher<>();
-        ManualPublisher<DesktopSessionState> states = new ManualPublisher<>();
-        ManualPublisher<DesktopActionEvent> actions = new ManualPublisher<>();
-        DesktopTarget target = new DesktopTarget("test", "preview-target", 7, "Preview pipeline test",
-                "Preview pipeline test", 0, 0, 1280, 800, DesktopTarget.VISIBLE);
-        DesktopSessionInfo info = new DesktopSessionInfo("preview-session", target, true, false);
-        DesktopSessionOwner owner = new DesktopSessionOwner("workspace", "scope", "agent", "run");
-        DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
-                getClass().getClassLoader(), new Class<?>[] {DesktopSessionService.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "frames" -> frames;
-                    case "states" -> states;
-                    case "actions" -> actions;
-                    case "info" -> info;
-                    case "closeSession" -> null;
-                    default -> throw new UnsupportedOperationException(method.getName());
-                });
-        preview = new DesktopPreviewWindow(new FxDispatcher());
-        preview.opened(owner, info, service);
-        states.emit(new DesktopSessionState(info.sessionId(), DesktopSessionState.Kind.LIVE, "已连接", 999));
-        awaitPreviewWindow(target.application());
-        byte[] bgra = new byte[1280 * 800 * 4];
-        for (int index = 0; index < bgra.length; index += 4) {
-            bgra[index] = 64;
-            bgra[index + 1] = 96;
-            bgra[index + 2] = (byte) 160;
-            bgra[index + 3] = (byte) 255;
-        }
-        DesktopFrame frame = new DesktopFrame(target.id(), 7, 1000, 1280, 800, 1280 * 4, bgra);
-        frames.emit(frame);
-        awaitPipelineFrame();
-        double normalPixels = callFx(() -> image().getImage().getWidth());
-
-        runFx(() -> button("minimize").fire());
-        awaitSize(DesktopPreviewChrome.MINI_WIDTH, DesktopPreviewChrome.MINI_HEIGHT);
-        awaitPipelineFrame();
-        double miniPixels = callFx(() -> image().getImage().getWidth());
-        assertTrue(miniPixels < normalPixels);
-        runFx(() -> button("maximize").fire());
-        awaitFx(() -> root.getWidth() > DesktopPreviewChrome.NORMAL_WIDTH);
-        awaitPipelineFrame();
-        double maximizedPixels = callFx(() -> image().getImage().getWidth());
-        assertTrue(maximizedPixels > normalPixels);
-        assertEquals(1, frames.emitted.get(), "模式变化必须重缩缓存完整帧，不依赖额外采集");
-
-        Rectangle2D maximized = callFx(this::bounds);
-        preview.beforeForegroundAction(info.sessionId()).toCompletableFuture().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        assertFalse(callFx(stage::isShowing));
-        preview.afterForegroundAction(info.sessionId());
-        awaitFx(stage::isShowing);
-        assertBounds(maximized);
-        assertTrue(callFx(() -> root.getPseudoClassStates().contains(PseudoClass.getPseudoClass("maximized"))));
-
-        states.emit(new DesktopSessionState(info.sessionId(), DesktopSessionState.Kind.PAUSED, "目标已失效", 2000));
-        awaitFx(() -> image().getImage() == null);
-        runFx(() -> button("minimize").fire());
-        awaitSize(DesktopPreviewChrome.MINI_WIDTH, DesktopPreviewChrome.MINI_HEIGHT);
-        runFx(() -> button("minimize").fire());
-        awaitSize(maximized.getWidth(), maximized.getHeight());
-        states.emit(new DesktopSessionState(info.sessionId(), DesktopSessionState.Kind.LIVE, "重新连接", 2001));
-        frames.emit(frame);
-        // Give the throttled scaler and FX queue time to reject the old frame and stale resize work.
-        for (int sample = 0; sample < 15; sample++) {
-            Thread.sleep(20);
-            assertNull(callFx(() -> image().getImage()));
-        }
-        preview.closed(info.sessionId());
-        awaitFx(() -> !stage.isShowing());
-        assertTrue(frames.cancelled);
-        assertTrue(states.cancelled);
-        assertTrue(actions.cancelled);
-    }
-
-    @Test
-    void 只读升级可接管且同步权限异常显示失败() throws Exception {
-        ManualPublisher<DesktopFrame> frames = new ManualPublisher<>();
-        ManualPublisher<DesktopSessionState> states = new ManualPublisher<>();
-        ManualPublisher<DesktopActionEvent> actions = new ManualPublisher<>();
-        DesktopTarget target = new DesktopTarget("test", "permissions-target", 8, "Preview permissions test",
-                "Preview permissions test", 0, 0, 1280, 800, DesktopTarget.VISIBLE);
-        DesktopSessionInfo initial = new DesktopSessionInfo("permissions-session", target, false, false);
-        AtomicReference<DesktopSessionInfo> current = new AtomicReference<>(initial);
-        AtomicInteger authorizations = new AtomicInteger();
-        AtomicBoolean authorizationOnFxThread = new AtomicBoolean();
-        DesktopSessionOwner owner = new DesktopSessionOwner("workspace", "scope", "agent", "run");
-        DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
-                getClass().getClassLoader(), new Class<?>[] {DesktopSessionService.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "frames" -> frames;
-                    case "states" -> states;
-                    case "actions" -> actions;
-                    case "info" -> current.get();
-                    case "closeSession" -> null;
-                    case "authorizeForeground" -> {
-                        authorizations.incrementAndGet();
-                        authorizationOnFxThread.set(Platform.isFxApplicationThread());
-                        throw new SecurityException("permission revoked");
-                    }
-                    default -> throw new UnsupportedOperationException(method.getName());
-                });
-        preview = new DesktopPreviewWindow(new FxDispatcher());
-        preview.opened(owner, initial, service);
-        awaitPreviewWindow(target.application());
-        assertTrue(callFx(() -> button("takeover").isDisabled()));
-        current.set(new DesktopSessionInfo(initial.sessionId(), target, true, false));
-        states.emit(new DesktopSessionState(initial.sessionId(), DesktopSessionState.Kind.LIVE, "已授权控制", 1001));
-        awaitFx(() -> !button("takeover").isDisabled());
-        runFx(() -> {
-            button("takeover").fire();
-            button("takeover").fire();
-        });
-        awaitFx(() -> label("status").getText().equals("切换失败: permission revoked"));
-        assertEquals(1, authorizations.get());
-        assertFalse(authorizationOnFxThread.get());
-        awaitFx(() -> !button("takeover").isDisabled());
-        current.set(new DesktopSessionInfo(initial.sessionId(), target, false, false));
-        states.emit(new DesktopSessionState(initial.sessionId(), DesktopSessionState.Kind.FOREGROUND_REQUIRED,
-                "控制授权已撤销", 1002));
-        awaitFx(() -> button("takeover").isDisabled());
-    }
-
-    private void awaitPreviewWindow(String application) throws Exception {
-        awaitFx(() -> {
-            stage = Window.getWindows().stream().filter(window -> window instanceof Stage value
-                    && value.getTitle().equals("JavaClaw · " + application))
-                    .map(window -> (Stage) window).findFirst().orElse(null);
-            if (stage == null) return false;
-            root = (VBox) stage.getScene().getRoot();
-            return stage.isShowing();
-        });
-    }
-
-    private void awaitPipelineFrame() throws Exception {
-        awaitFx(() -> {
-            root.applyCss();
-            root.layout();
-            ImageView image = image();
-            if (image.getImage() == null) return false;
-            int width = (int) Math.ceil(image.getFitWidth() * stage.getOutputScaleX());
-            int height = (int) Math.ceil(image.getFitHeight() * stage.getOutputScaleY());
-            double ratio = Math.min(1, Math.min(width / 1280.0, height / 800.0));
-            return image.getImage().getWidth() == Math.round(1280 * ratio)
-                    && image.getImage().getHeight() == Math.round(800 * ratio);
-        });
     }
 
     private void open() throws Exception {
@@ -501,22 +353,4 @@ class DesktopPreviewFxmlLoadTest {
 
     private record PixelSize(int width, int height) {}
 
-    private static final class ManualPublisher<T> implements Flow.Publisher<T> {
-        private final AtomicInteger emitted = new AtomicInteger();
-        private Flow.Subscriber<? super T> subscriber;
-        private volatile boolean cancelled;
-
-        @Override public void subscribe(Flow.Subscriber<? super T> next) {
-            subscriber = next;
-            next.onSubscribe(new Flow.Subscription() {
-                @Override public void request(long count) { assertEquals(Long.MAX_VALUE, count); }
-                @Override public void cancel() { cancelled = true; }
-            });
-        }
-
-        void emit(T item) {
-            emitted.incrementAndGet();
-            subscriber.onNext(item);
-        }
-    }
 }

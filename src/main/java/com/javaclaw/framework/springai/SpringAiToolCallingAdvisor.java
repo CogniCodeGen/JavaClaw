@@ -21,6 +21,7 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
     private final ToolCatalogSession catalog;
     private final ProviderContextBoundary boundary;
     private final OnDemandContextSession onDemand;
+    private final InteractionStreamWait interactionWait;
 
     private SpringAiToolCallingAdvisor(
             ToolCallingManager toolCallingManager,
@@ -29,12 +30,14 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
             StepContextProjector projector,
             ToolCatalogSession catalog,
             ProviderContextBoundary boundary,
-            OnDemandContextSession onDemand) {
+            OnDemandContextSession onDemand,
+            InteractionStreamWait interactionWait) {
         super(toolCallingManager, eligibilityChecker, advisorOrder, false);
         this.projector = projector;
         this.catalog = catalog;
         this.boundary = boundary;
         this.onDemand = onDemand;
+        this.interactionWait = interactionWait;
     }
 
     static Builder builder(StepContextProjector projector, ToolCatalogSession catalog,
@@ -45,6 +48,18 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
     static Builder builder(StepContextProjector projector, ToolCatalogSession catalog,
                            ProviderContextBoundary boundary, OnDemandContextSession onDemand) {
         return new Builder(projector, catalog, boundary, onDemand);
+    }
+
+    @Override
+    public Flux<ChatClientResponse> adviseStream(
+            ChatClientRequest request, StreamAdvisorChain chain) {
+        Flux<ChatClientResponse> responses = super.adviseStream(request, chain);
+        if (interactionWait == null) return responses;
+        // Tool recursion runs after the provider response has been aggregated and settled.
+        // A reserved child/event wait must finish the outer advisor/client aggregators normally;
+        // the gateway transfers it to the host after that completion, without a model retry.
+        return responses.onErrorResume(failure -> interactionWait.capture(failure)
+                ? Flux.empty() : Flux.error(failure));
     }
 
     @Override
@@ -124,6 +139,7 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
         private final ToolCatalogSession catalog;
         private final ProviderContextBoundary boundary;
         private final OnDemandContextSession onDemand;
+        private InteractionStreamWait interactionWait;
 
         private Builder(StepContextProjector projector, ToolCatalogSession catalog,
                         ProviderContextBoundary boundary, OnDemandContextSession onDemand) {
@@ -135,6 +151,11 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
 
         @Override
         protected Builder self() {
+            return this;
+        }
+
+        Builder interactionWait(InteractionStreamWait value) {
+            interactionWait = java.util.Objects.requireNonNull(value, "interactionWait");
             return this;
         }
 
@@ -150,6 +171,7 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
             copy.toolExecutionEligibilityChecker(getToolExecutionEligibilityChecker());
             copy.advisorOrder(getAdvisorOrder());
             copy.conversationHistoryEnabled(false);
+            copy.interactionWait = interactionWait;
             return copy;
         }
 
@@ -157,7 +179,7 @@ final class SpringAiToolCallingAdvisor extends ToolCallingAdvisor {
         public SpringAiToolCallingAdvisor build() {
             return new SpringAiToolCallingAdvisor(
                     getToolCallingManager(), getToolExecutionEligibilityChecker(),
-                    getAdvisorOrder(), projector, catalog, boundary, onDemand);
+                    getAdvisorOrder(), projector, catalog, boundary, onDemand, interactionWait);
         }
     }
 }

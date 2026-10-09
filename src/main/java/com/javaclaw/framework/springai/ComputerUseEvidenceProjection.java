@@ -40,15 +40,7 @@ final class ComputerUseEvidenceProjection {
                 result.add(message);
                 continue;
             }
-            Message compact = ToolResponseMessage.builder().responses(values).metadata(response.getMetadata()).build();
-            var host = HostContextBlock.metadata(message);
-            if (host != null) {
-                ObjectNode content = StepMessageCodec.message(compact);
-                content.remove("hostContextBlock");
-                compact = HostContextBlock.mark(compact, new HostContextBlock.Metadata(host.id(), host.kind(),
-                        OnDemandContextSession.digest(content.toString()), host.scope(), host.required(), host.evidenceRefs()));
-            }
-            result.add(compact);
+            result.add(responseWithValues(response, values));
         }
         return List.copyOf(result);
     }
@@ -100,14 +92,40 @@ final class ComputerUseEvidenceProjection {
             List<ToolResponseMessage.ToolResponse> values = new ArrayList<>();
             boolean changed = false;
             for (var value : response.getResponses()) {
-                String projected = projectObservation(value.name(), value.responseData(), maxResultCharacters);
+                String projected = projectDiscovery(value.name(), value.responseData(), maxResultCharacters);
+                projected = projectObservation(value.name(), projected, maxResultCharacters);
                 changed |= !java.util.Objects.equals(projected, value.responseData());
                 values.add(new ToolResponseMessage.ToolResponse(value.id(), value.name(), projected));
             }
-            result.add(changed ? ToolResponseMessage.builder().responses(values)
-                    .metadata(response.getMetadata()).build() : response);
+            result.add(changed ? responseWithValues(response, values) : response);
         }
         return List.copyOf(result);
+    }
+
+    private static Message responseWithValues(ToolResponseMessage original,
+            List<ToolResponseMessage.ToolResponse> values) {
+        Message projected = ToolResponseMessage.builder().responses(values).metadata(original.getMetadata()).build();
+        var host = HostContextBlock.metadata(original);
+        if (host != null) {
+            ObjectNode content = StepMessageCodec.message(projected);
+            content.remove("hostContextBlock");
+            projected = HostContextBlock.mark(projected, new HostContextBlock.Metadata(host.id(), host.kind(),
+                    OnDemandContextSession.digest(content.toString()), host.scope(), host.required(), host.evidenceRefs()));
+        }
+        return projected;
+    }
+
+    private static String projectDiscovery(String toolName, String raw, int limit) {
+        if (raw == null) return null;
+        try {
+            JsonNode parsed = JSON.readTree(raw);
+            if (!(parsed instanceof ObjectNode original) || !original.path("status").isTextual()) return raw;
+            ToolExecutionStatus.valueOf(original.path("status").asText());
+            ObjectNode projected = DesktopDiscoveryModelProjection.envelope(toolName, original, limit);
+            return projected == null ? raw : projected.toString();
+        } catch (java.io.IOException | IllegalArgumentException invalid) {
+            return raw;
+        }
     }
 
     private static String projectObservation(String toolName, String raw, int limit) {

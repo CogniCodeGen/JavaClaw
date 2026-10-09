@@ -1,6 +1,7 @@
 package com.javaclaw.application.settings;
 
 import java.util.Objects;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 
 /** 智能行为与桌面常驻设置的同步应用入口。 */
 public interface BehaviorSettingsApplicationService {
@@ -34,7 +35,14 @@ public interface BehaviorSettingsApplicationService {
 
     record GeneralSettings(
             boolean minimizeToTrayOnClose,
-            boolean computerAppAccessEnabled) {
+            boolean computerAppAccessEnabled,
+            DesktopInputPolicy inputPolicy) {
+        public GeneralSettings {
+            inputPolicy = Objects.requireNonNullElse(inputPolicy, DesktopInputPolicy.BACKGROUND_STRICT);
+        }
+        public GeneralSettings(boolean minimizeToTrayOnClose, boolean computerAppAccessEnabled) {
+            this(minimizeToTrayOnClose, computerAppAccessEnabled, DesktopInputPolicy.BACKGROUND_STRICT);
+        }
     }
 
     record Snapshot(

@@ -10,4 +10,9 @@ public interface DesktopSystemPermissionService {
     DesktopAvailability status();
 
     DesktopAvailability requestPermissions();
+
+    default DesktopAvailability status(DesktopInputPolicy policy) { return status(); }
+    default DesktopAvailability requestPermissions(DesktopInputPolicy policy) {
+        return requestPermissions();
+    }
 }

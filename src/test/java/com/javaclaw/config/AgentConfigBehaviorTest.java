@@ -164,6 +164,15 @@ class AgentConfigBehaviorTest {
     }
 
     @Test
+    void desktopInputPolicyDefaultsToStrictAndPersistsHostChoice() {
+        assertEquals(com.javaclaw.desktop.api.DesktopInputPolicy.BACKGROUND_STRICT, config.getDesktopInputPolicy());
+        config.setDesktopInputPolicy(com.javaclaw.desktop.api.DesktopInputPolicy.SYSTEM_EXPLICIT);
+        assertEquals(com.javaclaw.desktop.api.DesktopInputPolicy.SYSTEM_EXPLICIT, config.getDesktopInputPolicy());
+        config.resetToDefaults();
+        assertEquals(com.javaclaw.desktop.api.DesktopInputPolicy.BACKGROUND_STRICT, config.getDesktopInputPolicy());
+    }
+
+    @Test
     void desktopAccessSwitchGrantsAllSessionPurposesOnlyWhileOsPermissionsAreReady() {
         java.util.concurrent.atomic.AtomicBoolean permitted = new java.util.concurrent.atomic.AtomicBoolean();
         DesktopSystemPermissionService osPermissions = new DesktopSystemPermissionService() {

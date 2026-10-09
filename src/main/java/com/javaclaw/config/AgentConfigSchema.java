@@ -46,6 +46,7 @@ final class AgentConfigSchema {
     static final String KEY_RETRY_MAX_BACKOFF = "retry.max.backoff.seconds";
     static final String KEY_FIRST_USE_GUIDANCE_DONE = "ui.first.use.guidance.done";
     static final String KEY_TRAY_MINIMIZE_ON_CLOSE = "ui.tray.minimize.on.close";
+    static final String KEY_DESKTOP_INPUT_POLICY = "desktop.input.policy";
     static final String KEY_COMPUTER_APP_ACCESS_ENABLED = "desktop.computer.app.access.enabled";
     static final String KEY_UI_THEME = "ui.theme";
     static final String KEY_UI_FONT_FAMILY = "ui.font.family";
@@ -194,6 +195,7 @@ final class AgentConfigSchema {
         put(target, KEY_RETRY_MAX_BACKOFF, DEFAULT_RETRY_MAX_BACKOFF);
         put(target, KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         put(target, KEY_COMPUTER_APP_ACCESS_ENABLED, false);
+        put(target, KEY_DESKTOP_INPUT_POLICY, "BACKGROUND_STRICT");
         put(target, KEY_SCHEDULE_THREAD_POOL_SIZE, DEFAULT_SCHEDULE_THREAD_POOL_SIZE);
         put(target, KEY_GEPA_GOAL_ENABLED, DEFAULT_GEPA_GOAL_ENABLED);
         put(target, KEY_GEPA_EVAL_INTERVAL, DEFAULT_GEPA_EVAL_INTERVAL);
@@ -245,6 +247,7 @@ final class AgentConfigSchema {
         put(target, KEY_CONFIRMATION_TIMEOUT_MANAGED, DEFAULT_CONFIRMATION_TIMEOUT_MANAGED);
         put(target, KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         put(target, KEY_COMPUTER_APP_ACCESS_ENABLED, false);
+        put(target, KEY_DESKTOP_INPUT_POLICY, "BACKGROUND_STRICT");
     }
 
     static int integer(Properties source, String key, int fallback) {

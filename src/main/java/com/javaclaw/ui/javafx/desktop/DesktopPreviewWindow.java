@@ -1,8 +1,6 @@
 package com.javaclaw.ui.javafx.desktop;
 
-import com.javaclaw.desktop.api.DesktopAction;
 import com.javaclaw.desktop.api.DesktopActionEvent;
-import com.javaclaw.desktop.api.DesktopActionResult;
 import com.javaclaw.desktop.api.DesktopFrame;
 import com.javaclaw.desktop.api.DesktopSessionInfo;
 import com.javaclaw.desktop.api.DesktopSessionObserver;
@@ -10,9 +8,13 @@ import com.javaclaw.desktop.api.DesktopSessionOwner;
 import com.javaclaw.desktop.api.DesktopSessionService;
 import com.javaclaw.desktop.api.DesktopSessionState;
 import com.javaclaw.desktop.api.DesktopTarget;
+import com.javaclaw.desktop.api.DesktopVirtualInputState;
 import com.javaclaw.platform.fx.FxDispatcher;
+import java.awt.image.BufferedImage;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
@@ -20,44 +22,61 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import javafx.geometry.Rectangle2D;
-import javafx.scene.Scene;
-import javafx.scene.image.PixelFormat;
-import javafx.scene.image.WritableImage;
-import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
-import javafx.stage.Screen;
-import javafx.stage.Stage;
-import javafx.stage.StageStyle;
+import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-/** 桌面会话实时悬浮预览；采集、授权和控制仍由会话服务负责。 */
+/** Owner-scoped subscriptions and a passive native preview; never requests JavaFX focus. */
 public final class DesktopPreviewWindow implements DesktopSessionObserver, AutoCloseable {
     private static final long FRAME_INTERVAL_MILLIS = 150;
-
+    private static final Logger log = LoggerFactory.getLogger(DesktopPreviewWindow.class);
+    private final Consumer<Runnable> ui;
+    private final DesktopPreviewHost.Factory hostFactory;
     private final FxDispatcher fx;
     private final Map<String, Preview> previews = new ConcurrentHashMap<>();
     private final AtomicInteger nextPosition = new AtomicInteger();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ScheduledExecutorService scaler = Executors.newSingleThreadScheduledExecutor(task ->
-            Thread.ofPlatform().daemon().name("desktop-preview-scaler").unstarted(task));
+    private final ScheduledExecutorService renderer = Executors.newSingleThreadScheduledExecutor(task ->
+            Thread.ofPlatform().daemon().name("desktop-preview-renderer").unstarted(task));
 
-    /** 使用应用统一 FX 调度器创建预览订阅边界。 */
-    public DesktopPreviewWindow(FxDispatcher fx) { this.fx = Objects.requireNonNull(fx); }
+    /** Keep the composition-root signature; JavaFX and AWT never synchronously wait on each other. */
+    public DesktopPreviewWindow(FxDispatcher fx) {
+        this(JavaDesktopPreviewHost::dispatch, JavaDesktopPreviewHost::new, Objects.requireNonNull(fx));
+    }
+
+    DesktopPreviewWindow(Consumer<Runnable> ui, DesktopPreviewHost.Factory hostFactory) {
+        this(ui, hostFactory, null);
+    }
+
+    private DesktopPreviewWindow(Consumer<Runnable> ui, DesktopPreviewHost.Factory hostFactory, FxDispatcher fx) {
+        this.ui = Objects.requireNonNull(ui);
+        this.hostFactory = Objects.requireNonNull(hostFactory);
+        this.fx = fx;
+        renderer.scheduleAtFixedRate(() -> previews.values().forEach(Preview::expireInput),
+                100, 100, TimeUnit.MILLISECONDS);
+    }
+
+    /** Persistent after the final preview closes, for mixed AWT/JavaFX shutdown coordination. */
+    public static boolean wasAwtUsed() { return JavaDesktopPreviewHost.wasAwtUsed(); }
 
     @Override public void opened(DesktopSessionOwner owner, DesktopSessionInfo info,
-                                 DesktopSessionService service) {
+            DesktopSessionService service) {
         if (closed.get()) return;
         Preview preview = new Preview(owner, info, service, nextPosition.getAndIncrement());
         if (previews.putIfAbsent(info.sessionId(), preview) != null) return;
-        if (closed.get()) {
-            if (previews.remove(info.sessionId(), preview)) preview.dispose();
-            return;
+        if (closed.get()) { closed(info.sessionId()); return; }
+        try {
+            service.frames(owner, info.sessionId()).subscribe(preview.frameSubscriber);
+            service.states(owner, info.sessionId()).subscribe(preview.stateSubscriber);
+            service.actions(owner, info.sessionId()).subscribe(preview.actionSubscriber);
+            service.virtualInputs(owner, info.sessionId()).subscribe(preview.inputSubscriber);
+            ui.accept(preview::show);
+        } catch (RuntimeException failure) {
+            closed(info.sessionId());
+            throw failure;
         }
-        service.frames(owner, info.sessionId()).subscribe(preview.frameSubscriber);
-        service.states(owner, info.sessionId()).subscribe(preview.stateSubscriber);
-        service.actions(owner, info.sessionId()).subscribe(preview.actionSubscriber);
-        fx.dispatchLater(preview::show);
     }
 
     @Override public void closed(String sessionId) {
@@ -65,27 +84,30 @@ public final class DesktopPreviewWindow implements DesktopSessionObserver, AutoC
         if (preview != null) preview.dispose();
     }
 
-    @Override public java.util.concurrent.CompletionStage<Void> beforeForegroundAction(String sessionId) {
+    @Override public CompletionStage<Void> beforeForegroundAction(String sessionId) {
         Preview preview = previews.get(sessionId);
-        return preview == null ? java.util.concurrent.CompletableFuture.completedFuture(null)
-                : fx.call(() -> {
-                    if (preview.stage != null) preview.stage.hide();
-                    return null;
-                });
+        if (preview == null) return CompletableFuture.completedFuture(null);
+        CompletableFuture<Void> hidden = new CompletableFuture<>();
+        ui.accept(() -> {
+            try {
+                if (preview.host != null) preview.host.hide();
+                hidden.complete(null);
+            } catch (RuntimeException failure) { hidden.completeExceptionally(failure); }
+        });
+        return hidden;
     }
 
     @Override public void afterForegroundAction(String sessionId) {
         Preview preview = previews.get(sessionId);
-        if (preview != null) fx.dispatchLater(() -> {
-            if (!preview.disposed.get() && preview.stage != null && !preview.stage.isShowing())
-                preview.stage.show();
+        if (preview != null) ui.accept(() -> {
+            if (!preview.disposed.get() && preview.host != null) preview.host.show();
         });
     }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
         for (String id : previews.keySet()) closed(id);
-        scaler.shutdownNow();
+        renderer.shutdownNow();
     }
 
     private final class Preview {
@@ -94,74 +116,89 @@ public final class DesktopPreviewWindow implements DesktopSessionObserver, AutoC
         final DesktopSessionService service;
         final int position;
         final AtomicBoolean disposed = new AtomicBoolean();
-        final AtomicBoolean scaleQueued = new AtomicBoolean();
+        final AtomicBoolean conversionQueued = new AtomicBoolean();
         final AtomicBoolean renderQueued = new AtomicBoolean();
         final AtomicReference<DesktopFrame> pending = new AtomicReference<>();
-        final AtomicReference<DesktopFrame> latestFrame = new AtomicReference<>();
-        final AtomicReference<ViewportSize> viewportSize =
-                new AtomicReference<>(new ViewportSize(960, 540));
-        final AtomicReference<DesktopPreviewScaler.ScaledFrame> scaled = new AtomicReference<>();
+        final AtomicReference<ReadyFrame> ready = new AtomicReference<>();
         final AtomicReference<DesktopSessionState> lastState = new AtomicReference<>();
-        final AtomicReference<DesktopActionEvent> lastAction = new AtomicReference<>();
+        final DesktopPreviewFeedback feedback = new DesktopPreviewFeedback();
+        final AtomicBoolean feedbackQueued = new AtomicBoolean();
+        final AtomicLong feedbackVersion = new AtomicLong();
         final DesktopPreviewFrameGate frameGate = new DesktopPreviewFrameGate();
         final AtomicReference<Flow.Subscription> frameSubscription = new AtomicReference<>();
         final AtomicReference<Flow.Subscription> stateSubscription = new AtomicReference<>();
         final AtomicReference<Flow.Subscription> actionSubscription = new AtomicReference<>();
+        final AtomicReference<Flow.Subscription> inputSubscription = new AtomicReference<>();
+        DesktopPreviewHost host;
+        DesktopSessionState.Kind currentState = DesktopSessionState.Kind.PAUSED;
+        boolean controlGranted;
+        boolean takeoverPending;
+        long shownGeneration;
+        volatile long lastConversionNanos;
+        volatile DesktopVirtualInputState displayedInput;
+
         final Flow.Subscriber<DesktopFrame> frameSubscriber = new Flow.Subscriber<>() {
             @Override public void onSubscribe(Flow.Subscription subscription) {
                 subscribe(frameSubscription, subscription);
             }
             @Override public void onNext(DesktopFrame frame) {
-                if (disposed.get() || !frameGate.accepts(frame.capturedAtMillis(),
-                        frameGate.version())) return;
-                latestFrame.set(frame);
-                enqueueFrame(frame);
-                scheduleScale();
+                if (disposed.get() || !frameGate.accepts(frame.capturedAtMillis(), frameGate.version())) return;
+                pending.accumulateAndGet(frame, (queued, incoming) -> queued != null
+                        && queued.capturedAtMillis() > incoming.capturedAtMillis() ? queued : incoming);
+                scheduleConversion();
             }
             @Override public void onError(Throwable failure) { status("预览已停止: " + failure.getMessage()); }
-            @Override public void onComplete() {}
+            @Override public void onComplete() { }
         };
         final Flow.Subscriber<DesktopSessionState> stateSubscriber = new Flow.Subscriber<>() {
             @Override public void onSubscribe(Flow.Subscription subscription) {
                 subscribe(stateSubscription, subscription);
             }
             @Override public void onNext(DesktopSessionState state) {
-                if (disposed.get()) return;
-                if (state.kind() == DesktopSessionState.Kind.PAUSED
-                        || state.kind() == DesktopSessionState.Kind.CLOSED) {
+                if (disposed.get() || !info.sessionId().equals(state.sessionId())) return;
+                DesktopSessionState newest = lastState.accumulateAndGet(state, (previous, incoming) ->
+                        previous != null && previous.atMillis() > incoming.atMillis() ? previous : incoming);
+                if (newest != state) return;
+                if (state.kind() == DesktopSessionState.Kind.PAUSED || state.kind() == DesktopSessionState.Kind.CLOSED) {
                     frameGate.pause(state.atMillis());
                     pending.set(null);
-                    latestFrame.set(null);
-                    scaled.set(null);
+                    ready.set(null);
+                    feedback.clearPointer();
                 }
-                lastState.set(state);
-                fx.dispatchLater(() -> applyState(state));
+                ui.accept(() -> applyState(state));
             }
             @Override public void onError(Throwable failure) { status("状态不可用: " + failure.getMessage()); }
-            @Override public void onComplete() {}
+            @Override public void onComplete() { }
         };
         final Flow.Subscriber<DesktopActionEvent> actionSubscriber = new Flow.Subscriber<>() {
             @Override public void onSubscribe(Flow.Subscription subscription) {
                 subscribe(actionSubscription, subscription);
             }
             @Override public void onNext(DesktopActionEvent event) {
-                if (disposed.get()) return;
-                lastAction.set(event);
-                fx.dispatchLater(() -> applyAction(event));
+                if (disposed.get() || !info.sessionId().equals(event.sessionId())) return;
+                if (feedback.accept(event, System.nanoTime())) queueFeedback();
             }
             @Override public void onError(Throwable failure) { status("操作状态不可用: " + failure.getMessage()); }
-            @Override public void onComplete() {}
+            @Override public void onComplete() { }
         };
-        Stage stage;
-        DesktopPreviewController view;
-        DesktopSessionState.Kind currentState = DesktopSessionState.Kind.PAUSED;
-        boolean controlGranted;
-        boolean takeoverPending;
-        long shownGeneration;
-        volatile long lastScaleNanos;
+        final Flow.Subscriber<DesktopVirtualInputState> inputSubscriber = new Flow.Subscriber<>() {
+            @Override public void onSubscribe(Flow.Subscription subscription) {
+                subscribe(inputSubscription, subscription);
+            }
+            @Override public void onNext(DesktopVirtualInputState input) {
+                if (disposed.get() || !info.sessionId().equals(input.sessionId())) return;
+                DesktopSessionState state = lastState.get();
+                if (state != null && (state.kind() == DesktopSessionState.Kind.PAUSED
+                        || state.kind() == DesktopSessionState.Kind.CLOSED)) return;
+                long epoch = frameGate.version();
+                if (!frameGate.accepts(input.atMillis(), epoch)) return;
+                if (feedback.accept(input, System.nanoTime())) queueFeedback();
+            }
+            @Override public void onError(Throwable failure) { status("输入状态不可用: " + failure.getMessage()); }
+            @Override public void onComplete() { }
+        };
 
-        Preview(DesktopSessionOwner owner, DesktopSessionInfo info,
-                DesktopSessionService service, int position) {
+        Preview(DesktopSessionOwner owner, DesktopSessionInfo info, DesktopSessionService service, int position) {
             this.owner = owner;
             this.info = info;
             this.service = service;
@@ -170,106 +207,68 @@ public final class DesktopPreviewWindow implements DesktopSessionObserver, AutoC
         }
 
         void subscribe(AtomicReference<Flow.Subscription> slot, Flow.Subscription subscription) {
-            if (!slot.compareAndSet(null, subscription) || disposed.get()) {
-                subscription.cancel();
-                return;
-            }
+            if (!slot.compareAndSet(null, subscription)) { subscription.cancel(); return; }
+            if (disposed.get()) { cancel(slot); return; }
             subscription.request(Long.MAX_VALUE);
         }
 
         void show() {
-            if (disposed.get() || stage != null || !previews.containsKey(info.sessionId())) return;
-            view = new DesktopPreviewController();
-            VBox content = view.load();
-            stage = new Stage(StageStyle.TRANSPARENT);
-            stage.setTitle("JavaClaw · " + info.target().application());
-            stage.setAlwaysOnTop(true);
-            Scene scene = new Scene(content, DesktopPreviewChrome.NORMAL_WIDTH,
-                    DesktopPreviewChrome.NORMAL_HEIGHT, Color.TRANSPARENT);
-            for (String stylesheet : new String[] {"/css/chat.css", "/css/desktop-preview.css"}) {
-                scene.getStylesheets().add(Objects.requireNonNull(
-                        DesktopPreviewWindow.class.getResource(stylesheet)).toExternalForm());
+            if (disposed.get() || host != null || previews.get(info.sessionId()) != this) return;
+            try {
+                host = hostFactory.create(info.target().application(), info.target().title(), position,
+                        this::requestStop, this::requestTakeover, this::requestManualInput);
+                host.takeoverEnabled(controlGranted);
+                host.show();
+                DesktopSessionState state = lastState.get();
+                if (state != null) applyState(state);
+                render(ready.get());
+                refreshFeedback();
+            } catch (RuntimeException failure) {
+                if (host != null) host.close();
+                host = null;
+                // Observation and policy remain usable without a native display host.
+                log.warn("无法创建被动桌面预览: {}", failure.getMessage());
             }
-            stage.setScene(scene);
-            view.configure(stage, this::requestStop, this::requestTakeover, this::resizePreview);
-            view.target(info.target().application(), info.target().title());
-            view.takeoverDisabled(!controlGranted);
-            stage.setOnCloseRequest(event -> requestStop());
-            stage.show();
-            staggerPosition();
-            DesktopSessionState state = lastState.get();
-            if (state != null) applyState(state);
-            DesktopActionEvent action = lastAction.get();
-            if (action != null) applyAction(action);
-            queueRender();
         }
 
         void requestTakeover() {
-            if (disposed.get() || takeoverPending) return;
+            if (disposed.get() || takeoverPending || !controlGranted) return;
             takeoverPending = true;
-            view.takeoverDisabled(true);
+            host.takeoverEnabled(false);
             Thread.startVirtualThread(() -> {
-                try {
-                    service.authorizeForeground(owner, info.sessionId()).whenComplete(this::takeoverFinished);
-                } catch (RuntimeException failure) {
-                    takeoverFinished(false, failure);
-                }
+                try { service.authorizeForeground(owner, info.sessionId()).whenComplete(this::takeoverFinished); }
+                catch (RuntimeException failure) { takeoverFinished(false, failure); }
+            });
+        }
+
+        void requestManualInput() {
+            // An explicit click is the only path from the passive host to an activating FX window.
+            if (fx != null && !disposed.get()) fx.dispatchLater(() -> {
+                if (!disposed.get()) DesktopManualInputPanel.open(owner, info, service);
             });
         }
 
         void takeoverFinished(Boolean approved, Throwable failure) {
-            fx.dispatchLater(() -> {
-                if (disposed.get() || stage == null) return;
+            ui.accept(() -> {
+                if (disposed.get() || host == null) return;
                 takeoverPending = false;
-                view.takeoverDisabled(!controlGranted);
-                view.status(failure != null ? "切换失败: " + failure.getMessage()
+                host.takeoverEnabled(controlGranted);
+                host.status(failure != null ? "切换失败: " + failure.getMessage()
                         : Boolean.TRUE.equals(approved) ? "本会话可前台接管"
                         : "前台接管不可用，请检查设置与系统权限");
                 refreshTitle(shownGeneration);
             });
         }
 
-        void resizePreview(int width, int height) {
-            ViewportSize size = new ViewportSize(width, height);
-            if (size.equals(viewportSize.getAndSet(size))) return;
-            DesktopFrame frame = latestFrame.get();
-            if (frame == null || disposed.get()) return;
-            enqueueFrame(frame);
-            scheduleScale();
-        }
-
-        void enqueueFrame(DesktopFrame frame) {
-            pending.accumulateAndGet(frame, (queued, incoming) -> queued != null
-                    && queued.capturedAtMillis() > incoming.capturedAtMillis() ? queued : incoming);
-        }
-
-        void staggerPosition() {
-            Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-            double width = Math.max(DesktopPreviewChrome.NORMAL_WIDTH, stage.getWidth());
-            double height = Math.max(DesktopPreviewChrome.NORMAL_HEIGHT, stage.getHeight());
-            double gap = 12;
-            int columns = Math.max(1, (int) ((bounds.getWidth() - gap) / (width + gap)));
-            int rows = Math.max(1, (int) ((bounds.getHeight() - gap) / (height + gap)));
-            int slot = Math.floorMod(position, columns * rows);
-            int column = slot % columns;
-            int row = slot / columns;
-            stage.setX(Math.max(bounds.getMinX() + gap,
-                    bounds.getMaxX() - gap - width - column * (width + gap)));
-            stage.setY(Math.max(bounds.getMinY() + gap,
-                    Math.min(bounds.getMaxY() - gap - height,
-                            bounds.getMinY() + gap + row * (height + gap))));
-        }
-
         void dispose() {
             if (!disposed.compareAndSet(false, true)) return;
-            cancel(frameSubscription);
-            cancel(stateSubscription);
-            cancel(actionSubscription);
-            pending.set(null);
-            latestFrame.set(null);
-            scaled.set(null);
             frameGate.invalidate();
-            fx.dispatchLater(this::hide);
+            cancel(frameSubscription); cancel(stateSubscription); cancel(actionSubscription); cancel(inputSubscription);
+            pending.set(null); ready.set(null); feedback.clearPointer(); displayedInput = null;
+            DesktopManualInputPanel.closeSession(info.sessionId());
+            ui.accept(() -> {
+                if (host != null) { host.close(); host = null; }
+            });
         }
 
         void cancel(AtomicReference<Flow.Subscription> slot) {
@@ -277,175 +276,142 @@ public final class DesktopPreviewWindow implements DesktopSessionObserver, AutoC
             if (subscription != null) subscription.cancel();
         }
 
-        void hide() {
-            if (stage == null) return;
-            Stage previous = stage;
-            stage = null;
-            previous.hide();
-        }
-
-        void stopSession() {
-            try { service.closeSession(owner, info.sessionId()); }
-            catch (IllegalStateException | SecurityException ignored) {
-                // Closing an already disposed window during shutdown is harmless.
-            }
-        }
-
         void requestStop() {
             DesktopPreviewWindow.this.closed(info.sessionId());
-            Thread.startVirtualThread(this::stopSession);
-        }
-
-        void status(String text) {
-            fx.dispatchLater(() -> {
-                if (!disposed.get() && stage != null) view.status(text);
+            Thread.startVirtualThread(() -> {
+                try { service.closeSession(owner, info.sessionId()); }
+                catch (IllegalStateException | SecurityException ignored) {
+                    // Closing an already invalidated session is harmless during shutdown.
+                }
             });
         }
 
+        void status(String text) {
+            ui.accept(() -> { if (!disposed.get() && host != null) host.status(text); });
+        }
+
         void applyState(DesktopSessionState state) {
-            if (disposed.get() || stage == null || state != lastState.get()) return;
+            if (disposed.get() || host == null || state != lastState.get()) return;
             currentState = state.kind();
-            view.status(state.detail());
-            view.state(stateName(state.kind()), state.kind() == DesktopSessionState.Kind.LIVE
-                    || state.kind() == DesktopSessionState.Kind.FOREGROUND_READY,
-                    state.kind() == DesktopSessionState.Kind.FOREGROUND_REQUIRED);
-            if (state.kind() == DesktopSessionState.Kind.PAUSED
-                    || state.kind() == DesktopSessionState.Kind.CLOSED) {
-                frameGate.invalidate();
-                pending.set(null);
-                latestFrame.set(null);
-                scaled.set(null);
-                view.image(null);
-            } else {
-                render(scaled.get());
-            }
+            host.status(state.detail());
+            host.state(stateName(state.kind()), state.kind() == DesktopSessionState.Kind.FOREGROUND_REQUIRED);
+            if (state.kind() == DesktopSessionState.Kind.PAUSED || state.kind() == DesktopSessionState.Kind.CLOSED)
+                host.clear();
+            else render(ready.get());
+            refreshFeedback();
             refreshTitle(shownGeneration);
         }
 
-        void applyAction(DesktopActionEvent event) {
-            if (disposed.get() || stage == null || event != lastAction.get()) return;
-            String result = event.phase() == DesktopActionEvent.Phase.STARTED
-                    ? "执行中" : resultName(event.result());
-            view.action("最近操作：" + actionName(event.kind()) + " · " + result
-                    + " · 窗口代次 " + event.windowGeneration());
+        void queueFeedback() {
+            feedbackVersion.incrementAndGet();
+            if (disposed.get() || !feedbackQueued.compareAndSet(false, true)) return;
+            ui.accept(() -> {
+                long version = feedbackVersion.get();
+                try { refreshFeedback(); }
+                finally {
+                    feedbackQueued.set(false);
+                    if (!disposed.get() && feedbackVersion.get() != version) queueFeedback();
+                }
+            });
         }
 
-        void scheduleScale() {
-            if (disposed.get() || closed.get() || !scaleQueued.compareAndSet(false, true)) return;
-            long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastScaleNanos);
-            long delay = Math.max(0, FRAME_INTERVAL_MILLIS - elapsed);
-            try { scaler.schedule(this::scaleLatest, delay, TimeUnit.MILLISECONDS); }
-            catch (java.util.concurrent.RejectedExecutionException stopped) { scaleQueued.set(false); }
+        void expireInput() {
+            if (!disposed.get() && displayedInput != null
+                    && feedback.visibleInput(System.nanoTime()) == null) queueFeedback();
         }
 
-        void scaleLatest() {
+        void refreshFeedback() {
+            if (disposed.get() || host == null) return;
+            String text = feedback.text();
+            if (text != null) host.action("最近操作：" + text);
+            DesktopVirtualInputState next = currentState == DesktopSessionState.Kind.PAUSED
+                    || currentState == DesktopSessionState.Kind.CLOSED ? null
+                    : feedback.visibleInput(System.nanoTime());
+            if (next != displayedInput) {
+                displayedInput = next;
+                host.input(next);
+            }
+        }
+
+        void scheduleConversion() {
+            if (disposed.get() || closed.get() || !conversionQueued.compareAndSet(false, true)) return;
+            long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastConversionNanos);
+            try { renderer.schedule(this::convertLatest, Math.max(0, FRAME_INTERVAL_MILLIS - elapsed), TimeUnit.MILLISECONDS); }
+            catch (java.util.concurrent.RejectedExecutionException stopped) { conversionQueued.set(false); }
+        }
+
+        void convertLatest() {
             try {
                 if (disposed.get()) return;
                 DesktopFrame frame = pending.getAndSet(null);
                 if (frame == null) return;
                 long epoch = frameGate.version();
                 if (!frameGate.accepts(frame.capturedAtMillis(), epoch)) return;
-                ViewportSize size = viewportSize.get();
-                DesktopPreviewScaler.ScaledFrame ready =
-                        DesktopPreviewScaler.scale(frame, size.width(), size.height());
-                lastScaleNanos = System.nanoTime();
+                BufferedImage pixels = DesktopPreviewImage.convert(frame);
+                lastConversionNanos = System.nanoTime();
                 if (disposed.get() || !frameGate.accepts(frame.capturedAtMillis(), epoch)) return;
-                if (!size.equals(viewportSize.get())) {
-                    pending.compareAndSet(null, latestFrame.get());
-                    return;
-                }
-                scaled.set(ready);
+                ready.set(new ReadyFrame(frame, pixels, epoch));
                 queueRender();
             } finally {
-                scaleQueued.set(false);
-                if (pending.get() != null && !disposed.get()) scheduleScale();
+                conversionQueued.set(false);
+                if (pending.get() != null && !disposed.get()) scheduleConversion();
             }
         }
 
         void queueRender() {
             if (disposed.get() || !renderQueued.compareAndSet(false, true)) return;
-            fx.dispatchLater(() -> {
-                DesktopPreviewScaler.ScaledFrame latest = scaled.get();
+            ui.accept(() -> {
+                ReadyFrame latest = ready.get();
                 try { render(latest); }
                 finally {
                     renderQueued.set(false);
-                    if (!disposed.get() && scaled.get() != latest) queueRender();
+                    if (!disposed.get() && ready.get() != latest) queueRender();
                 }
             });
         }
 
-        void render(DesktopPreviewScaler.ScaledFrame frame) {
-            if (frame == null || disposed.get() || stage == null
-                    || currentState == DesktopSessionState.Kind.PAUSED
-                    || currentState == DesktopSessionState.Kind.CLOSED
-                    || !frameGate.accepts(frame.capturedAtMillis(), frameGate.version())
-                    || frame != scaled.get()) return;
-            WritableImage next = new WritableImage(frame.width(), frame.height());
-            next.getPixelWriter().setPixels(0, 0, frame.width(), frame.height(),
-                    PixelFormat.getByteBgraPreInstance(), frame.bgra(), 0, frame.width() * 4);
-            view.image(next);
-            if (shownGeneration != frame.generation()) {
-                shownGeneration = frame.generation();
-                refreshTitle(frame.generation());
+        void render(ReadyFrame readyFrame) {
+            if (readyFrame == null || disposed.get() || host == null || readyFrame != ready.get()
+                    || currentState == DesktopSessionState.Kind.PAUSED || currentState == DesktopSessionState.Kind.CLOSED
+                    || !frameGate.accepts(readyFrame.frame().capturedAtMillis(), readyFrame.epoch())) return;
+            DesktopFrame frame = readyFrame.frame();
+            feedback.generation(frame.windowGeneration());
+            host.frame(frame, readyFrame.image());
+            refreshFeedback();
+            if (shownGeneration != frame.windowGeneration()) {
+                shownGeneration = frame.windowGeneration();
+                refreshTitle(shownGeneration);
             }
-            if (currentState == DesktopSessionState.Kind.LIVE)
-                view.status("窗口代次 " + frame.generation());
         }
 
         void refreshTitle(long expectedGeneration) {
             Thread.startVirtualThread(() -> {
                 try {
                     DesktopSessionInfo currentInfo = service.info(owner, info.sessionId());
-                    DesktopTarget current = currentInfo.target();
-                    fx.dispatchLater(() -> {
-                        if (disposed.get() || stage == null || shownGeneration != expectedGeneration) return;
-                        view.target(current.application(), current.title()
-                                + ((current.flags() & DesktopTarget.POPUP) != 0 ? " · 弹窗" : ""));
+                    DesktopTarget target = currentInfo.target();
+                    ui.accept(() -> {
+                        if (disposed.get() || host == null || shownGeneration != expectedGeneration) return;
+                        host.target(target.application(), target.title()
+                                + ((target.flags() & DesktopTarget.POPUP) != 0 ? " · 弹窗" : ""));
                         controlGranted = currentInfo.controlGranted();
-                        view.takeoverDisabled(!controlGranted || takeoverPending);
-                        stage.setTitle("JavaClaw · " + current.application());
+                        host.takeoverEnabled(controlGranted && !takeoverPending);
                     });
                 } catch (IllegalStateException | SecurityException ignored) {
-                    fx.dispatchLater(() -> {
-                        if (disposed.get() || stage == null) return;
+                    ui.accept(() -> {
+                        if (disposed.get() || host == null) return;
                         controlGranted = false;
-                        view.takeoverDisabled(true);
+                        host.takeoverEnabled(false);
                     });
                 }
             });
         }
     }
 
-    private record ViewportSize(int width, int height) {}
-
-    private static String actionName(DesktopAction.Kind kind) {
-        return switch (kind) {
-            case CLICK -> "点击";
-            case TYPE -> "输入";
-            case KEY -> "按键";
-            case SCROLL -> "滚动";
-        };
-    }
-
-    private static String resultName(DesktopActionResult.Status status) {
-        return switch (status) {
-            case ACCEPTED -> "输入已受理·效果待观察";
-            case VERIFIED -> "已验证";
-            case UNKNOWN -> "结果未知";
-            case UNSUPPORTED -> "需前台接管";
-            case STALE_FRAME -> "画面已过期";
-            case DENIED -> "未获授权";
-            case FAILED -> "失败";
-        };
-    }
-
+    private record ReadyFrame(DesktopFrame frame, BufferedImage image, long epoch) { }
     private static String stateName(DesktopSessionState.Kind state) {
         return switch (state) {
-            case LIVE -> "实时";
-            case PAUSED -> "已暂停";
-            case FOREGROUND_REQUIRED -> "需前台接管";
-            case FOREGROUND_READY -> "自动前台操作中";
-            case CLOSED -> "已关闭";
+            case LIVE -> "实时"; case PAUSED -> "已暂停"; case FOREGROUND_REQUIRED -> "需前台接管";
+            case FOREGROUND_READY -> "前台模式已授权"; case CLOSED -> "已关闭";
         };
     }
 }

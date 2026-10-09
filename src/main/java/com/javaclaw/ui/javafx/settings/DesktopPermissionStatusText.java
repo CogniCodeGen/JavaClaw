@@ -1,6 +1,7 @@
 package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.desktop.api.DesktopAvailability;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 
 import java.util.function.BooleanSupplier;
 
@@ -11,8 +12,15 @@ final class DesktopPermissionStatusText {
 
     static String statusMessage(DesktopAvailability status, boolean pending,
             int awaitedCapability, boolean selected, BooleanSupplier savedAccess) {
+        return statusMessage(status, pending, awaitedCapability, selected, savedAccess,
+                DesktopInputPolicy.BACKGROUND_STRICT);
+    }
+
+    static String statusMessage(DesktopAvailability status, boolean pending,
+            int awaitedCapability, boolean selected, BooleanSupplier savedAccess,
+            DesktopInputPolicy policy) {
         String detail = status.detail().isBlank() ? "请检查系统设置" : status.detail();
-        String checklist = permissionChecklist(status);
+        String checklist = permissionChecklist(status, policy);
         if (status.available()) {
             boolean saved = savedAccess.getAsBoolean();
             String message = !selected
@@ -52,24 +60,35 @@ final class DesktopPermissionStatusText {
     }
 
     static String permissionChecklist(DesktopAvailability status) {
+        return permissionChecklist(status, DesktopInputPolicy.BACKGROUND_STRICT);
+    }
+
+    static String permissionChecklist(DesktopAvailability status, DesktopInputPolicy policy) {
         if (!"macos".equals(status.providerId())) return "";
         int flags = status.capabilities();
         return "屏幕与系统音频录制：" + permissionLabel(flags, DesktopAvailability.CAPTURE)
                 + "\n辅助功能：" + permissionLabel(flags, DesktopAvailability.SEMANTIC_INPUT)
-                + "\n发送输入事件：" + ((flags & DesktopAvailability.SEMANTIC_INPUT) == 0
+                + (policy == DesktopInputPolicy.SYSTEM_EXPLICIT
+                    ? "\n发送输入事件：" + ((flags & DesktopAvailability.SEMANTIC_INPUT) == 0
                         ? "待检查（先授权辅助功能）"
                         : permissionLabel(flags, DesktopAvailability.FOREGROUND_INPUT))
+                    : "\n后台公开控件操作：" + permissionLabel(flags, DesktopAvailability.PUBLIC_SEMANTIC))
                 + "\n";
     }
 
     static int firstMissingCapability(DesktopAvailability status) {
+        return firstMissingCapability(status, DesktopInputPolicy.BACKGROUND_STRICT);
+    }
+
+    static int firstMissingCapability(DesktopAvailability status, DesktopInputPolicy policy) {
         if (!"macos".equals(status.providerId())) return 0;
         int flags = status.capabilities();
         if ((flags & DesktopAvailability.CAPTURE) == 0) return DesktopAvailability.CAPTURE;
         if ((flags & DesktopAvailability.SEMANTIC_INPUT) == 0) {
             return DesktopAvailability.SEMANTIC_INPUT;
         }
-        if ((flags & DesktopAvailability.FOREGROUND_INPUT) == 0) {
+        if (policy == DesktopInputPolicy.SYSTEM_EXPLICIT
+                && (flags & DesktopAvailability.FOREGROUND_INPUT) == 0) {
             return DesktopAvailability.FOREGROUND_INPUT;
         }
         return 0;

@@ -6,6 +6,8 @@ public record DesktopElement(String id, String role, String label, int x, int y,
     public static final int PRESS = 1;
     public static final int WRITE = 2;
     public static final int SCROLL = 4;
+    public static final int INSERT_TEXT = 8;
+    public static final int SET_TEXT = 16;
 
     public DesktopElement {
         if (id == null || id.isBlank() || x < 0 || y < 0 || width < 1 || height < 1)

@@ -287,6 +287,8 @@ class HostEffectReceiptAdapterTest {
                 DesktopSessionService.class.getClassLoader(),
                 new Class<?>[]{DesktopSessionService.class},
                 (proxy, method, arguments) -> {
+                    if (method.getName().equals("defaultInputPolicy"))
+                        return com.javaclaw.desktop.api.DesktopInputPolicy.BACKGROUND_STRICT;
                     if (method.getName().equals("open")) {
                         return CompletableFuture.completedFuture(
                                 new DesktopSessionInfo("session-1", ownedWindow, false, false));
@@ -319,6 +321,8 @@ class HostEffectReceiptAdapterTest {
         DesktopSessionService service = (DesktopSessionService) Proxy.newProxyInstance(
                 DesktopSessionService.class.getClassLoader(), new Class<?>[]{DesktopSessionService.class},
                 (proxy, method, arguments) -> {
+                    if (method.getName().equals("defaultInputPolicy"))
+                        return com.javaclaw.desktop.api.DesktopInputPolicy.BACKGROUND_STRICT;
                     if (method.getName().equals("open")) return CompletableFuture.completedFuture(
                             new DesktopSessionInfo("session-control", target, granted, false));
                     throw new UnsupportedOperationException(method.getName());

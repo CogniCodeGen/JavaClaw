@@ -40,6 +40,236 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ModelStepJournalRecoveryTest {
 
     @ParameterizedTest
+    @ValueSource(strings = {"SENT", "MAYBE_SENT"})
+    void deliveredClickGetsAnIndependentOrdinaryObservationAndRecoveryNeverClicksAgain(String delivery) throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}")));
+            String source = "model/" + model.value() + "/click";
+            recordClick(fixture, source, delivery, true);
+            var originalReceipt = fixture.store.events.getLast().payload().deepCopy();
+            AtomicInteger reads = new AtomicInteger();
+            ToolInvocationGateway gateway = postClickGateway(fixture, reads, false);
+
+            var recovered = fixture.journal().recover(List.of(click, observe), gateway, false);
+
+            assertEquals(1, reads.get(), "request recovery must schedule a read even if the host crashed before scheduling it");
+            var responses = (ToolResponseMessage) recovered.messages().getLast();
+            var visible = fixture.json.readTree(responses.getResponses().getFirst().responseData());
+            assertEquals("original-click", visible.path("data").path("value").asText());
+            assertEquals("UNKNOWN", visible.path("postClickObservation").path("effect").asText());
+            assertEquals("SUCCEEDED", visible.path("postClickObservation").path("result").path("status").asText());
+            assertEquals(Instant.parse(originalReceipt.path("observedAt").asText()).toEpochMilli() + 150,
+                    visible.path("postClickObservation").path("capturedAfterMillis").asLong());
+            assertEquals(originalReceipt, fixture.store.events.stream().filter(event ->
+                    event.type().equals("core.tool.receipt") && source.equals(event.payload().path("invocationId").asText()))
+                    .findFirst().orElseThrow().payload());
+            fixture.journal().recover(List.of(click, observe), gateway, false);
+            assertEquals(1, reads.get(), "completed observation must be reused without another capture or click");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void notSentOrUntrustedClicksDoNotScheduleHostReads(boolean trusted) {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}")));
+            recordClick(fixture, "model/" + model.value() + "/click", trusted ? "NOT_SENT" : "SENT", trusted);
+            AtomicInteger reads = new AtomicInteger();
+            fixture.journal().recover(List.of(click, observe), postClickGateway(fixture, reads, false), false);
+            assertEquals(0, reads.get());
+        }
+    }
+
+    @Test
+    void liveBatchHookRetainsClickResultWhenTheOrdinaryReadFails() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            AtomicInteger reads = new AtomicInteger();
+            ModelStepJournal journal = fixture.journal();
+            journal.recover(List.of(click, observe), postClickGateway(fixture, reads, true), false);
+            var call = new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}");
+            StepId model = completedBatch(journal, click.descriptor().name(), List.of(call));
+            recordClick(fixture, "model/" + model.value() + "/click", "SENT", true);
+            var history = List.<Message>of(AssistantMessage.builder().content("").toolCalls(List.of(call)).build(),
+                    ToolResponseMessage.builder().responses(List.of(new ToolResponseMessage.ToolResponse("click",
+                            click.descriptor().name(), "{\"status\":\"SUCCEEDED\",\"data\":{\"value\":\"original-click\"}}"))).build());
+            var augmented = journal.afterToolBatch(org.springframework.ai.model.tool.ToolExecutionResult.builder()
+                    .conversationHistory(history).returnDirect(false).build());
+            var visible = fixture.json.readTree(((ToolResponseMessage) augmented.conversationHistory().getLast())
+                    .getResponses().getFirst().responseData());
+            assertEquals("SUCCEEDED", visible.path("status").asText());
+            assertEquals("original-click", visible.path("data").path("value").asText());
+            assertEquals("FAILED", visible.path("postClickObservation").path("result").path("status").asText());
+            journal.afterToolBatch(augmented);
+            assertEquals(1, reads.get(), "a failed automatic read must not become an unbounded retry loop");
+        }
+    }
+
+    @Test
+    void interruptedAutomaticReadMayRecoverOnlyOneNewReadIdentity() {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}")));
+            recordClick(fixture, "model/" + model.value() + "/click", "MAYBE_SENT", true);
+            ToolInvocationGateway interrupted = request -> {
+                assertEquals("desktop_session_observe", request.tool().descriptor().name());
+                var input = fixture.json.createObjectNode().put("tool", request.tool().descriptor().name())
+                        .put("invocationId", request.context().invocationId());
+                input.set("arguments", request.arguments());
+                StepEvents.started(fixture.events, StepId.tool(fixture.runId, request.context().invocationId()),
+                        AgentStep.Kind.TOOL, input, request.context().causationStepId());
+                throw new AssertionError("simulated process interruption");
+            };
+            assertThrows(AssertionError.class, () -> fixture.journal().recover(List.of(click, observe), interrupted, false));
+            AtomicInteger reads = new AtomicInteger();
+            ToolInvocationGateway recovery = request -> {
+                assertTrue(request.context().invocationId().endsWith("/recovery"));
+                return postClickGateway(fixture, reads, false).invoke(request);
+            };
+            fixture.journal().recover(List.of(click, observe), recovery, false);
+            fixture.journal().recover(List.of(click, observe), recovery, false);
+            assertEquals(1, reads.get());
+        }
+    }
+
+    @Test
+    void completedReadWithoutItsObservedReceiptRecoversOnlyTheRead() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}")));
+            recordClick(fixture, "model/" + model.value() + "/click", "SENT", true);
+            AtomicInteger reads = new AtomicInteger();
+            ToolInvocationGateway interrupted = request -> {
+                postClickGateway(fixture, reads, false).invoke(request);
+                fixture.store.events.removeIf(event -> event.type().equals("core.tool.receipt")
+                        && request.context().invocationId().equals(event.payload().path("invocationId").asText()));
+                throw new AssertionError("interrupted before receipt and host intent completion");
+            };
+            assertThrows(AssertionError.class, () -> fixture.journal().recover(List.of(click, observe), interrupted, false));
+            ToolInvocationGateway recovered = request -> {
+                assertTrue(request.context().invocationId().endsWith("/recovery"));
+                return postClickGateway(fixture, reads, false).invoke(request);
+            };
+            var recovery = fixture.journal().recover(List.of(click, observe), recovered, false);
+            var visible = fixture.json.readTree(((ToolResponseMessage) recovery.messages().getLast())
+                    .getResponses().getFirst().responseData());
+            assertEquals("SUCCEEDED", visible.path("postClickObservation").path("result").path("status").asText());
+            fixture.journal().recover(List.of(click, observe), recovered, false);
+            assertEquals(2, reads.get(), "only one new read may recover the missing receipt; click is never replayed");
+        }
+    }
+
+    @Test
+    void recoveryObservesDeliveredClickBeforeRejectingAnUnfinishedLaterBatchCall() {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            FrameworkTool later = tool("later");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name(), later.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}"),
+                    new AssistantMessage.ToolCall("later", "function", later.descriptor().name(), "{}")));
+            recordClick(fixture, "model/" + model.value() + "/click", "SENT", true);
+            String laterInvocation = "model/" + model.value() + "/later";
+            StepEvents.started(fixture.events, StepId.tool(fixture.runId, laterInvocation), AgentStep.Kind.TOOL,
+                    fixture.json.createObjectNode().put("tool", "later").put("invocationId", laterInvocation), model.value());
+            AtomicInteger reads = new AtomicInteger();
+            assertThrows(ToolRecoveryRequiredException.class, () -> fixture.journal().recover(
+                    List.of(click, observe, later), postClickGateway(fixture, reads, false), false));
+            assertEquals(1, reads.get(), "unresolved later input must not strand the already delivered click's observation");
+        }
+    }
+
+    @Test
+    void failedGatewayClickWithMaybeSentReceiptGetsAReadWithoutReplayingTheClick() {
+        try (Fixture fixture = new Fixture()) {
+            FrameworkTool click = hostDesktopTool(fixture, "desktop_session_click");
+            FrameworkTool observe = hostDesktopTool(fixture, "desktop_session_observe");
+            StepId model = fixture.completedModelStep(List.of(click.descriptor().name()), List.of(
+                    new AssistantMessage.ToolCall("click", "function", click.descriptor().name(), "{\"sessionId\":\"s\"}")));
+            String invocation = "model/" + model.value() + "/click";
+            var input = fixture.json.createObjectNode().put("tool", "desktop_session_click")
+                    .put("invocationId", invocation).put("trustedDesktopTool", true);
+            input.putObject("arguments").put("sessionId", "s");
+            StepEvents.started(fixture.events, StepId.tool(fixture.runId, invocation), AgentStep.Kind.TOOL, input, model.value());
+            StepEvents.failed(fixture.events, StepId.tool(fixture.runId, invocation), new java.util.concurrent.TimeoutException());
+            var receipt = fixture.json.createObjectNode().put("invocationId", invocation)
+                    .put("tool", "desktop_session_click").put("operation", "execute").put("status", "UNKNOWN")
+                    .put("observedAt", Instant.now().toString())
+                    .put("evidenceRef", "core.tool.failed:" + fixture.runId.value() + ":" + invocation);
+            receipt.putObject("metadata").put("delivery", "MAYBE_SENT");
+            fixture.store.record("core.tool.receipt", 1, "framework.core", receipt);
+            AtomicInteger reads = new AtomicInteger();
+            assertThrows(ToolRecoveryRequiredException.class, () -> fixture.journal().recover(
+                    List.of(click, observe), postClickGateway(fixture, reads, false), false));
+            assertEquals(1, reads.get());
+        }
+    }
+
+    private static void recordClick(Fixture fixture, String invocation, String delivery, boolean trusted) {
+        var arguments = fixture.json.createObjectNode().put("sessionId", "s");
+        var input = fixture.json.createObjectNode().put("tool", "desktop_session_click")
+                .put("invocationId", invocation).put("trustedDesktopTool", trusted)
+                .put("fingerprint", ToolInvocationFingerprint.create("desktop_session_click", arguments));
+        input.set("arguments", arguments);
+        StepId id = StepId.tool(fixture.runId, invocation);
+        StepEvents.started(fixture.events, id, AgentStep.Kind.TOOL, input, null);
+        var output = fixture.json.createObjectNode().put("status", "SUCCEEDED").put("durationMillis", 1);
+        output.set("modelOutput", fixture.json.createObjectNode().put("value", "original-click"));
+        output.set("rawOutput", fixture.json.createObjectNode().put("kind", "desktop.action").put("actionKind", "CLICK"));
+        StepEvents.completed(fixture.events, id, output, null);
+        var receipt = fixture.json.createObjectNode().put("invocationId", invocation).put("tool", "desktop_session_click")
+                .put("operation", "click").put("status", delivery.equals("MAYBE_SENT") ? "UNKNOWN" : "ACCEPTED")
+                .put("observedAt", Instant.now().toString())
+                .put("evidenceRef", "core.tool.completed:" + fixture.runId.value() + ":" + invocation);
+        receipt.putObject("metadata").put("sessionId", "s").put("delivery", delivery);
+        fixture.store.record("core.tool.receipt", 1, "framework.core", receipt);
+    }
+
+    private static ToolInvocationGateway postClickGateway(Fixture fixture, AtomicInteger reads, boolean fail) {
+        return request -> {
+            assertEquals("desktop_session_observe", request.tool().descriptor().name(), "automatic recovery must never dispatch click");
+            assertTrue(SpringAiAnnotatedToolRegistry.isExactHostTool(request.tool()));
+            assertEquals(false, request.context().internalContextRead(), "ordinary tool policy and budget must apply");
+            assertTrue(request.context().capturedAfterMillis() > 0);
+            reads.incrementAndGet();
+            String invocation = request.context().invocationId();
+            var input = fixture.json.createObjectNode().put("tool", "desktop_session_observe")
+                    .put("invocationId", invocation).put("trustedDesktopTool", true)
+                    .put("capturedAfterMillis", request.context().capturedAfterMillis());
+            input.set("arguments", request.arguments());
+            StepId id = StepId.tool(fixture.runId, invocation);
+            StepEvents.started(fixture.events, id, AgentStep.Kind.TOOL, input, request.context().causationStepId());
+            var data = fixture.json.createObjectNode().put("kind", "desktop.observation").put("summary", "after click")
+                    .put("capturedAtMillis", request.context().capturedAfterMillis() + 1);
+            var status = fail ? ToolExecutionStatus.FAILED : ToolExecutionStatus.SUCCEEDED;
+            var output = fixture.json.createObjectNode().put("status", status.name()).put("durationMillis", 1);
+            output.set("modelOutput", data);
+            output.set("rawOutput", data);
+            StepEvents.completed(fixture.events, id, output, null);
+            var receipt = fixture.json.createObjectNode()
+                    .put("invocationId", invocation).put("tool", "desktop_session_observe")
+                    .put("operation", "observe")
+                    .put("status", fail ? "FAILED" : "OBSERVED")
+                    .put("evidenceRef", "core.tool.completed:" + fixture.runId.value() + ":" + invocation);
+            receipt.putObject("metadata").put("sessionId", "s")
+                    .put("capturedAtMillis", Long.toString(request.context().capturedAfterMillis() + 1));
+            fixture.store.record("core.tool.receipt", 1, "framework.core", receipt);
+            return CompletableFuture.completedFuture(new ToolInvocationResult(data, Duration.ofMillis(1), status));
+        };
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void identicalHostObservationsReuseOneExecutionDespiteArgumentFieldOrder(boolean succeeded) throws Exception {
         try (Fixture fixture = new Fixture()) {

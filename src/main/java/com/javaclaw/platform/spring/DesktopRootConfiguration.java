@@ -39,7 +39,9 @@ class DesktopRootConfiguration {
     @Bean(destroyMethod = "close")
     DesktopSessionService desktopSessionService(List<DesktopPlatformProvider> providers,
                                                 DesktopConsentPort consent,
-                                                DesktopPreviewWindow preview) {
-        return new DefaultDesktopSessionService(providers, consent, Clock.systemUTC(), preview);
+                                                DesktopPreviewWindow preview,
+                                                AgentConfig settings) {
+        return new DefaultDesktopSessionService(providers, consent, Clock.systemUTC(), preview,
+                settings::getDesktopInputPolicy);
     }
 }

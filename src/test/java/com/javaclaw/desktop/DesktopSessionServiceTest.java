@@ -1,6 +1,8 @@
 package com.javaclaw.desktop;
 
 import com.javaclaw.desktop.api.DesktopAction;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
+import com.javaclaw.desktop.api.DesktopElement;
 import com.javaclaw.desktop.api.DesktopActionEvent;
 import com.javaclaw.desktop.api.DesktopActionResult;
 import com.javaclaw.desktop.api.DesktopAvailability;
@@ -16,6 +18,7 @@ import com.javaclaw.desktop.api.DesktopSessionObserver;
 import com.javaclaw.desktop.api.DesktopSessionOwner;
 import com.javaclaw.desktop.api.DesktopSessionState;
 import com.javaclaw.desktop.api.DesktopTarget;
+import com.javaclaw.desktop.api.DesktopVirtualInputState;
 import com.javaclaw.desktop.agent.DesktopSessionTools;
 import com.javaclaw.desktop.service.DefaultDesktopSessionService;
 import com.javaclaw.desktop.service.LatestPublisher;
@@ -552,33 +555,23 @@ class DesktopSessionServiceTest {
                     .toCompletableFuture().join(),
                     "replaying the same durable verification must be harmless");
             assertFalse(service.info(OWNER, id).foregroundGranted());
-            assertTrue(service.authorizeForeground(OWNER, id).toCompletableFuture().join());
-            assertTrue(service.info(OWNER, id).foregroundGranted());
-            assertEquals(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER, purposes.getLast());
+            assertFalse(service.authorizeForeground(OWNER, id).toCompletableFuture().join());
+            assertFalse(service.info(OWNER, id).foregroundGranted());
+            assertFalse(purposes.contains(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER));
         }
     }
 
     @Test
-    @DisplayName("首次后台输入前可选择系统输入，授权本身不会派发操作")
-    void freshControlledSessionCanAuthorizeSystemInputWithoutDispatch() {
+    void strictSessionCannotAuthorizeSystemInputOrForeground() {
         FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
-        List<DesktopConsentPort.Purpose> purposes = new CopyOnWriteArrayList<>();
-        DesktopConsentPort consent = (owner, target, purpose) -> {
-            purposes.add(purpose);
-            return true;
-        };
-        try (var service = new DefaultDesktopSessionService(List.of(provider), consent)) {
-            String id = service.open(OWNER, TARGET_A.id(), true)
-                    .toCompletableFuture().join().sessionId();
-            FakeSession platform = provider.opened.getFirst();
-
-            assertTrue(service.authorizeSystemInput(OWNER, id).toCompletableFuture().join());
-
-            assertTrue(service.info(OWNER, id).foregroundGranted());
-            assertEquals(DesktopSessionState.Kind.FOREGROUND_READY, service.state(OWNER, id).kind());
-            assertEquals(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER, purposes.getLast());
-            assertEquals(0, platform.actionCount.get(), "选择系统输入模式不能顺便派发点击");
-            assertTrue(platform.foregroundModes.isEmpty());
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            assertEquals(DesktopInputPolicy.BACKGROUND_STRICT, service.info(OWNER, id).inputPolicy());
+            assertFalse(service.authorizeSystemInput(OWNER, id).toCompletableFuture().join());
+            assertFalse(service.authorizeForeground(OWNER, id).toCompletableFuture().join());
+            assertFalse(service.info(OWNER, id).foregroundGranted());
+            assertEquals(0, provider.opened.getFirst().actionCount.get());
+            assertEquals(0, provider.opened.getFirst().prepareCount.get());
         }
     }
 
@@ -619,15 +612,13 @@ class DesktopSessionServiceTest {
                     before.observationId(), after.observationId()).toCompletableFuture().join());
             int consentCount = purposes.size();
 
-            CompletionException denied = assertThrows(CompletionException.class,
-                    () -> service.authorizeSystemInput(OWNER, id).toCompletableFuture().join(),
-                    "输入屏障已清除也不能把后台操作自动升级为系统输入重试");
-            assertTrue(denied.getCause() instanceof IllegalStateException);
+            assertFalse(service.authorizeSystemInput(OWNER, id).toCompletableFuture().join(),
+                    "策略不可提升，输入屏障已清除也不能自动改用系统输入");
             assertFalse(service.info(OWNER, id).foregroundGranted());
             assertEquals(consentCount, purposes.size(), "拒绝自动切换时不应请求前台授权");
             assertEquals(1, platform.actionCount.get());
-            assertTrue(service.authorizeForeground(OWNER, id).toCompletableFuture().join(),
-                    "用户显式接管保留原有前台授权行为");
+            assertFalse(service.authorizeForeground(OWNER, id).toCompletableFuture().join(),
+                    "用户人工后台面板与系统输入权限分离");
         }
     }
 
@@ -659,15 +650,14 @@ class DesktopSessionServiceTest {
                     .toCompletableFuture().join().sessionId();
             FakeSession reopened = provider.opened.getLast();
             assertNotEquals(firstId, reopenedId);
-            CompletionException denied = assertThrows(CompletionException.class,
-                    () -> service.authorizeSystemInput(sameScopeOwner, reopenedId)
-                            .toCompletableFuture().join(),
-                    "关闭会话或换同任务的调用者都不能遗忘已有后台输入");
-            assertTrue(denied.getCause() instanceof IllegalStateException);
+            assertFalse(service.authorizeSystemInput(sameScopeOwner, reopenedId)
+                    .toCompletableFuture().join());
+            assertThrows(CompletionException.class, () -> service.open(sameScopeOwner, TARGET_A.id(),
+                    true, DesktopInputPolicy.SYSTEM_EXPLICIT).toCompletableFuture().join());
             assertFalse(service.info(sameScopeOwner, reopenedId).foregroundGranted());
             assertEquals(0, reopened.actionCount.get());
 
-            String newScopeId = service.open(newScopeOwner, TARGET_A.id(), true)
+            String newScopeId = service.open(newScopeOwner, TARGET_A.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
                     .toCompletableFuture().join().sessionId();
             assertTrue(service.authorizeSystemInput(newScopeOwner, newScopeId).toCompletableFuture().join(),
                     "已接受的后台输入没有未决派发屏障，不应阻止新任务选择系统输入");
@@ -695,109 +685,63 @@ class DesktopSessionServiceTest {
                     service.perform(OWNER, firstId, click(1, before.observationId()))
                             .toCompletableFuture().join().status());
 
-            String secondId = service.open(otherOwner, TARGET_A.id(), true)
-                    .toCompletableFuture().join().sessionId();
-            FakeSession secondPlatform = provider.opened.getLast();
-            CompletionException denied = assertThrows(CompletionException.class,
-                    () -> service.authorizeSystemInput(otherOwner, secondId).toCompletableFuture().join(),
-                    "新会话自身没有输入历史，仍必须遵守同目标的未决输入屏障");
-            assertTrue(denied.getCause() instanceof IllegalStateException);
-            assertFalse(service.info(otherOwner, secondId).foregroundGranted());
-            assertEquals(0, secondPlatform.actionCount.get());
-            assertEquals(0, secondPlatform.prepareCount.get());
-
-            String unrelatedId = service.open(otherOwner, TARGET_B.id(), true)
-                    .toCompletableFuture().join().sessionId();
-            assertTrue(service.authorizeSystemInput(otherOwner, unrelatedId).toCompletableFuture().join(),
-                    "未决输入不能阻止其他目标的首次模式选择");
+            assertThrows(CompletionException.class,
+                    () -> service.open(otherOwner, TARGET_A.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                            .toCompletableFuture().join(),
+                    "同一目标未决输入不能通过新系统会话绕过");
+            String unrelatedId = service.open(otherOwner, TARGET_B.id(), true,
+                    DesktopInputPolicy.SYSTEM_EXPLICIT).toCompletableFuture().join().sessionId();
+            assertTrue(service.info(otherOwner, unrelatedId).foregroundGranted());
         }
     }
 
     @Test
-    void definiteBackgroundUnsupportedPreparesForegroundButDoesNotRepeatClick() {
+    void definiteBackgroundUnsupportedNeverRequestsForegroundOrRepeatsClick() {
         FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
         List<DesktopConsentPort.Purpose> purposes = new CopyOnWriteArrayList<>();
-        DesktopConsentPort consent = (owner, target, purpose) -> {
+        try (var service = new DefaultDesktopSessionService(List.of(provider), (owner, target, purpose) -> {
             purposes.add(purpose);
             return true;
-        };
-        try (var service = new DefaultDesktopSessionService(List.of(provider), consent)) {
+        })) {
             String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
             FakeSession platform = provider.opened.getFirst();
             platform.emit(frame(TARGET_A, 1));
             await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
             DesktopObservation initial = observeCommitted(service, id);
-
             platform.nextResult = new DesktopActionResult(DesktopActionResult.Status.UNSUPPORTED,
                     "no pressable semantic target", 1);
             DesktopActionResult unsupported = service.perform(OWNER, id,
                     click(1, initial.observationId())).toCompletableFuture().join();
             assertEquals(DesktopActionResult.Status.UNSUPPORTED, unsupported.status());
             assertFalse(unsupported.dispatchAttempted());
-            assertEquals(DesktopActionResult.Mode.BACKGROUND_SEMANTIC, unsupported.mode());
-            assertEquals(DesktopActionResult.NextStep.OBSERVE, unsupported.nextStep());
-            assertTrue(unsupported.detail().contains("no pressable semantic target"));
-            assertTrue(service.info(OWNER, id).foregroundGranted());
-            assertEquals(DesktopSessionState.Kind.FOREGROUND_READY, service.state(OWNER, id).kind());
-            assertTrue(service.state(OWNER, id).detail().contains("no pressable semantic target"));
-            assertEquals(1, platform.actionCount.get(),
-                    "preparing a foreground lease must never replay the rejected click");
-            assertEquals(List.of(false), platform.foregroundModes);
-            assertEquals(1, platform.prepareCount.get());
-            assertTrue(purposes.contains(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER));
-
-            assertEquals(DesktopActionResult.Status.STALE_FRAME,
-                    service.perform(OWNER, id, click(1, initial.observationId()))
-                            .toCompletableFuture().join().status(),
-                    "the old observation cannot dispatch a foreground click");
+            assertFalse(service.info(OWNER, id).foregroundGranted());
             assertEquals(1, platform.actionCount.get());
-
-            platform.emit(new DesktopFrame(TARGET_A.id(), 1, System.currentTimeMillis() + 20,
-                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 2));
-            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
-                    .map(value -> value.contentRevision() == 2).orElse(false));
-            DesktopObservation fresh = observeCommitted(service, id);
-            platform.nextResult = new DesktopActionResult(DesktopActionResult.Status.VERIFIED,
-                    "synthetic click sent", 1);
-            DesktopActionResult clicked = service.perform(OWNER, id,
-                    click(1, fresh.observationId())).toCompletableFuture().join();
-            assertEquals(DesktopActionResult.Status.VERIFIED, clicked.status());
-            assertEquals(DesktopActionResult.Mode.FOREGROUND_SYNTHETIC, clicked.mode());
-            assertEquals(2, platform.actionCount.get());
-            assertEquals(List.of(false, true), platform.foregroundModes);
-            assertEquals(1, platform.restoreCount.get());
+            assertEquals(0, platform.prepareCount.get());
+            assertFalse(purposes.contains(DesktopConsentPort.Purpose.FOREGROUND_TAKEOVER));
+            assertEquals(DesktopActionResult.Status.STALE_FRAME, service.perform(OWNER, id,
+                    click(1, initial.observationId())).toCompletableFuture().join().status());
+            assertEquals(1, platform.actionCount.get());
         }
     }
 
     @Test
-    void failedForegroundPreparationRetainsTheBackgroundReasonWithoutClaimingInputWasSent() {
+    void strictUnsupportedDoesNotAttemptEvenFailingForegroundPreparation() {
         FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET_A.id(), true)
-                    .toCompletableFuture().join().sessionId();
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
             FakeSession platform = provider.opened.getFirst();
             platform.emit(frame(TARGET_A, 1));
             await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
             DesktopObservation observed = observeCommitted(service, id);
-
+            platform.prepareFailure = new IllegalStateException("must never activate");
             platform.nextResult = new DesktopActionResult(DesktopActionResult.Status.UNSUPPORTED,
                     "AX target has no press action", 1);
-            platform.prepareFailure = new IllegalStateException("another window covers the target");
             DesktopActionResult result = service.perform(OWNER, id,
                     click(1, observed.observationId())).toCompletableFuture().join();
-
-            assertEquals(DesktopActionResult.Status.FAILED, result.status());
-            assertEquals(DesktopActionResult.Reason.PLATFORM_FAILURE, result.reason());
-            assertEquals(DesktopActionResult.Mode.BACKGROUND_SEMANTIC, result.mode());
+            assertEquals(DesktopActionResult.Status.UNSUPPORTED, result.status());
             assertFalse(result.dispatchAttempted());
-            assertEquals(DesktopActionResult.NextStep.OBSERVE, result.nextStep());
-            assertTrue(result.detail().contains("AX target has no press action"), result.detail());
-            assertTrue(result.detail().contains("another window covers the target"), result.detail());
-            assertEquals(result.detail(), service.state(OWNER, id).detail());
-            assertFalse(service.info(OWNER, id).foregroundGranted());
-            assertEquals(1, platform.actionCount.get(), "foreground failure cannot replay input");
-            assertEquals(List.of(false), platform.foregroundModes);
-            assertEquals(1, platform.prepareCount.get());
+            assertTrue(result.detail().contains("AX target has no press action"));
+            assertEquals(0, platform.prepareCount.get());
         }
     }
 
@@ -808,6 +752,7 @@ class DesktopSessionServiceTest {
             String id = service.open(OWNER, TARGET_A.id(), true)
                     .toCompletableFuture().join().sessionId();
             FakeSession platform = provider.opened.getFirst();
+            platform.exposeElements = false;
             platform.diagnostics = "AX catalog unavailable; status=unsupported";
             platform.emit(frame(TARGET_A, 1));
             await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
@@ -920,7 +865,7 @@ class DesktopSessionServiceTest {
         DesktopSessionOwner other = new DesktopSessionOwner(
                 "workspace-a", "run-2", "agent", "message-2");
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String firstId = service.open(OWNER, TARGET_A.id(), true)
+            String firstId = service.open(OWNER, TARGET_A.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
                     .toCompletableFuture().join().sessionId();
             String secondId = service.open(other, TARGET_A.id(), true)
                     .toCompletableFuture().join().sessionId();
@@ -1098,10 +1043,16 @@ class DesktopSessionServiceTest {
                     .map(value -> value.contentRevision() == 2).orElse(false));
             assertTrue(service.captureObservation(OWNER, id).toCompletableFuture().join().isEmpty(),
                     "a frame captured within the input settle interval cannot establish a baseline");
-            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis + 250,
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis + 150,
                     1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 3));
             await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
                     .map(value -> value.contentRevision() == 3).orElse(false));
+            assertTrue(service.captureObservation(OWNER, id).toCompletableFuture().join().isEmpty(),
+                    "a frame at the settle boundary is not strictly after input settlement");
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis + 250,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 4));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
+                    .map(value -> value.contentRevision() == 4).orElse(false));
             DesktopObservation after = service.captureObservation(OWNER, id)
                     .toCompletableFuture().join().orElseThrow();
             assertFalse(service.commitObservation(OWNER, id, after.observationId())
@@ -1118,6 +1069,43 @@ class DesktopSessionServiceTest {
                     service.perform(OWNER, id, click(1, after.observationId()))
                             .toCompletableFuture().join().status());
             assertEquals(2, platform.actionCount.get());
+        }
+    }
+
+    @Test
+    void sentInputObservationUsesNativeDispatchSettleBoundaryWhenCallerBoundaryIsEarlier() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        long captureBaseMillis = System.currentTimeMillis();
+        Clock captureClock = Clock.fixed(java.time.Instant.ofEpochMilli(captureBaseMillis),
+                java.time.ZoneOffset.UTC);
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll(), captureClock)) {
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            FakeSession platform = provider.opened.getFirst();
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
+            DesktopObservation before = observeCommitted(service, id);
+            assertEquals(DesktopActionResult.Delivery.SENT,
+                    service.perform(OWNER, id, click(1, before.observationId()))
+                            .toCompletableFuture().join().delivery());
+
+            long earlierCallerBoundary = captureBaseMillis - 1_000;
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis + 150,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 2));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
+                    .map(value -> value.contentRevision() == 2).orElse(false));
+            assertTrue(service.captureObservation(OWNER, id, earlierCallerBoundary)
+                            .toCompletableFuture().join().isEmpty(),
+                    "an early receipt must not shorten the native dispatch settle interval");
+
+            platform.emit(new DesktopFrame(TARGET_A.id(), 1, captureBaseMillis + 151,
+                    1, 1, 4, new byte[] { 0, 0, 0, (byte) 255 }, 3));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join()
+                    .map(value -> value.contentRevision() == 3).orElse(false));
+            assertEquals(captureBaseMillis + 151, service.captureObservation(OWNER, id,
+                    earlierCallerBoundary).toCompletableFuture().join().orElseThrow()
+                    .frame().capturedAtMillis());
+            assertEquals(1, platform.actionCount.get());
         }
     }
 
@@ -1196,6 +1184,9 @@ class DesktopSessionServiceTest {
             RecordingSubscriber<DesktopActionEvent> events = new RecordingSubscriber<>();
             service.actions(OWNER, id).subscribe(events);
             events.request(Long.MAX_VALUE);
+            RecordingSubscriber<DesktopVirtualInputState> feedback = new RecordingSubscriber<>();
+            service.virtualInputs(OWNER, id).subscribe(feedback);
+            feedback.request(Long.MAX_VALUE);
             DesktopSessionOwner differentOrigin = new DesktopSessionOwner(
                     OWNER.workspaceId(), OWNER.scopeId(), OWNER.sourceKind(), "other-message");
             assertThrows(SecurityException.class, () -> service.actions(differentOrigin, id));
@@ -1206,7 +1197,7 @@ class DesktopSessionServiceTest {
             DesktopObservation initial = observeCommitted(service, id);
             String secret = "never-log-this-password";
             DesktopAction type = new DesktopAction(DesktopAction.Kind.TYPE,
-                    0, 0, 1, 1, 0, secret, 1, initial.observationId(), "", 0);
+                    0, 0, 1, 1, 0, secret, 1, initial.observationId(), initial.observationId() + ":e1", 0);
             assertEquals(DesktopActionResult.Status.VERIFIED,
                     service.perform(OWNER, id, type).toCompletableFuture().join().status());
             await(() -> events.items.size() >= 2);
@@ -1216,6 +1207,12 @@ class DesktopSessionServiceTest {
             assertEquals(DesktopAction.Kind.TYPE, events.items.get(1).kind());
             assertEquals(1, events.items.get(1).windowGeneration());
             assertTrue(events.items.get(1).atMillis() >= events.items.get(0).atMillis());
+            assertTrue(events.items.get(0).actionId() > 0);
+            assertEquals(events.items.get(0).actionId(), events.items.get(1).actionId());
+            assertEquals(DesktopActionResult.Delivery.SENT, events.items.get(1).delivery());
+            await(() -> feedback.items.stream().anyMatch(value -> value.actionId() == events.items.get(1).actionId()
+                    && value.phase() == DesktopVirtualInputState.Phase.FINISHED));
+            assertTrue(feedback.items.stream().noneMatch(value -> value.phase() == DesktopVirtualInputState.Phase.PRESSED));
             assertTrue(events.items.stream().noneMatch(event -> event.toString().contains(secret)));
 
             platform.emit(new DesktopFrame(TARGET_A.id(), 1,
@@ -1226,12 +1223,14 @@ class DesktopSessionServiceTest {
             DesktopObservation renewed = observeCommitted(service, id);
             platform.nextFailure = new IllegalStateException("internal native error");
             DesktopAction renewedType = new DesktopAction(DesktopAction.Kind.TYPE,
-                    0, 0, 1, 1, 0, secret, 1, renewed.observationId(), "", 0);
+                    0, 0, 1, 1, 0, secret, 1, renewed.observationId(), renewed.observationId() + ":e1", 0);
             assertEquals(DesktopActionResult.Status.UNKNOWN,
                     service.perform(OWNER, id, renewedType).toCompletableFuture().join().status());
             await(() -> events.items.size() >= 4);
             assertEquals(DesktopActionEvent.Phase.STARTED, events.items.get(2).phase());
             assertEquals(DesktopActionResult.Status.UNKNOWN, events.items.get(3).result());
+            assertTrue(events.items.get(2).actionId() > events.items.get(0).actionId());
+            assertEquals(DesktopActionResult.Delivery.MAYBE_SENT, events.items.get(3).delivery());
             assertTrue(events.items.stream().noneMatch(event -> event.toString().contains(secret)));
             service.closeSession(OWNER, id);
             await(() -> events.completed.get() == 1);
@@ -1246,6 +1245,7 @@ class DesktopSessionServiceTest {
             await(() -> deniedEvents.items.size() >= 2);
             assertEquals(DesktopActionEvent.Phase.STARTED, deniedEvents.items.get(0).phase());
             assertEquals(DesktopActionResult.Status.DENIED, deniedEvents.items.get(1).result());
+            assertEquals(DesktopActionResult.Delivery.NOT_SENT, deniedEvents.items.get(1).delivery());
         }
     }
 
@@ -1276,7 +1276,7 @@ class DesktopSessionServiceTest {
     void currentStateExplainsMissingFramesWithoutReturningStalePixels() {
         FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
-            String id = service.open(OWNER, TARGET_A.id(), true)
+            String id = service.open(OWNER, TARGET_A.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
                     .toCompletableFuture().join().sessionId();
             assertEquals(DesktopSessionState.Kind.PAUSED, service.state(OWNER, id).kind());
             assertTrue(service.state(OWNER, id).detail().contains("首帧"));
@@ -1319,11 +1319,19 @@ class DesktopSessionServiceTest {
         FakeProvider provider = new FakeProvider("test", true, List.of(statusItem, readerWindow));
         try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
             DesktopSessionTools tools = new DesktopSessionTools(service, OWNER, Path.of("unused"));
-            String listed = tools.targets();
-            assertTrue(listed.contains("目标 ID=status-item | 所属应用=控制中心 | 窗口标题=org.example.reader"
-                    + " [系统界面；不是标题中提到的应用窗口]"), listed);
-            assertTrue(listed.contains("目标 ID=reader-window | 所属应用=阅读器 | 窗口标题=最近文件"), listed);
-            assertTrue(listed.contains("不要仅凭标题中的应用名或 bundle ID"), listed);
+            try (var capture = com.javaclaw.framework.spi.ToolEffectCapture.begin("desktop_session_targets")) {
+                String listed = tools.targets();
+                var rows = capture.data().path("targets");
+                assertEquals("status-item", rows.get(0).path("targetId").asText());
+                assertEquals("控制中心", rows.get(0).path("application").asText());
+                assertEquals("org.example.reader", rows.get(0).path("title").asText());
+                assertTrue(rows.get(0).path("systemSurface").asBoolean());
+                assertEquals("reader-window", rows.get(1).path("targetId").asText());
+                assertEquals("阅读器", rows.get(1).path("application").asText());
+                assertEquals("最近文件", rows.get(1).path("title").asText());
+                assertTrue(listed.contains("不要仅凭标题中的应用名或 bundle ID"), listed);
+                assertFalse(listed.contains("status-item"), "display text does not duplicate the discovery rows");
+            }
         }
     }
 
@@ -1344,6 +1352,197 @@ class DesktopSessionServiceTest {
         assertEquals(1, subscriber.completed.get());
     }
 
+    @Test
+    void systemInputRejectsSetTextBeforeAnyDispatch() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET_A.id(), true, DesktopInputPolicy.SYSTEM_EXPLICIT)
+                    .toCompletableFuture().join().sessionId();
+            var action = new DesktopAction(DesktopAction.Kind.TYPE, 0, 0, 0, 0, 0, "replacement", 1,
+                    "observation", "observation:e1", 0, DesktopAction.TextOperation.SET_TEXT);
+            DesktopActionResult result = service.perform(OWNER, id, action).toCompletableFuture().join();
+            assertEquals(DesktopActionResult.Status.UNSUPPORTED, result.status());
+            assertFalse(result.dispatchAttempted());
+            assertEquals(0, provider.opened.getFirst().actionCount.get());
+            assertEquals(0, provider.opened.getFirst().prepareCount.get());
+        }
+    }
+
+    @Test
+    void strictRejectsUnadvertisedActionsAndActiveTargetBeforeDispatch() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            FakeSession platform = provider.opened.getFirst();
+            platform.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
+            DesktopObservation observed = observeCommitted(service, id);
+            DesktopAction raw = new DesktopAction(DesktopAction.Kind.CLICK, 0, 0, 1, 1, 0, "", 1,
+                    observed.observationId(), "", 0);
+            DesktopActionResult unsupported = service.perform(OWNER, id, raw).toCompletableFuture().join();
+            assertEquals(DesktopActionResult.Status.UNSUPPORTED, unsupported.status());
+            assertFalse(unsupported.dispatchAttempted());
+            platform.targetActive = true;
+            DesktopActionResult active = service.perform(OWNER, id,
+                    click(1, observed.observationId())).toCompletableFuture().join();
+            assertEquals(DesktopActionResult.Reason.TARGET_ACTIVE, active.reason());
+            assertFalse(active.dispatchAttempted());
+            assertEquals(0, platform.actionCount.get());
+        }
+    }
+
+    @Test
+    void inputPolicyCannotChangeWhenReusingSession() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            var strict = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join();
+            assertThrows(CompletionException.class, () -> service.open(OWNER, TARGET_A.id(), true,
+                    DesktopInputPolicy.SYSTEM_EXPLICIT).toCompletableFuture().join());
+            assertEquals(DesktopInputPolicy.BACKGROUND_STRICT, service.info(OWNER, strict.sessionId()).inputPolicy());
+            assertEquals(1, provider.opened.size());
+        }
+    }
+
+    @Test
+    void manualLeaseWaitsForDispatchThenFencesAllAutomaticInputAndOldObservations() throws Exception {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        DesktopSessionOwner other = new DesktopSessionOwner("workspace-a", "run-2", "agent", "manual");
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String automatic = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            String manual = service.open(other, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            FakeSession first = provider.opened.get(0);
+            FakeSession second = provider.opened.get(1);
+            first.emit(frame(TARGET_A, 1));
+            second.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, automatic).toCompletableFuture().join().isPresent()
+                    && service.snapshot(other, manual).toCompletableFuture().join().isPresent());
+            DesktopObservation initial = observeCommitted(service, automatic);
+            first.actionEntered = new CountDownLatch(1);
+            first.actionRelease = new CountDownLatch(1);
+            var action = service.perform(OWNER, automatic, click(1, initial.observationId())).toCompletableFuture();
+            assertTrue(first.actionEntered.await(3, TimeUnit.SECONDS));
+            var acquiring = service.acquireManualControl(other, manual).toCompletableFuture();
+            try { assertFalse(acquiring.isDone(), "lease waits until already-dispatched input returns"); }
+            finally { first.actionRelease.countDown(); }
+            assertEquals(DesktopActionResult.Status.VERIFIED, action.join().status());
+            String lease = acquiring.join();
+            assertEquals(DesktopActionResult.Reason.POLICY_BLOCKED,
+                    service.perform(OWNER, automatic, click(1, initial.observationId()))
+                            .toCompletableFuture().join().reason());
+            second.emit(new DesktopFrame(TARGET_A.id(), 1, System.currentTimeMillis() + 250,
+                    1, 1, 4, new byte[] { 0, 0, 1, (byte) 255 }, 2));
+            await(() -> service.snapshot(other, manual).toCompletableFuture().join()
+                    .map(frame -> frame.contentRevision() == 2).orElse(false));
+            DesktopObservation observed = observeCommitted(service, other, manual);
+            assertThrows(CompletionException.class, () -> service.performManual(other, manual,
+                    "wrong-lease", click(1, observed.observationId())).toCompletableFuture().join());
+            assertEquals(DesktopActionResult.Status.VERIFIED, service.performManual(other, manual,
+                    lease, click(1, observed.observationId())).toCompletableFuture().join().status());
+            service.releaseManualControl(other, manual, lease).toCompletableFuture().join();
+            assertEquals(1, second.actionCount.get());
+            assertThrows(CompletionException.class, () -> service.performManual(other, manual,
+                    lease, click(1, observed.observationId())).toCompletableFuture().join());
+        }
+    }
+
+    @Test
+    void manualPermissionRefusalsPublishNewNotSentFeedbackWithoutDispatch() {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        AtomicBoolean controlAllowed = new AtomicBoolean(true);
+        DesktopConsentPort policy = new DesktopConsentPort() {
+            @Override public boolean request(DesktopSessionOwner owner, DesktopTarget target,
+                                             Purpose purpose) { return true; }
+            @Override public DesktopAvailability accessStatus(Purpose purpose) {
+                boolean available = purpose != Purpose.CONTROL || controlAllowed.get();
+                return new DesktopAvailability(available, "test", 0,
+                        available ? "ready" : "control permission revoked");
+            }
+        };
+        try (var service = new DefaultDesktopSessionService(List.of(provider), policy)) {
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            String lease = service.acquireManualControl(OWNER, id).toCompletableFuture().join();
+            RecordingSubscriber<DesktopActionEvent> events = new RecordingSubscriber<>();
+            service.actions(OWNER, id).subscribe(events);
+            events.request(Long.MAX_VALUE);
+            RecordingSubscriber<DesktopVirtualInputState> feedback = new RecordingSubscriber<>();
+            service.virtualInputs(OWNER, id).subscribe(feedback);
+            feedback.request(Long.MAX_VALUE);
+            FakeSession platform = provider.opened.getFirst();
+            platform.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
+            DesktopObservation observed = observeCommitted(service, id);
+            DesktopAction action = click(1, observed.observationId());
+            assertEquals(DesktopActionResult.Delivery.SENT,
+                    service.performManual(OWNER, id, lease, action).toCompletableFuture().join().delivery());
+            await(() -> events.items.size() == 2);
+            long previousActionId = events.items.get(1).actionId();
+            assertTrue(previousActionId > 0);
+            await(() -> feedback.items.stream().anyMatch(value -> value.phase()
+                    == DesktopVirtualInputState.Phase.FINISHED
+                    && value.delivery() == DesktopActionResult.Delivery.SENT));
+
+            controlAllowed.set(false);
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                assertTrue(assertThrows(SecurityException.class,
+                        () -> service.performManual(OWNER, id, lease, action))
+                        .getMessage().contains("control permission revoked"));
+                int eventCount = 2 + attempt * 2;
+                await(() -> events.items.size() == eventCount);
+                DesktopActionEvent started = events.items.get(eventCount - 2);
+                DesktopActionEvent finished = events.items.get(eventCount - 1);
+                assertEquals(DesktopActionEvent.Phase.STARTED, started.phase());
+                assertEquals(DesktopActionEvent.Phase.FINISHED, finished.phase());
+                assertTrue(started.actionId() > previousActionId,
+                        "every rejected attempt must replace feedback for the prior action");
+                assertEquals(started.actionId(), finished.actionId());
+                assertEquals(DesktopActionResult.Status.DENIED, finished.result());
+                assertEquals(DesktopActionResult.Reason.ACCESS_DENIED, finished.reason());
+                assertEquals(DesktopActionResult.Delivery.NOT_SENT, finished.delivery());
+                await(() -> feedback.items.stream().anyMatch(value ->
+                        value.actionId() == finished.actionId()
+                                && value.phase() == DesktopVirtualInputState.Phase.FINISHED
+                                && value.delivery() == DesktopActionResult.Delivery.NOT_SENT
+                                && !value.visible()));
+                assertEquals(1, platform.actionCount.get(), "permission refusal cannot reach native input");
+                previousActionId = started.actionId();
+            }
+        }
+    }
+
+    @Test
+    void lostManualResultStaysFencedAcrossLeaseReleaseAndSessionReopen() throws Exception {
+        FakeProvider provider = new FakeProvider("test", true, List.of(TARGET_A));
+        try (var service = new DefaultDesktopSessionService(List.of(provider), allowAll())) {
+            String id = service.open(OWNER, TARGET_A.id(), true).toCompletableFuture().join().sessionId();
+            FakeSession platform = provider.opened.getFirst();
+            platform.emit(frame(TARGET_A, 1));
+            await(() -> service.snapshot(OWNER, id).toCompletableFuture().join().isPresent());
+            String lease = service.acquireManualControl(OWNER, id).toCompletableFuture().join();
+            DesktopObservation observed = observeCommitted(service, id);
+            platform.actionEntered = new CountDownLatch(1);
+            platform.actionRelease = new CountDownLatch(1);
+            var sent = service.performManual(OWNER, id, lease, click(1, observed.observationId()))
+                    .toCompletableFuture();
+            assertTrue(platform.actionEntered.await(3, TimeUnit.SECONDS));
+            service.markDeliveryUncertain(OWNER, id, observed.observationId());
+            var releasing = service.releaseManualControl(OWNER, id, lease).toCompletableFuture();
+            platform.actionRelease.countDown();
+            assertEquals(DesktopActionResult.Status.VERIFIED, sent.join().status());
+            service.acknowledgeActionResult(OWNER, id, observed.observationId());
+            releasing.join();
+            service.closeSession(OWNER, id);
+            String reopened = service.open(OWNER, TARGET_A.id(), true)
+                    .toCompletableFuture().join().sessionId();
+            String nextLease = service.acquireManualControl(OWNER, reopened).toCompletableFuture().join();
+            DesktopActionResult denied = service.performManual(OWNER, reopened, nextLease,
+                    click(1, observed.observationId())).toCompletableFuture().join();
+            assertEquals(DesktopActionResult.Reason.DELIVERY_UNCERTAIN, denied.reason());
+            assertFalse(denied.dispatchAttempted());
+            assertEquals(0, provider.opened.getLast().actionCount.get());
+            service.releaseManualControl(OWNER, reopened, nextLease).toCompletableFuture().join();
+        }
+    }
+
     private static DesktopConsentPort allowAll() { return (owner, target, purpose) -> true; }
 
     private static DesktopTarget target(String id) {
@@ -1362,7 +1561,7 @@ class DesktopSessionServiceTest {
 
     private static DesktopAction click(long generation, String observationId) {
         return new DesktopAction(DesktopAction.Kind.CLICK, 0, 0, 1, 1, 0, "", generation,
-                observationId, "", 0);
+                observationId, observationId + ":e1", 0);
     }
 
     private static DesktopObservation observeCommitted(DefaultDesktopSessionService service, String id) {
@@ -1455,6 +1654,8 @@ class DesktopSessionServiceTest {
         volatile RuntimeException nextFailure;
         volatile RuntimeException prepareFailure;
         volatile String diagnostics = "";
+        volatile boolean targetActive;
+        volatile boolean exposeElements = true;
         volatile boolean closed;
 
         FakeSession(DesktopTarget target) { this.target = target; }
@@ -1483,6 +1684,17 @@ class DesktopSessionServiceTest {
             return nextResult;
         }
 
+        @Override public DesktopActionResult performClick(DesktopAction action, boolean foreground,
+                com.javaclaw.desktop.spi.DesktopClickGuard guard) {
+            return perform(action, foreground);
+        }
+
+        @Override public Optional<Boolean> isTargetActive() { return Optional.of(targetActive); }
+        @Override public List<DesktopElement> elements(DesktopFrame frame) {
+            return exposeElements ? List.of(new DesktopElement("e1", "button", "Test control", 0, 0,
+                    frame.width(), frame.height(), DesktopElement.PRESS | DesktopElement.WRITE
+                    | DesktopElement.INSERT_TEXT | DesktopElement.SET_TEXT | DesktopElement.SCROLL)) : List.of();
+        }
         @Override public String elementDiagnostics() { return diagnostics; }
 
         @Override public void prepareForeground() {

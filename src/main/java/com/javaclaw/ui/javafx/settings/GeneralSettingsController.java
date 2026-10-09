@@ -4,6 +4,7 @@ import com.javaclaw.application.settings.BehaviorSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService.GeneralSettings;
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService.SaveResult;
 import com.javaclaw.desktop.api.DesktopAvailability;
+import com.javaclaw.desktop.api.DesktopInputPolicy;
 import com.javaclaw.desktop.api.DesktopSystemPermissionService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -35,6 +36,9 @@ public final class GeneralSettingsController implements AutoCloseable {
     @FXML private ComboBox<ThemeOption> themeCombo;
     @FXML private ToggleSwitch minimizeToTrayCheck;
     @FXML private ToggleSwitch computerAppAccessCheck;
+    @FXML private ComboBox<DesktopInputPolicy> desktopInputPolicyCombo;
+    private DesktopInputPolicyChoice inputPolicyChoice;
+    private volatile DesktopInputPolicy selectedInputPolicy = DesktopInputPolicy.BACKGROUND_STRICT;
     @FXML private Label computerAppAccessStatus;
     @FXML private Button computerAppAccessPermissionButton;
 
@@ -94,6 +98,14 @@ public final class GeneralSettingsController implements AutoCloseable {
                 viewModel.minimizeToTrayOnCloseProperty());
         computerAppAccessCheck.selectedProperty().bindBidirectional(
                 viewModel.computerAppAccessEnabledProperty());
+        inputPolicyChoice = new DesktopInputPolicyChoice(desktopInputPolicyCombo,
+                viewModel.inputPolicyProperty(), viewModel.busyProperty(), policy -> {
+                    selectedInputPolicy = policy;
+                    if (!SettingsFieldSupport.isLoading(root) && computerAppAccessCheck.isSelected()) {
+                        pendingComputerAccess = true;
+                        requestComputerPermissions();
+                    }
+                });
         computerAppAccessStatus.textProperty().bind(viewModel.computerAppAccessStatusProperty());
         computerAppAccessCheck.disableProperty().bind(
                 refresh.busyProperty().or(permissionRequest.busyProperty())
@@ -120,8 +132,10 @@ public final class GeneralSettingsController implements AutoCloseable {
 
     public void reload() {
         refresh.execute(TaskSpec.io("settings-general-load"),
-                context -> new LoadedGeneral(useCases.snapshot().general(),
-                        desktopPermissions.status()),
+                context -> {
+                    GeneralSettings settings = useCases.snapshot().general();
+                    return new LoadedGeneral(settings, desktopPermissions.status(settings.inputPolicy()));
+                },
                 value -> SettingsFieldSupport.loading(root, () -> {
                     viewModel.load(value.settings(), themes.availableThemes(),
                             themes.currentTheme());
@@ -133,12 +147,12 @@ public final class GeneralSettingsController implements AutoCloseable {
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
         GeneralSettings command = new GeneralSettings(minimizeToTrayCheck.isSelected(),
-                computerAppAccessCheck.isSelected());
+                computerAppAccessCheck.isSelected(), selectedInputPolicy);
         boolean savedComputerAccess = useCases.snapshot().general().computerAppAccessEnabled();
         mutation.execute(TaskSpec.io("settings-general-save"),
                 context -> {
                     if (command.computerAppAccessEnabled()) {
-                        DesktopAvailability status = desktopPermissions.status();
+                        DesktopAvailability status = desktopPermissions.status(command.inputPolicy());
                         if (!status.available()) {
                             throw new PendingDesktopPermissionException(status.detail());
                         }
@@ -217,10 +231,11 @@ public final class GeneralSettingsController implements AutoCloseable {
     }
 
     private PermissionAttempt requestMissingPermissions() {
-        DesktopAvailability status = desktopPermissions.status();
+        DesktopInputPolicy policy = selectedInputPolicy;
+        DesktopAvailability status = desktopPermissions.status(policy);
         if (status.available()) return new PermissionAttempt(status, 0);
-        int requested = firstMissingCapability(status);
-        return new PermissionAttempt(desktopPermissions.requestPermissions(), requested);
+        int requested = DesktopPermissionStatusText.firstMissingCapability(status, policy);
+        return new PermissionAttempt(desktopPermissions.requestPermissions(policy), requested);
     }
 
     private void permissionChecked(PermissionAttempt attempt) {
@@ -274,13 +289,14 @@ public final class GeneralSettingsController implements AutoCloseable {
         viewModel.computerAppAccessStatusProperty().set("正在重新检查系统权限…");
         permissionRequest.execute(TaskSpec.io("settings-desktop-permission-return"),
                 context -> {
-                    DesktopAvailability status = desktopPermissions.status();
+                    DesktopInputPolicy policy = selectedInputPolicy;
+                    DesktopAvailability status = desktopPermissions.status(policy);
                     if (status.available()) return new PermissionAttempt(status, 0);
                     // Advance only after the permission that was last requested
                     // becomes available. An unchanged return must not reopen it.
                     if (promptedPermissionWasGranted(prompted, status)) {
-                        int next = firstMissingCapability(status);
-                        return new PermissionAttempt(desktopPermissions.requestPermissions(), next);
+                        int next = DesktopPermissionStatusText.firstMissingCapability(status, policy);
+                        return new PermissionAttempt(desktopPermissions.requestPermissions(policy), next);
                     }
                     return new PermissionAttempt(status, prompted);
                 }, this::permissionChecked,
@@ -293,7 +309,7 @@ public final class GeneralSettingsController implements AutoCloseable {
         viewModel.computerAppAccessStatusProperty().set(
                 DesktopPermissionStatusText.statusMessage(status, pendingComputerAccess,
                         awaitedCapability, computerAppAccessCheck.isSelected(),
-                        () -> useCases.snapshot().general().computerAppAccessEnabled()));
+                        () -> useCases.snapshot().general().computerAppAccessEnabled(), selectedInputPolicy));
     }
 
     static String permissionChecklist(DesktopAvailability status) {
@@ -344,6 +360,7 @@ public final class GeneralSettingsController implements AutoCloseable {
         watchScene(null);
         themes.currentThemeProperty().removeListener(currentThemeListener);
         viewModel.busyProperty().unbind();
+        inputPolicyChoice.close();
         computerAppAccessCheck.selectedProperty().removeListener(computerAccessListener);
         computerAppAccessCheck.disableProperty().unbind();
         computerAppAccessPermissionButton.disableProperty().unbind();
@@ -361,10 +378,5 @@ public final class GeneralSettingsController implements AutoCloseable {
     private record PermissionAttempt(DesktopAvailability status,
                                      int requestedCapability) { }
 
-    private static final class PendingDesktopPermissionException
-            extends IllegalStateException {
-        PendingDesktopPermissionException(String detail) {
-            super("电脑应用系统权限未就绪：" + detail);
-        }
-    }
+
 }

@@ -102,6 +102,8 @@ class DesktopSessionVisionToolTest {
                         yield CompletableFuture.completedFuture(true);
                     }
                     case "releaseForeground" -> {
+                        assertEquals(3, args.length);
+                        assertEquals("observation-1", args[2], "late failure may release only its own observation");
                         releases.incrementAndGet();
                         yield CompletableFuture.completedFuture(null);
                     }
@@ -142,6 +144,85 @@ class DesktopSessionVisionToolTest {
         }
         assertEquals(1, commits.get());
         assertEquals(1, releases.get());
+    }
+
+    @Test
+    void hostObservationIgnoresFramesAtTheBoundaryBeforeInterpretingAFreshFrame() {
+        DesktopSessionOwner owner = new DesktopSessionOwner("workspace", "scope", "chat", "source");
+        long after = 1000;
+        AtomicInteger captures = new AtomicInteger(), commits = new AtomicInteger(), visions = new AtomicInteger();
+        DesktopSessionService sessions = (DesktopSessionService) Proxy.newProxyInstance(
+                DesktopSessionService.class.getClassLoader(), new Class<?>[] {DesktopSessionService.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "captureObservation" -> {
+                        assertEquals(3, args.length, "host freshness is passed outside model arguments");
+                        assertEquals(after, args[2]);
+                        long timestamp = captures.incrementAndGet() == 1 ? after : after + 1;
+                        yield CompletableFuture.completedFuture(Optional.of(new DesktopObservation(
+                                "session", "fresh", new DesktopFrame("target", 1, timestamp, 1, 1, 4,
+                                new byte[] {0, 0, 0, (byte)255}), java.util.List.of())));
+                    }
+                    case "commitObservation" -> {
+                        commits.incrementAndGet();
+                        yield CompletableFuture.completedFuture(true);
+                    }
+                    case "info" -> new DesktopSessionInfo("session", new DesktopTarget(
+                            "macos", "target", 1, "演示文稿", "演示文稿", 0, 0, 1, 1,
+                            DesktopTarget.VISIBLE), true, true);
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+        ModelTaskGateway gateway = request -> {
+            visions.incrementAndGet();
+            return CompletableFuture.completedFuture(new ModelTaskResult(JsonNodeFactory.instance.objectNode()
+                    .put("summary", "点击后画面").put("visibleText", "")
+                    .set("targets", JsonNodeFactory.instance.arrayNode()), "fixture", 1, 1, false, Map.of()));
+        };
+        DesktopSessionTools tools = new DesktopSessionTools(sessions, owner, temporary,
+                null, new VisionPreprocessor(gateway, RunId.random()));
+        try (var capture = ToolEffectCapture.begin("desktop_session_observe")) {
+            assertTrue(tools.observeAfter("session", "查看点击后的画面", false, after).contains("[成功]"));
+            assertEquals(after + 1, capture.data().path("capturedAtMillis").asLong());
+        }
+        assertEquals(2, captures.get());
+        assertEquals(1, visions.get(), "stale pixels must never reach the visual model");
+        assertEquals(1, commits.get());
+        assertEquals(after + 1, tools.receiptObservedFrame("session").capturedAtMillis());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(5)
+    void timedOutHostCaptureIsCancelledAndCannotPublishAnObservation() {
+        DesktopSessionOwner owner = new DesktopSessionOwner("workspace", "scope", "chat", "source");
+        CompletableFuture<Optional<DesktopObservation>> pending = new CompletableFuture<>();
+        AtomicInteger visions = new AtomicInteger(), releases = new AtomicInteger();
+        DesktopSessionService sessions = (DesktopSessionService) Proxy.newProxyInstance(
+                DesktopSessionService.class.getClassLoader(), new Class<?>[] {DesktopSessionService.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "captureObservation" -> pending;
+                    case "releaseForeground" -> {
+                        assertEquals(3, args.length);
+                        assertEquals("", args[2], "timed-out capture has no observation to invalidate");
+                        releases.incrementAndGet();
+                        yield CompletableFuture.completedFuture(null);
+                    }
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+        ModelTaskGateway gateway = request -> {
+            visions.incrementAndGet();
+            throw new AssertionError("timed out capture must not reach vision");
+        };
+        DesktopSessionTools tools = new DesktopSessionTools(sessions, owner, temporary,
+                null, new VisionPreprocessor(gateway, RunId.random()));
+        long started = System.nanoTime();
+        try (var capture = ToolEffectCapture.begin("desktop_session_observe")) {
+            tools.observeAfter("session", "查看", false, 1000);
+            assertEquals("TIMED_OUT", capture.data().path("errorCode").asText());
+        }
+        assertTrue(java.time.Duration.ofNanos(System.nanoTime() - started).toMillis() < 4000);
+        assertTrue(pending.isCancelled());
+        assertEquals(0, visions.get());
+        assertEquals(1, releases.get());
+        assertEquals(null, tools.receiptObservedFrame("session"));
     }
 
     @Test
@@ -256,6 +337,8 @@ class DesktopSessionVisionToolTest {
                 DesktopSessionService.class.getClassLoader(),
                 new Class<?>[] { DesktopSessionService.class },
                 (proxy, method, args) -> {
+                    if (method.getName().equals("defaultInputPolicy"))
+                        return com.javaclaw.desktop.api.DesktopInputPolicy.BACKGROUND_STRICT;
                     assertEquals("open", method.getName());
                     assertEquals(owner, args[0]);
                     assertEquals("target", args[1]);
