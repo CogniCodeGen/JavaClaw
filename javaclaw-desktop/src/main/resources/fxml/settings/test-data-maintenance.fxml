@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.TestDataMaintenanceController">
+    <content>
+        <VBox spacing="14.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="测试数据清理" styleClass="sec-title"/>
+                <Label text="扫描系统临时目录和项目根目录中带 JavaClaw 数据库标记的 junit-* 测试目录。扫描只读；无 JavaClaw 标记的其他项目测试目录不会列入候选。只有点击清理并再次确认后才会删除。"
+                       wrapText="true" styleClass="sec-hint"/>
+                <Separator/>
+                <ListView fx:id="candidatesView" prefHeight="280.0"
+                          accessibleText="历史 JUnit 测试目录扫描结果">
+                    <placeholder>
+                        <Label fx:id="placeholderLabel" text="尚未扫描"/>
+                    </placeholder>
+                </ListView>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Button fx:id="scanButton" text="扫描历史测试目录"
+                                accessibleText="扫描历史 JUnit 测试目录"
+                                onAction="#scanRequested"
+                                styleClass="button, jc-btn, jc-btn-soft"/>
+                        <Button fx:id="cleanupButton" text="清理所列目录" disable="true"
+                                accessibleText="清理扫描结果中的历史 JUnit 测试目录"
+                                onAction="#cleanupRequested"
+                                styleClass="button, jc-btn, jc-btn-danger"/>
+                        <Label fx:id="statusLabel" text="尚未扫描"
+                               styleClass="settings-hint"/>
+                    </children>
+                </HBox>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

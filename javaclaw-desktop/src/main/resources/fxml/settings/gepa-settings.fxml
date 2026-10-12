@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.GepaSettingsController">
+    <content>
+        <VBox spacing="12.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="GEPA 自改进能力" styleClass="settings-section-title"/>
+                <Label text="GEPA（Goal-Evaluate-Plan-Act）让智能体在执行过程中自动分解目标、评估进度、调整计划，实现闭环自我改进"
+                       wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="目标分解" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle"
+                      onMouseClicked="#goalRowClicked">
+                    <children>
+                        <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                            <children>
+                                <Label text="目标分解" styleClass="rt-main"/>
+                                <Label text="把复杂请求拆为可核验的子目标，并将成功标准注入编排器提示词"
+                                       wrapText="true" styleClass="rt-sub"/>
+                            </children>
+                        </VBox>
+                        <ToggleSwitch fx:id="goalDecompositionCheck"
+                                      accessibleText="启用目标分解"/>
+                    </children>
+                </HBox>
+                <Separator/>
+                <Label text="过程评估" styleClass="settings-group-title"/>
+                <GridPane hgap="10.0" vgap="8.0">
+                    <children>
+                        <Label text="评估间隔：" minWidth="70.0" styleClass="settings-label"
+                               GridPane.columnIndex="0" GridPane.rowIndex="0"/>
+                        <TextField fx:id="evaluationIntervalField" prefWidth="80.0"
+                                   promptText="评估间隔（工具调用次数）"
+                                   accessibleText="GEPA 评估间隔"
+                                   styleClass="text-input, text-field, settings-field"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+                        <Label text="通过阈值：" minWidth="70.0" styleClass="settings-label"
+                               GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+                        <TextField fx:id="evaluationThresholdField" prefWidth="80.0"
+                                   promptText="通过阈值（1.0 ~ 5.0）"
+                                   accessibleText="GEPA 评估通过阈值"
+                                   styleClass="text-input, text-field, settings-field"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+                    </children>
+                </GridPane>
+                <Label text="每隔 N 次工具调用触发一次评估；评分低于阈值时触发计划调整"
+                       wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="自适应规划" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle"
+                      onMouseClicked="#adaptiveRowClicked">
+                    <children>
+                        <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                            <children>
+                                <Label text="自适应规划" styleClass="rt-main"/>
+                                <Label text="根据过程评估动态调整后续步骤，而非一次性定死计划"
+                                       wrapText="true" styleClass="rt-sub"/>
+                            </children>
+                        </VBox>
+                        <ToggleSwitch fx:id="adaptivePlanningCheck"
+                                      accessibleText="启用自适应规划"/>
+                    </children>
+                </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="最大轮次：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="feedbackMaxRoundsField" prefWidth="80.0"
+                                   promptText="最大调整轮次（0 ~ 10）"
+                                   accessibleText="GEPA 最大调整轮次"
+                                   styleClass="text-input, text-field, settings-field"/>
+                    </children>
+                </HBox>
+                <Label text="评估不通过时，智能体将基于当前轨迹重写剩余步骤；超过最大调整轮次后不再调整"
+                       wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="修改保存后立即生效，当前对话的智能体服务将重建"
+                       styleClass="settings-hint"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

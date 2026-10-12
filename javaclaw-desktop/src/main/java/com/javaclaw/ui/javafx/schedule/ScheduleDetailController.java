@@ -1,0 +1,368 @@
+package com.javaclaw.ui.javafx.schedule;
+
+import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
+import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
+import com.javaclaw.application.error.ValidationException;
+import com.javaclaw.schedule.ExecutionPolicy;
+import com.javaclaw.task.TaskNotificationChannel;
+import com.javaclaw.ui.javafx.control.ToggleSwitch;
+import javafx.beans.binding.Bindings;
+import javafx.event.ActionEvent;
+import javafx.fxml.FXML;
+import javafx.scene.Node;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+
+import java.util.Objects;
+import java.util.function.Consumer;
+
+/** 定时任务详情 Controller：只维护 FXML 表单与页面状态，不访问运行时或数据库。 */
+public final class ScheduleDetailController implements AutoCloseable {
+
+    @FXML private VBox root;
+    @FXML private VBox builtinPanel;
+    @FXML private Label builtinName;
+    @FXML private Label builtinDescription;
+    @FXML private Label builtinTrigger;
+    @FXML private Label builtinSource;
+    @FXML private Label builtinNote;
+    @FXML private VBox editablePanel;
+    @FXML private TextField nameField;
+    @FXML private Label stateLabel;
+    @FXML private ToggleSwitch enabledToggle;
+    @FXML private Label triggerStat;
+    @FXML private Label nextStat;
+    @FXML private Label nextSub;
+    @FXML private Label lastStat;
+    @FXML private Label lastBadge;
+    @FXML private Label runsStat;
+    @FXML private ToggleGroup triggerGroup;
+    @FXML private ToggleButton onceButton;
+    @FXML private ToggleButton intervalButton;
+    @FXML private ToggleButton dailyButton;
+    @FXML private ToggleButton cronButton;
+    @FXML private VBox onceFields;
+    @FXML private TextField onceDateField;
+    @FXML private TextField onceTimeField;
+    @FXML private VBox intervalFields;
+    @FXML private TextField intervalValueField;
+    @FXML private ComboBox<String> intervalUnitCombo;
+    @FXML private VBox dailyFields;
+    @FXML private TextField dailyTimeField;
+    @FXML private VBox cronFields;
+    @FXML private TextField cronField;
+    @FXML private Label cronHint;
+    @FXML private TextArea promptArea;
+    @FXML private ComboBox<ExecutionPolicy> executionPolicyCombo;
+    @FXML private ToggleSwitch notifyToggle;
+    @FXML private ComboBox<String> channelCombo;
+    @FXML private ToggleSwitch authorizeToggle;
+    @FXML private ListView<com.javaclaw.application.schedule.ScheduleApplicationService.History> historyList;
+    @FXML private GridPane historyHeader;
+    @FXML private Label historyPlaceholder;
+    @FXML private Button deleteButton;
+
+    private final ScheduleHistoryCellFactory historyCells;
+    private final ScheduleDetailViewModel viewModel = new ScheduleDetailViewModel();
+    private Consumer<Boolean> toggleAction = ignored -> { };
+    private Runnable deleteAction = () -> { };
+    private Runnable changedAction = () -> { };
+    private boolean suppressEvents;
+    private boolean draft;
+    private EditableForm savedForm;
+    private Task runtimeTask;
+
+    public ScheduleDetailController(ScheduleHistoryCellFactory historyCells) {
+        this.historyCells = Objects.requireNonNull(historyCells, "historyCells");
+    }
+
+    @FXML
+    private void initialize() {
+        ScheduleDetailViewSupport.initializeOptions(intervalUnitCombo, executionPolicyCombo, channelCombo);
+        executionPolicyCombo.valueProperty().addListener((ignored, previous, selected) -> {
+            if (!suppressEvents) changedAction.run();
+        });
+        historyList.setCellFactory(ignored -> historyCells.create());
+        historyList.skinProperty().addListener((ignored, previous, skin) -> alignHistoryHeader());
+        historyHeader.translateXProperty().bind(Bindings.createDoubleBinding(
+                () -> historyList.getInsets().getLeft(), historyList.insetsProperty()));
+        alignHistoryHeader();
+        enabledToggle.selectedProperty().addListener((ignored, previous, enabled) -> {
+            if (!suppressEvents) toggleAction.accept(enabled);
+        });
+        notifyToggle.selectedProperty().addListener((ignored, previous, enabled) -> {
+            channelCombo.setDisable(!enabled);
+            if (!suppressEvents) changedAction.run();
+        });
+        cronField.textProperty().addListener((ignored, previous, value) -> updateCronHint());
+        for (TextField field : java.util.List.of(nameField, onceDateField, onceTimeField,
+                intervalValueField, dailyTimeField, cronField)) {
+            field.textProperty().addListener((ignored, previous, value) -> formChanged());
+        }
+        promptArea.textProperty().addListener((ignored, previous, value) -> formChanged());
+        intervalUnitCombo.valueProperty().addListener((ignored, previous, value) -> formChanged());
+        channelCombo.valueProperty().addListener((ignored, previous, value) -> formChanged());
+        authorizeToggle.selectedProperty().addListener((ignored, previous, value) -> formChanged());
+    }
+
+    void configure(Consumer<Boolean> onToggle, Runnable onDelete, Runnable onChanged) {
+        toggleAction = onToggle == null ? ignored -> { } : onToggle;
+        deleteAction = onDelete == null ? () -> { } : onDelete;
+        changedAction = onChanged == null ? () -> { } : onChanged;
+    }
+
+    void show(Task task, boolean draft) {
+        show(task, draft, true);
+    }
+
+    void show(Task task, boolean draft, boolean preserveEdits) {
+        Objects.requireNonNull(task, "task");
+        Task previous = viewModel.taskProperty().get();
+        boolean keepForm = preserveEdits && previous != null
+                && previous.id().equals(task.id()) && !task.builtin() && hasUnsavedChanges();
+        this.draft = draft;
+        runtimeTask = task;
+        // Keep the original configuration version while editing, so refreshes cannot
+        // silently overwrite concurrent changes when the user eventually saves.
+        if (!keepForm) viewModel.taskProperty().set(task);
+        root.setVisible(true);
+        root.setManaged(true);
+        showNode(builtinPanel, task.builtin());
+        showNode(editablePanel, !task.builtin());
+        deleteButton.setVisible(!task.builtin());
+        deleteButton.setManaged(!task.builtin());
+        historyList.getItems().setAll(task.history());
+        historyPlaceholder.setVisible(task.history().isEmpty());
+        historyPlaceholder.setManaged(task.history().isEmpty());
+        historyList.setVisible(!task.history().isEmpty());
+        historyList.setManaged(!task.history().isEmpty());
+        if (task.builtin()) {
+            savedForm = null;
+            applyBuiltin(task);
+        } else if (keepForm) applyRuntime(task);
+        else {
+            applyEditable(task);
+            savedForm = editableForm();
+        }
+    }
+
+    void clear() {
+        viewModel.taskProperty().set(null);
+        savedForm = null;
+        runtimeTask = null;
+        historyList.getItems().clear();
+        root.setVisible(false);
+        root.setManaged(false);
+    }
+
+    SaveCommand command() {
+        Task task = Objects.requireNonNull(viewModel.taskProperty().get(), "没有选中的定时任务");
+        String once = (onceDateField.getText().strip() + " " + onceTimeField.getText().strip()).strip();
+        String trigger = viewModel.triggerTypeProperty().get();
+        int interval = "interval".equals(trigger)
+                ? positiveInt(intervalValueField.getText()) : Math.max(1, task.intervalValue());
+        return new SaveCommand(task.id(), nameField.getText(), task.description(),
+                trigger, interval,
+                intervalUnitCombo.getValue(), dailyTimeField.getText(), cronField.getText(),
+                once, promptArea.getText(), enabledToggle.isSelected(), task.version(),
+                notifyToggle.isSelected(), channelCombo.getValue(),
+                authorizeToggle.isSelected(), draft,
+                executionPolicyCombo.getValue() == null
+                        ? ExecutionPolicy.RECURRING : executionPolicyCombo.getValue());
+    }
+
+    Task task() { return viewModel.taskProperty().get(); }
+
+    String editedName() { return nameField.getText(); }
+
+    boolean hasUnsavedChanges() {
+        return savedForm != null && !savedForm.equals(editableForm());
+    }
+
+    private void formChanged() {
+        if (!suppressEvents) changedAction.run();
+    }
+
+    private EditableForm editableForm() {
+        return new EditableForm(nameField.getText(), viewModel.triggerTypeProperty().get(),
+                onceDateField.getText(), onceTimeField.getText(), intervalValueField.getText(),
+                intervalUnitCombo.getValue(), dailyTimeField.getText(), cronField.getText(),
+                promptArea.getText(), enabledToggle.isSelected(), executionPolicyCombo.getValue(),
+                notifyToggle.isSelected(), channelCombo.getValue(), authorizeToggle.isSelected());
+    }
+
+    private record EditableForm(String name, String trigger, String onceDate, String onceTime,
+                                String interval, String intervalUnit, String dailyTime, String cron,
+                                String prompt, boolean enabled, ExecutionPolicy policy,
+                                boolean notifyEnabled, String channel, boolean authorized) { }
+
+    void restoreEnabled(boolean enabled) {
+        boolean previous = suppressEvents;
+        suppressEvents = true;
+        try { enabledToggle.setSelected(enabled); }
+        finally { suppressEvents = previous; }
+    }
+
+    void refreshClock() {
+        Task task = runtimeTask;
+        if (task != null && !task.builtin()) applyRuntime(task);
+    }
+
+    void requestNameFocus() {
+        nameField.requestFocus();
+        nameField.selectAll();
+    }
+
+    @FXML
+    private void triggerRequested(ActionEvent event) {
+        ToggleButton source = (ToggleButton) event.getSource();
+        if (!source.isSelected()) {
+            source.setSelected(true);
+            return;
+        }
+        viewModel.triggerTypeProperty().set(String.valueOf(source.getUserData()));
+        updateTriggerFields();
+        changedAction.run();
+    }
+
+    @FXML
+    private void cronPresetRequested(ActionEvent event) {
+        cronField.setText(String.valueOf(((Button) event.getSource()).getUserData()));
+    }
+
+    @FXML private void deleteRequested() { deleteAction.run(); }
+
+    private void applyBuiltin(Task task) {
+        builtinName.setText(task.name());
+        builtinDescription.setText(task.description());
+        builtinTrigger.setText(task.describeTrigger());
+        builtinSource.setText(task.sourceModule().isBlank() ? "—" : task.sourceModule());
+        builtinNote.setText(task.manuallyRunnable()
+                ? "这是代码内部的周期性机制，由系统自动运行，不可编辑、停用或删除；可从页脚手动触发一次。"
+                : "这是代码内部的周期性机制，由系统自动运行，不可编辑、停用、删除或手动触发。");
+    }
+
+    private void applyEditable(Task task) {
+        suppressEvents = true;
+        try {
+            nameField.setText(task.name());
+            enabledToggle.setSelected(task.enabled());
+            viewModel.triggerTypeProperty().set(task.triggerType().isBlank()
+                    ? "interval" : task.triggerType());
+            selectTrigger(viewModel.triggerTypeProperty().get());
+            String[] once = splitOnce(task.onceDateTime());
+            onceDateField.setText(once[0].isBlank() ? "2026-06-10" : once[0]);
+            onceTimeField.setText(once[1].isBlank() ? "08:30" : once[1]);
+            intervalValueField.setText(String.valueOf(Math.max(1,
+                    task.intervalValue() > 0 ? task.intervalValue() : task.intervalMinutes())));
+            intervalUnitCombo.setValue(java.util.List.of("minute", "hour", "day")
+                    .contains(Objects.requireNonNullElse(task.intervalUnit(), ""))
+                    ? task.intervalUnit() : "minute");
+            dailyTimeField.setText(task.dailyTime().isBlank() ? "09:00" : task.dailyTime());
+            cronField.setText(task.cronExpression());
+            promptArea.setText(task.prompt());
+            executionPolicyCombo.setValue(task.executionPolicy());
+            notifyToggle.setSelected(task.notifyEnabled());
+            channelCombo.setValue(TaskNotificationChannel.ORDERED_CHANNELS
+                    .contains(Objects.requireNonNullElse(task.notifyChannel(), ""))
+                    ? task.notifyChannel()
+                            : TaskNotificationChannel.NONE);
+            channelCombo.setDisable(!task.notifyEnabled());
+            authorizeToggle.setSelected(task.unattendedToolsAuthorized());
+            updateTriggerFields();
+            updateCronHint();
+            applyRuntime(task);
+        } finally {
+            suppressEvents = false;
+        }
+    }
+
+    private void applyRuntime(Task task) {
+        new ScheduleDetailViewSupport.RuntimeFields(stateLabel, triggerStat, nextStat, nextSub,
+                lastStat, lastBadge, runsStat).render(task);
+    }
+
+    private void selectTrigger(String type) {
+        ToggleButton button = switch (type) {
+            case "once" -> onceButton;
+            case "daily" -> dailyButton;
+            case "cron" -> cronButton;
+            default -> intervalButton;
+        };
+        triggerGroup.selectToggle(button);
+    }
+
+    private void updateTriggerFields() {
+        String selected = viewModel.triggerTypeProperty().get();
+        showNode(onceFields, "once".equals(selected));
+        showNode(intervalFields, "interval".equals(selected));
+        showNode(dailyFields, "daily".equals(selected));
+        showNode(cronFields, "cron".equals(selected));
+    }
+
+    private void updateCronHint() {
+        String expression = cronField.getText() == null ? "" : cronField.getText().strip();
+        String validity = expression.isEmpty() ? "" : org.quartz.CronExpression
+                .isValidExpression(expression) ? "  ·  ✓ 表达式有效" : "  ·  ✗ 表达式非法";
+        cronHint.setText("Quartz 6 段：秒 分 时 日 月 周（日/周二选一用 ?）" + validity);
+    }
+
+    private static String[] splitOnce(String value) {
+        String[] result = {"", ""};
+        if (value != null && value.contains(" ")) {
+            String[] parts = value.split(" ", 2);
+            result[0] = parts[0]; result[1] = parts[1];
+        }
+        return result;
+    }
+
+    private static int positiveInt(String value) {
+        String normalized = value == null ? "" : value.strip();
+        if (!normalized.matches("[0-9]+")) {
+            throw new ValidationException("运行间隔必须是大于 0 的整数");
+        }
+        try {
+            int interval = Integer.parseInt(normalized);
+            if (interval < 1) throw new NumberFormatException();
+            return interval;
+        } catch (NumberFormatException invalid) {
+            throw new ValidationException("运行间隔必须是 1 到 2147483647 的整数");
+        }
+    }
+
+    private static void showNode(Node node, boolean visible) {
+        node.setVisible(visible);
+        node.setManaged(visible);
+    }
+
+    private void alignHistoryHeader() {
+        historyHeader.maxWidthProperty().unbind();
+        Node viewport = historyList.lookup(".clipped-container");
+        if (viewport instanceof Region region) {
+            // Match the actual flow viewport when its vertical scrollbar appears.
+            historyHeader.maxWidthProperty().bind(region.widthProperty());
+        } else {
+            historyHeader.setMaxWidth(Double.MAX_VALUE);
+        }
+    }
+
+    @Override
+    public void close() {
+        historyHeader.maxWidthProperty().unbind();
+        historyHeader.translateXProperty().unbind();
+        historyList.setCellFactory(null);
+        historyList.getItems().clear();
+        toggleAction = ignored -> { };
+        deleteAction = () -> { };
+        changedAction = () -> { };
+    }
+}

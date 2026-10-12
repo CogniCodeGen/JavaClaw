@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" spacing="7.0" styleClass="sdd-task-card"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <HBox spacing="6.0" alignment="CENTER_LEFT">
+            <children>
+                <Label fx:id="stateBadge" styleClass="jc-badge, sdd-card-badge"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="progressLabel" styleClass="sdd-card-pct"/>
+            </children>
+        </HBox>
+        <Label fx:id="titleLabel" maxWidth="Infinity" styleClass="sdd-card-title"/>
+        <ProgressBar fx:id="progressBar" maxWidth="Infinity" styleClass="sdd-card-bar"/>
+    </children>
+</VBox>

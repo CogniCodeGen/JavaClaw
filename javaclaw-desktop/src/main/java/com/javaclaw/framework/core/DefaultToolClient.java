@@ -1,0 +1,447 @@
+package com.javaclaw.framework.core;
+
+import com.javaclaw.framework.api.AgentDefinitionRef;
+import com.javaclaw.framework.api.InputBlock;
+import com.javaclaw.framework.api.RunId;
+import com.javaclaw.framework.api.RunLinkage;
+import com.javaclaw.framework.api.RunProfileRef;
+import com.javaclaw.framework.api.RunRequest;
+import com.javaclaw.framework.api.ToolCallEvent;
+import com.javaclaw.framework.api.ToolCallOutcome;
+import com.javaclaw.framework.api.ToolCallRequest;
+import com.javaclaw.framework.api.ToolClient;
+import com.javaclaw.framework.spi.FrameworkTool;
+import com.javaclaw.framework.spi.ToolContext;
+import com.javaclaw.framework.spi.ToolExecutionContext;
+import com.javaclaw.framework.spi.ToolApprovalResolver;
+import com.javaclaw.framework.api.ToolApprovalGrant;
+import com.javaclaw.framework.api.AgentClient;
+import com.javaclaw.framework.api.ManagedTurn;
+import com.javaclaw.framework.api.AgentStep;
+import com.javaclaw.framework.api.StepId;
+import com.javaclaw.framework.api.RunState;
+import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.spi.RunStore;
+import com.javaclaw.framework.spi.EffectReceiptV1;
+import com.javaclaw.framework.spi.ToolEffectPolicy;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+
+/** Direct-tool facade used by Workflow TOOL nodes; no product code executes a callback itself. */
+public final class DefaultToolClient implements ToolClient {
+    private final ToolInvocationGateway gateway;
+    private final AgentCompiler compiler;
+    private final Clock clock;
+    private final ToolApprovalResolver approvals;
+    private final RunStore runs;
+    private final AgentClient agents;
+
+    public DefaultToolClient(
+            ToolInvocationGateway gateway,
+            AgentCompiler compiler,
+            Clock clock) {
+        this(gateway, compiler, clock, (challenge, request) ->
+                CompletableFuture.failedFuture(new ToolApprovalRequiredException(
+                        challenge.tool(), challenge.arguments(), challenge.fingerprint(),
+                        challenge.kind(), challenge.description(),
+                        challenge.trustedContextRead())));
+    }
+
+    public DefaultToolClient(
+            ToolInvocationGateway gateway,
+            AgentCompiler compiler,
+            Clock clock,
+            ToolApprovalResolver approvals) {
+        this(gateway, compiler, clock, approvals, null, null);
+    }
+
+    public DefaultToolClient(ToolInvocationGateway gateway, AgentCompiler compiler, Clock clock,
+                             ToolApprovalResolver approvals, RunStore runs, AgentClient agents) {
+        this.gateway = Objects.requireNonNull(gateway, "gateway");
+        this.compiler = Objects.requireNonNull(compiler, "compiler");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.approvals = Objects.requireNonNull(approvals, "approvals");
+        this.runs = runs;
+        this.agents = agents;
+    }
+
+    @Override
+    public CompletionStage<ToolCallOutcome> invoke(ToolCallRequest request) {
+        var allowedGroups = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        request.allowedToolGroups().forEach(allowedGroups::add);
+        RunRequest owner = RunRequest.builder()
+                .agent(AgentDefinitionRef.latest("system.default"))
+                .profile(RunProfileRef.latest("chat"))
+                .source(request.source())
+                .scope(request.scope())
+                .input(InputBlock.text("direct tool invocation: " + request.toolName()))
+                .linkage(RunLinkage.root(request.correlationId()))
+                .permissionCeiling(request.permissionCeiling())
+                .budget(request.budget())
+                .attributes(java.util.Map.of(ToolGroupAccess.ATTRIBUTE, allowedGroups))
+                .build();
+        ManagedTurn createdTurn = null;
+        com.fasterxml.jackson.databind.JsonNode trustedDelegatableGroups = null;
+        final ManagedTurn ownedTurn;
+        final RunId runId;
+        try {
+            request.cancellation().throwIfCancelled();
+            createdTurn = request.ownerRunId() == null && agents != null ? agents.beginTurn(owner) : null;
+            ownedTurn = createdTurn;
+            if (ownedTurn != null) awaitReady(ownedTurn);
+            runId = ownedTurn != null ? ownedTurn.id()
+                    : request.ownerRunId() != null ? request.ownerRunId() : RunId.random();
+            if ((request.ownerRunId() != null || ownedTurn != null) && runs != null) {
+                var existing = runs.find(runId).orElseThrow(() -> new IllegalArgumentException("tool owner turn not found"));
+                if (!existing.request().scope().equals(request.scope())) {
+                    throw new SecurityException("tool owner scope does not match the request");
+                }
+                if (existing.snapshot().state() != RunState.RUNNING) throw new IllegalStateException("tool owner turn is not running");
+                RunRequest parent = existing.request();
+                var parentGrant = InteractionExecutionPolicy.isMain(parent)
+                        ? parent.attributes().get(ToolGroupAccess.DELEGATABLE_ATTRIBUTE) : null;
+                if (parentGrant == null) parentGrant = parent.attributes().get(ToolGroupAccess.ATTRIBUTE);
+                if (parentGrant == null) parentGrant = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode().add("*");
+                if (!parentGrant.isArray()) throw new SecurityException("stored tool group grant must be an array");
+                var restrictedDelegation = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+                if (request.allowedToolGroups().contains("*")) parentGrant.forEach(restrictedDelegation::add);
+                else request.allowedToolGroups().stream().filter(group -> ToolGroupAccess.allowsDelegation(parent, group))
+                        .forEach(restrictedDelegation::add);
+                trustedDelegatableGroups = restrictedDelegation;
+                var restrictedGroups = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+                var parentGroups = parent.attributes().get(ToolGroupAccess.ATTRIBUTE);
+                if (request.allowedToolGroups().contains("*") && parentGroups != null && parentGroups.isArray()) {
+                    parentGroups.forEach(restrictedGroups::add);
+                } else {
+                    request.allowedToolGroups().stream().filter(group -> ToolGroupAccess.allows(parent, group))
+                            .forEach(restrictedGroups::add);
+                }
+                var attributes = new java.util.LinkedHashMap<>(parent.attributes());
+                attributes.put(ToolGroupAccess.ATTRIBUTE, restrictedGroups);
+                owner = new RunRequest(parent.agent(), parent.profile(), owner.source(), owner.scope(),
+                        owner.inputs(), owner.linkage(), owner.permissionCeiling().intersect(parent.permissionCeiling()),
+                        owner.budget().restrictWith(parent.budget()), owner.idempotencyKey(), attributes);
+            }
+        } catch (RuntimeException failure) {
+            if (createdTurn != null) createdTurn.fail(failure);
+            return CompletableFuture.failedFuture(failure);
+        }
+        final String invocationId = request.invocationId() == null
+                ? UUID.randomUUID().toString() : request.invocationId();
+        AgentStep completedInputReplay = null;
+        if (runs != null) {
+            var persisted = new RunStepQuery(runs).step(runId, StepId.tool(runId, invocationId));
+            if (persisted.isPresent()) {
+                var step = persisted.get();
+                if (!step.input().path("tool").asText().equals(request.toolName())
+                        || !step.input().path("arguments").equals(request.arguments())) {
+                    return CompletableFuture.failedFuture(new IllegalArgumentException("tool invocation identity was reused with different arguments"));
+                }
+                if (step.state() != AgentStep.State.COMPLETED) {
+                    return CompletableFuture.failedFuture(new ToolRecoveryRequiredException(step.id().value()));
+                }
+                if (BrowserUserInputRecovery.candidate(owner, step)) completedInputReplay = step;
+                else return CompletableFuture.completedFuture(replayOutcome(runId, invocationId, step));
+            }
+        }
+        ExecutionPlan plan;
+        try {
+            plan = compiler.compile(owner);
+        } catch (RuntimeException failure) {
+            if (ownedTurn != null) ownedTurn.fail(failure);
+            return CompletableFuture.failedFuture(failure);
+        }
+        RunRequest effectiveOwner = plan.annotate(owner, trustedDelegatableGroups);
+        com.javaclaw.framework.spi.CancellationToken cancellation = () -> request.cancellation().cancelled()
+                || (ownedTurn != null && ownedTurn.cancelled())
+                || (runs != null && runs.find(runId).map(value -> value.snapshot().state() != RunState.RUNNING).orElse(true));
+        List<FrameworkTool> tools = new ArrayList<>();
+        try {
+            RunControl control = invocationControl(plan.descriptor().budget(), runId);
+            control.throwIfCancelled();
+            ToolContext context = new ToolContext(runId, request.scope(),
+                    plan.descriptor().permissions(), cancellation,
+                    control.deadline(), effectiveOwner);
+            plan.toolFactories().forEach(factory -> tools.add(factory.create(context)));
+            plan.toolProviderFactories().forEach(provider ->
+                    tools.addAll(provider.create(context)));
+            FrameworkTool selected = tools.stream()
+                    .filter(tool -> tool.descriptor().name().equals(request.toolName()))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                            "tool not found: " + request.toolName()));
+            if (!ToolGroupAccess.allows(effectiveOwner, selected.descriptor().group())) {
+                throw new ToolPermissionDeniedException(
+                        "tool group is not allowed: " + selected.descriptor().group());
+            }
+            if (completedInputReplay != null) {
+                BrowserUserInputRecovery.restore(effectiveOwner, runs, runId, completedInputReplay, selected);
+                ToolCallOutcome replay = replayOutcome(runId, invocationId, completedInputReplay);
+                RuntimeException closeFailure = closeResources(tools, plan);
+                return closeFailure == null ? CompletableFuture.completedFuture(replay)
+                        : CompletableFuture.failedFuture(closeFailure);
+            }
+            List<ToolCallEvent> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+            ReasoningEventSink durable = runs == null ? null : StepEvents.durableSink(runs, runId);
+            ReasoningEventSink sink = new ReasoningEventSink() {
+                @Override public void emit(String type, int version, String producer,
+                                           com.fasterxml.jackson.databind.JsonNode payload) {
+                    if (durable != null) durable.emit(type, version, producer, payload);
+                    events.add(new ToolCallEvent(type, version, producer, payload));
+                }
+
+                @Override public void toolStarted(com.fasterxml.jackson.databind.JsonNode step,
+                                                  com.fasterxml.jackson.databind.JsonNode started) {
+                    if (durable != null) persistToolStart(runId, durable, step, started);
+                    events.add(new ToolCallEvent("core.step.started", 1, "framework.core", step));
+                    events.add(new ToolCallEvent("core.tool.started", 1, "framework.core", started));
+                }
+            };
+            ToolExecutionContext execution = new ToolExecutionContext(
+                    runId, invocationId, cancellation, control.deadline(), request.causationStepId());
+            ToolInvocationRequest invocation = new ToolInvocationRequest(
+                    selected, request.arguments(), execution, effectiveOwner,
+                    plan.descriptor().permissions(), plan.descriptor().toolPolicy(),
+                    plan.toolPolicies(), plan.toolResultPostProcessors(),
+                    control, sink);
+            CompletionStage<ToolInvocationResult> invoked = invokeWithApproval(
+                    invocation, effectiveOwner, control);
+            CompletableFuture<ToolCallOutcome> published = new CompletableFuture<>();
+            invoked.whenComplete((result, failure) -> {
+                Throwable cause = failure == null ? null : unwrap(failure);
+                RuntimeException closeFailure = closeResources(tools, plan);
+                if (cause != null) {
+                    if (closeFailure != null) cause.addSuppressed(closeFailure);
+                    if (ownedTurn != null) ownedTurn.fail(cause);
+                    published.completeExceptionally(cause);
+                } else if (closeFailure != null) {
+                    if (ownedTurn != null) ownedTurn.fail(closeFailure);
+                    published.completeExceptionally(closeFailure);
+                } else {
+                    try {
+                        ToolInvocationResult completed = Objects.requireNonNull(
+                                result, "tool invocation result");
+                        if (ownedTurn != null) ownedTurn.complete(completed.output());
+                        published.complete(new ToolCallOutcome(
+                                completed.output(), completed.duration(), events,
+                                completed.status(), completed.errorCode(),
+                                completed.displayMessage()));
+                    } catch (Throwable invalidResult) {
+                        published.completeExceptionally(invalidResult);
+                    }
+                }
+            });
+            return published;
+        } catch (RuntimeException failure) {
+            if (ownedTurn != null) ownedTurn.fail(failure);
+            RuntimeException closeFailure = closeResources(tools, plan);
+            if (closeFailure != null) failure.addSuppressed(closeFailure);
+            return CompletableFuture.failedFuture(failure);
+        }
+    }
+
+    private ToolCallOutcome replayOutcome(RunId runId, String invocationId, AgentStep step) {
+        List<ToolCallEvent> replay = runs.eventsAfter(runId, 0).stream()
+                .filter(event -> invocationId.equals(event.payload().path("invocationId").asText())
+                        || step.id().value().equals(event.payload().path("stepId").asText()))
+                .map(event -> new ToolCallEvent(event.type(), event.schemaVersion(), event.producer(), event.payload())).toList();
+        return new ToolCallOutcome(step.output().path("modelOutput"),
+                java.time.Duration.ofMillis(step.output().path("durationMillis").asLong()), replay,
+                com.javaclaw.framework.api.ToolExecutionStatus.fromCode(step.output().path("status").asText("")),
+                step.output().path("errorCode").asText(""), step.output().path("displayMessage").asText(""));
+    }
+
+    private RunControl invocationControl(RunBudget budget, RunId runId) {
+        Instant deadline = clock.instant().plus(budget.timeout());
+        if (runs != null) {
+            var stored = runs.find(runId).orElseThrow(() ->
+                    new IllegalStateException("tool owner turn does not exist: " + runId));
+            Instant ownerDeadline = PersistedRunDeadline.resolve(stored, stored.request().budget(),
+                    runs.eventsAfter(runId, 0));
+            if (ownerDeadline.isBefore(deadline)) deadline = ownerDeadline;
+        }
+        RunControl control = new RunControl(budget, clock, deadline);
+        restoreEffectAttempts(control, runId);
+        return control;
+    }
+
+    /** 持久化开始事件前，在 Turn 的接受锁内检查总预算，避免并发节点或恢复重置计数。 */
+    private void persistToolStart(RunId runId, ReasoningEventSink durable,
+                                  com.fasterxml.jackson.databind.JsonNode step,
+                                  com.fasterxml.jackson.databind.JsonNode started) {
+        runs.withRunAcceptanceLock(runId, () -> {
+            var stored = runs.find(runId).orElseThrow(() ->
+                    new IllegalStateException("tool owner turn does not exist: " + runId));
+            if (stored.snapshot().state() != RunState.RUNNING)
+                throw new IllegalStateException("tool owner turn is not running");
+            var journal = runs.eventsAfter(runId, 0);
+            RunControl ownerControl = new RunControl(stored.request().budget(), clock,
+                    PersistedRunDeadline.resolve(stored, stored.request().budget(), journal));
+            PersistedRunStateRestorer.restoreToolCalls(journal, ownerControl);
+            String fingerprint = started.path("fingerprint").asText("");
+            ownerControl.recordToolCall(fingerprint);
+            if (agents instanceof AgentEngine engine) engine.recordDirectToolCall(runId, fingerprint,
+                    started.path("invocationId").asText());
+            durable.toolStarted(step, started);
+            return null;
+        });
+    }
+
+    /**
+     * 节点保留局部预算控制；Turn 总预算由持久化开始边界统一校验。
+     * 回放副作用身份，避免图重试使用新的调用 ID 重发结果未明的副作用。
+     */
+    private void restoreEffectAttempts(RunControl control, RunId runId) {
+        if (runs == null) return;
+        for (var event : runs.eventsAfter(runId, 0)) {
+            var payload = event.payload();
+            if (event.type().equals("core.task.repair_requested")) {
+                control.enterTaskRepair();
+            } else if (event.type().equals("core.tool.started")
+                    && event.producer().equals("framework.core")) {
+                String fingerprint = payload.path("fingerprint").asText("");
+                if (!fingerprint.isBlank()) {
+                    String key = payload.path("effectKey").asText(fingerprint);
+                    String invocationId = payload.path("invocationId").asText(fingerprint);
+                    String tool = payload.path("tool").asText("");
+                    ToolEffectPolicy policy;
+                    try { policy = ToolEffectPolicy.valueOf(
+                            payload.path("effectPolicy").asText("LEGACY")); }
+                    catch (IllegalArgumentException unknown) { policy = ToolEffectPolicy.LEGACY; }
+                    if (!payload.has("effectPolicy") && desktopInput(tool))
+                        policy = ToolEffectPolicy.OBSERVATION_GATED;
+                    String resourceKey = payload.path("resourceKey").asText("");
+                    if (policy == ToolEffectPolicy.OBSERVATION_GATED
+                            && resourceKey.isBlank() && desktopInput(tool))
+                        resourceKey = "desktop:unknown";
+                    control.restoreEffectStart(invocationId, fingerprint,
+                            key.isBlank() ? fingerprint : key,
+                            payload.path("idempotent").asBoolean(false), policy, resourceKey);
+                    if ("web_navigate".equals(tool) && payload.path("trustedBrowserNavigation").isBoolean()
+                            && payload.path("trustedBrowserNavigation").booleanValue())
+                        control.restoreTrustedBrowserNavigationStart(invocationId);
+                }
+            } else if (event.type().equals("core.tool.receipt")
+                    && event.producer().equals("framework.core")) {
+                String invocationId = payload.path("invocationId").asText(
+                        payload.path("fingerprint").asText(""));
+                if (!invocationId.isBlank()) {
+                    try {
+                        EffectReceiptV1.Status status = EffectReceiptV1.Status.valueOf(
+                                payload.path("status").asText(""));
+                        control.restoreEffectReceipt(invocationId, status,
+                                payload.path("metadata").path("delivery").asText(""));
+                        control.restoreTrustedBrowserNavigationReceipt(invocationId,
+                                payload.path("tool").asText(""), payload.path("operation").asText(""), status,
+                                payload.path("metadata").path("delivery").asText(""),
+                                payload.path("target").asText(""));
+                    } catch (IllegalArgumentException ignored) {
+                        // Malformed or future receipt statuses do not grant retry permission.
+                    }
+                }
+            } else if (event.type().equals("core.effect.reconciled")
+                    && event.producer().equals("framework.core")
+                    && payload.path("outcome").asText("").equals("SATISFIED")) {
+                String invocationId = payload.path("actionInvocationId").asText("");
+                String targetId = payload.path("targetId").asText("");
+                if (!invocationId.isBlank() && !targetId.isBlank())
+                    control.restoreEffectReconciliation(invocationId, "desktop:" + targetId);
+            }
+        }
+    }
+
+    private static boolean desktopInput(String tool) {
+        return Set.of("desktop_session_click", "desktop_session_type",
+                "desktop_session_key", "desktop_session_scroll").contains(tool);
+    }
+
+    private static void awaitReady(ManagedTurn turn) {
+        try { turn.ready().toCompletableFuture().get(); }
+        catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new com.javaclaw.framework.spi.RunCancelledException();
+        } catch (java.util.concurrent.ExecutionException failure) {
+            Throwable cause = unwrap(failure);
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException("tool turn did not become ready", cause);
+        }
+    }
+
+    private CompletionStage<ToolInvocationResult> invokeWithApproval(
+            ToolInvocationRequest invocation,
+            RunRequest owner,
+            RunControl control) {
+        CompletableFuture<ToolInvocationResult> result = new CompletableFuture<>();
+        gateway.invoke(invocation).whenComplete((value, failure) -> {
+            if (failure == null) {
+                result.complete(value);
+                return;
+            }
+            Throwable cause = unwrap(failure);
+            if (!(cause instanceof ToolApprovalRequiredException required)) {
+                result.completeExceptionally(cause);
+                return;
+            }
+            approvals.resolve(required.challenge(), owner).whenComplete((grant, resolveFailure) -> {
+                if (resolveFailure != null) {
+                    result.completeExceptionally(unwrap(resolveFailure));
+                    return;
+                }
+                if (grant == null || !grant.approved()
+                        || !grant.tool().equals(required.toolName())
+                        || !grant.fingerprint().equals(required.fingerprint())) {
+                    result.completeExceptionally(new ToolPermissionDeniedException(
+                            "tool approval denied: " + required.toolName()));
+                    return;
+                }
+                control.approveToolCall(grant);
+                // A resolver gets one challenge and the invocation gets exactly one retry.
+                gateway.invoke(invocation).whenComplete((retried, retryFailure) -> {
+                    if (retryFailure == null) result.complete(retried);
+                    else result.completeExceptionally(unwrap(retryFailure));
+                });
+            });
+        });
+        return result;
+    }
+
+    private static RuntimeException closeTools(List<FrameworkTool> tools) {
+        RuntimeException first = null;
+        for (int index = tools.size() - 1; index >= 0; index--) {
+            try {
+                tools.get(index).close();
+            } catch (Exception failure) {
+                if (first == null) first = new IllegalStateException("cannot close tool", failure);
+                else first.addSuppressed(failure);
+            }
+        }
+        return first;
+    }
+
+    private static RuntimeException closeResources(
+            List<FrameworkTool> tools, ExecutionPlan plan) {
+        RuntimeException first = closeTools(tools);
+        try {
+            plan.close();
+        } catch (RuntimeException failure) {
+            if (first == null) first = failure;
+            else first.addSuppressed(failure);
+        }
+        return first;
+    }
+
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) current = current.getCause();
+        return current;
+    }
+}

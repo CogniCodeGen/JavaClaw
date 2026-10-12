@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<StackPane fx:id="root" accessibleText="技能中心"
+           xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.javaclaw.ui.javafx.skill.SkillCenterController">
+    <children>
+        <HBox>
+            <children>
+                <VBox prefWidth="232.0" minWidth="200.0" styleClass="modal-left-pane">
+                    <children>
+                        <Label text="技能中心" styleClass="modal-left-title">
+                            <padding><Insets top="18.0" right="16.0" bottom="10.0" left="16.0"/></padding>
+                        </Label>
+                        <HBox spacing="6.0">
+                            <padding><Insets right="10.0" bottom="8.0" left="10.0"/></padding>
+                            <children>
+                                <Button text="＋ 新建" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        onAction="#createRequested"
+                                        styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                <Button text="导入" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        onAction="#importRequested"
+                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm">
+                                    <tooltip><Tooltip text="从本地目录或 zip 包导入技能（包含 SKILL.md）"/></tooltip>
+                                </Button>
+                            </children>
+                        </HBox>
+                        <HBox spacing="6.0">
+                            <padding><Insets right="10.0" bottom="8.0" left="10.0"/></padding>
+                            <children>
+                                <Button fx:id="proposalsButton" text="待审提案" maxWidth="Infinity"
+                                        HBox.hgrow="ALWAYS" onAction="#proposalsRequested"
+                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm">
+                                    <tooltip><Tooltip text="审阅智能体自学习产生的技能创建/修补提案"/></tooltip>
+                                </Button>
+                                <Button text="技能包" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        onAction="#bundlesRequested"
+                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm">
+                                    <tooltip><Tooltip text="管理技能包（一组配合使用的技能 + 附加指令）"/></tooltip>
+                                </Button>
+                            </children>
+                        </HBox>
+                        <ListView fx:id="skillList" VBox.vgrow="ALWAYS"
+                                  styleClass="skill-left-scroll, skill-list" accessibleText="技能列表"/>
+                        <Region minHeight="1.0" prefHeight="1.0" style="-fx-background-color: -jc-border;"/>
+                        <VBox spacing="6.0">
+                            <padding><Insets top="10.0" right="10.0" bottom="12.0" left="10.0"/></padding>
+                            <children>
+                                <Button text="打开技能目录" maxWidth="Infinity"
+                                        onAction="#openSkillsDirectoryRequested"
+                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                <Label fx:id="pathLabel" wrapText="true" styleClass="skill-path-hint"/>
+                            </children>
+                        </VBox>
+                    </children>
+                </VBox>
+                <VBox HBox.hgrow="ALWAYS">
+                    <children>
+                        <StackPane VBox.vgrow="ALWAYS" styleClass="modal-content-area">
+                            <padding><Insets top="22.0" right="26.0" bottom="16.0" left="26.0"/></padding>
+                            <children>
+                                <VBox fx:id="emptyPanel" spacing="12.0" alignment="CENTER">
+                                    <children>
+                                        <Label text="⚙" styleClass="empty-state-icon"/>
+                                        <Label text="选择或新建一个技能" styleClass="empty-state-text"/>
+                                        <Label text="每个技能是一个独立目录，核心文件为 SKILL.md&#10;可选子目录：scripts/  references/  assets/&#10;&#10;启用后提示词将注入到智能体的系统指令中"
+                                               wrapText="true" maxWidth="320.0"
+                                               styleClass="sec-hint, empty-state-hint"/>
+                                    </children>
+                                </VBox>
+                                <fx:include fx:id="editor" source="skill-editor.fxml"/>
+                                <fx:include fx:id="proposals" source="skill-proposals.fxml"/>
+                                <fx:include fx:id="bundles" source="skill-bundles.fxml"/>
+                            </children>
+                        </StackPane>
+                        <HBox alignment="CENTER_RIGHT" styleClass="modal-foot">
+                            <children>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Button text="关闭" onAction="#closeRequested"
+                                        styleClass="button, jc-btn, jc-btn-ghost"/>
+                            </children>
+                        </HBox>
+                    </children>
+                </VBox>
+            </children>
+        </HBox>
+        <StackPane fx:id="loadingOverlay" visible="false" managed="false"
+                   styleClass="loading-overlay" accessibleText="正在加载技能中心">
+            <children><ProgressIndicator maxWidth="40.0" maxHeight="40.0"/></children>
+        </StackPane>
+        <fx:include fx:id="toast" source="../control/window-toast.fxml"/>
+    </children>
+</StackPane>

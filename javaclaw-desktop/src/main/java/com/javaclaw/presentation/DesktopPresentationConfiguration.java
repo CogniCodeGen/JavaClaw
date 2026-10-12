@@ -1,0 +1,176 @@
+package com.javaclaw.presentation;
+
+import com.javaclaw.chat.AssistantMessageFactory;
+import com.javaclaw.chat.ChatMessageRowFactory;
+import com.javaclaw.chat.ChatInlineImageRenderer;
+import com.javaclaw.chat.ChatShortcutHelpFactory;
+import com.javaclaw.chat.ClarificationCardFactory;
+import com.javaclaw.chat.ExpandableMarkdownBlockFactory;
+import com.javaclaw.chat.MarkdownBubbleFactory;
+import com.javaclaw.chat.MarkdownRenderEngine;
+import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
+import com.javaclaw.chat.markdown.MarkdownRegionViewFactory;
+import com.javaclaw.platform.desktop.ExternalLinkOpener;
+import com.javaclaw.platform.desktop.ProjectAttachmentPicker;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.control.WindowToastFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuEntryFactory;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsExportTargetPicker;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
+import com.javaclaw.ui.javafx.diagnostics.JavaFxDiagnosticsExportTargetPicker;
+import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
+import com.javaclaw.ui.javafx.theme.ThemeManager;
+import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
+import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
+import com.javaclaw.ui.javafx.theme.FontManagerFontSelectionService;
+import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.config.AgentConfig;
+import com.javaclaw.app.UIHelper;
+import com.javaclaw.ui.javafx.theme.FontSelectionService;
+import com.javaclaw.ui.javafx.plugin.v2.UnifiedPluginCenterViewFactory;
+import com.javaclaw.ui.javafx.desktop.DesktopPreviewWindow;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/** 桌面 Presentation 层的显式工厂装配；页面 Controller 仍按 FXML 加载临时创建。 */
+@Configuration(proxyBeanMethods = false)
+public class DesktopPresentationConfiguration {
+
+    @Bean(destroyMethod = "close")
+    DesktopPreviewWindow desktopPreviewWindow(FxDispatcher fx) {
+        return new DesktopPreviewWindow(fx);
+    }
+
+    @Bean
+    ImageViewerFactory imageViewerFactory(
+            SpringFxmlLoader loader,
+            FxDispatcher fx) {
+        return new ImageViewerFactory(loader, fx);
+    }
+
+    @Bean
+    ChatInlineImageRenderer chatInlineImageRenderer(ImageViewerFactory imageViewer) {
+        return new ChatInlineImageRenderer(imageViewer);
+    }
+
+    @Bean
+    ChatShortcutHelpFactory chatShortcutHelpFactory(
+            SpringFxmlLoader loader, UIHelper ui) {
+        return new ChatShortcutHelpFactory(loader, ui);
+    }
+
+    @Bean
+    WindowToastFactory windowToastFactory(SpringFxmlLoader loader) {
+        return new WindowToastFactory(loader);
+    }
+
+    @Bean
+    MarkdownRegionViewFactory markdownRegionViewFactory(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            ImageViewerFactory imageViewer) {
+        return new MarkdownRegionViewFactory(loader, fx, imageViewer);
+    }
+
+    @Bean
+    MarkdownRenderEngine markdownRenderEngine(MarkdownRegionViewFactory regions) {
+        return (markdown, style) -> MarkdownParagraphRenderer.render(markdown, style, regions);
+    }
+
+    @Bean
+    ExternalLinkOpener externalLinkOpener(ManagedTaskExecutor tasks) {
+        return new ExternalLinkOpener(tasks);
+    }
+
+    @Bean
+    ProjectAttachmentPicker projectAttachmentPicker() {
+        return new ProjectAttachmentPicker();
+    }
+
+    @Bean
+    DiagnosticsExportTargetPicker diagnosticsExportTargetPicker() {
+        return new JavaFxDiagnosticsExportTargetPicker();
+    }
+
+    @Bean
+    DiagnosticsViewFactory diagnosticsViewFactory(SpringFxmlLoader loader) {
+        return new DiagnosticsViewFactory(loader);
+    }
+
+
+
+    @Bean
+    UnifiedPluginCenterViewFactory pluginCenterViewFactory(SpringFxmlLoader loader) {
+        return new UnifiedPluginCenterViewFactory(loader);
+    }
+
+    @Bean
+    MarkdownBubbleFactory markdownBubbleFactory(SpringFxmlLoader loader) {
+        return new MarkdownBubbleFactory(loader);
+    }
+
+    @Bean
+    AssistantMessageFactory assistantMessageFactory(SpringFxmlLoader loader) {
+        return new AssistantMessageFactory(loader);
+    }
+
+    @Bean
+    ExpandableMarkdownBlockFactory expandableMarkdownBlockFactory(SpringFxmlLoader loader) {
+        return new ExpandableMarkdownBlockFactory(loader);
+    }
+
+    @Bean
+    ChatMessageRowFactory chatMessageRowFactory(SpringFxmlLoader loader) {
+        return new ChatMessageRowFactory(loader);
+    }
+
+    @Bean
+    ClarificationCardFactory clarificationCardFactory(SpringFxmlLoader loader) {
+        return new ClarificationCardFactory(loader);
+    }
+
+    @Bean
+    LoopStatusViewFactory loopStatusViewFactory(SpringFxmlLoader loader) {
+        return new LoopStatusViewFactory(loader);
+    }
+
+    @Bean(destroyMethod = "close")
+    ThemeManager themeManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        return new ThemeManager(config, fx, tasks);
+    }
+
+    @Bean(destroyMethod = "close")
+    FontManager fontManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        return new FontManager(config, fx, tasks);
+    }
+
+    @Bean
+    ThemeSelectionService themeSelectionService(ThemeManager manager) {
+        return new ThemeManagerThemeSelectionService(manager);
+    }
+
+    @Bean
+    FontSelectionService fontSelectionService(FontManager manager) {
+        return new FontManagerFontSelectionService(manager);
+    }
+
+    @Bean
+    ThemeMenuEntryFactory themeMenuEntryFactory(SpringFxmlLoader loader) {
+        return new ThemeMenuEntryFactory(loader);
+    }
+
+    @Bean
+    KnowledgeMenuEntryFactory knowledgeMenuEntryFactory(SpringFxmlLoader loader) {
+        return new KnowledgeMenuEntryFactory(loader);
+    }
+}

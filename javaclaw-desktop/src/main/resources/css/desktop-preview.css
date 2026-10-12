@@ -1,0 +1,96 @@
+/* 桌面预览沿用 chat.css 的主题令牌，包含迷你和最大化布局。 */
+.desktop-preview-root {
+    -fx-background-color: transparent;
+    -fx-padding: 8;
+}
+.desktop-preview-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 16;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 16;
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 10, 0.08, 0, 2);
+}
+.desktop-preview-header {
+    -fx-padding: 14 14 12 16;
+    -fx-cursor: move;
+}
+.desktop-preview-brand {
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 10;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-size: 17;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-min-width: 34;
+    -fx-min-height: 34;
+}
+.desktop-preview-title {
+    -fx-font-size: 14;
+    -fx-font-weight: bold;
+    -fx-text-fill: -jc-text-title;
+}
+.desktop-preview-subtitle, .desktop-preview-status, .desktop-preview-hint {
+    -fx-font-size: 11;
+    -fx-text-fill: -jc-text-hint;
+}
+.desktop-preview-window-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 7;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 18;
+    -fx-padding: 0;
+    -fx-min-width: 26;
+    -fx-min-height: 26;
+    -fx-cursor: hand;
+}
+.desktop-preview-window-button:hover {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-title;
+}
+.desktop-preview-close:hover {
+    -fx-background-color: -jc-danger-bg;
+    -fx-text-fill: -jc-danger;
+}
+.desktop-preview-viewport {
+    -fx-background-color: -jc-surface-panel;
+    -fx-background-radius: 10;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 10;
+    -fx-padding: 8 22;
+    -fx-border-insets: 0 14;
+    -fx-background-insets: 0 14;
+}
+.desktop-preview-empty {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 12;
+}
+.desktop-preview-footer { -fx-padding: 12 16 14 16; }
+.desktop-preview-state {
+    -fx-font-size: 10;
+    -fx-font-weight: bold;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-radius: 6;
+    -fx-padding: 3 7;
+}
+.desktop-preview-state:live {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+}
+.desktop-preview-state:warning {
+    -fx-background-color: -jc-warning-bg;
+    -fx-text-fill: -jc-warning;
+}
+.desktop-preview-action { -fx-text-fill: -jc-text-body; -fx-font-size: 12; }
+.desktop-preview-resize {
+    -fx-background-color: -jc-border-strong;
+    -fx-shape: "M 0 12 L 12 0 L 12 3 L 3 12 Z M 6 12 L 12 6 L 12 9 L 9 12 Z";
+    -fx-cursor: se-resize;
+}
+.desktop-preview-root:mini .desktop-preview-header { -fx-padding: 8 9; -fx-spacing: 7; }
+.desktop-preview-root:mini .desktop-preview-brand { -fx-min-width: 24; -fx-min-height: 24; -fx-font-size: 13; }
+.desktop-preview-root:mini .desktop-preview-title { -fx-font-size: 12; }
+.desktop-preview-root:mini .desktop-preview-footer { -fx-padding: 7 10 9 10; }
+.desktop-preview-root:mini .desktop-preview-viewport { -fx-padding: 8 16; -fx-border-insets: 0 8; -fx-background-insets: 0 8; }
+.desktop-preview-root:maximized { -fx-padding: 0; }
+.desktop-preview-root:maximized .desktop-preview-card { -fx-background-radius: 0; -fx-border-radius: 0; -fx-effect: null; }

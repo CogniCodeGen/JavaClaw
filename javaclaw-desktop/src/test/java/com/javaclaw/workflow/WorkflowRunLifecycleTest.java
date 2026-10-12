@@ -1,0 +1,149 @@
+package com.javaclaw.workflow;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.config.FileDatabaseAccess;
+import com.javaclaw.platform.execution.ManagedTask;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
+import com.javaclaw.workflow.editor.WorkflowEditorModel;
+import com.javaclaw.workflow.model.GraphState;
+import com.javaclaw.workflow.model.RunStatus;
+import com.javaclaw.workflow.node.PublicNodeCatalog;
+import com.javaclaw.workflow.runtime.CheckpointPhase;
+import com.javaclaw.workflow.runtime.GraphExecutionManager;
+import com.javaclaw.workflow.runtime.GraphRun;
+import com.javaclaw.workflow.store.H2GraphCheckpointStore;
+import com.javaclaw.workflow.store.WorkflowRunMissingException;
+import com.javaclaw.workflow.store.WorkflowRunStateException;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class WorkflowRunLifecycleTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    @TempDir Path temp;
+
+    @Test
+    void 父运行缺失时更新与检查点都明确失败() {
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
+        GraphRun missing = runWithStatus("missing", RunStatus.RUNNING);
+
+        assertThrows(WorkflowRunMissingException.class, () -> store.updateRun(missing));
+        assertThrows(WorkflowRunMissingException.class,
+                () -> store.checkpoint(missing, "start", CheckpointPhase.BEFORE_NODE));
+        assertNull(store.loadRun(missing.id()));
+    }
+
+    @Test
+    void 恢复必须匹配预期旧状态() {
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
+        GraphRun paused = runWithStatus("paused", RunStatus.PAUSED);
+        registerDefinition(paused);
+        store.createRun(paused);
+        GraphRun run = runWithStatus(paused.id(), RunStatus.RUNNING);
+
+        assertThrows(WorkflowRunStateException.class,
+                () -> store.activateExistingRun(run, RunStatus.RECOVERY_REQUIRED));
+        assertEquals(RunStatus.PAUSED, store.loadRun(run.id()).status());
+    }
+
+    @Test
+    void 缺少扩展锁快照的运行拒绝恢复() throws Exception {
+        var database = new FileDatabaseAccess(temp);
+        var store = new H2GraphCheckpointStore("ws", database, JSON);
+        GraphRun run = runWithStatus("missing-locks", RunStatus.PAUSED);
+        registerDefinition(run);
+        store.createRun(run);
+        try (var connection = database.open();
+             var update = connection.prepareStatement("""
+                     UPDATE workflow_runs SET extension_locks_json=''
+                     WHERE workspace_id='ws' AND id=?
+                     """)) {
+            update.setString(1, run.id());
+            update.executeUpdate();
+        }
+
+        assertThrows(IllegalStateException.class, () -> store.loadRun(run.id()));
+    }
+
+    @Test
+    void 执行线程提交失败会把已创建运行置为失败() {
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
+        var rejecting = new RejectingExecutor();
+        var graph = validGraph();
+        new com.javaclaw.workflow.store.H2WorkflowDefinitionStore("ws", new FileDatabaseAccess(temp), JSON)
+                .createDraft(graph);
+        try (var executions = new GraphExecutionManager(
+                PublicNodeCatalog.createRegistry(), store, rejecting)) {
+            assertThrows(RejectedExecutionException.class, () ->
+                    executions.start(graph, "thread", new GraphState(), event -> {}, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
+        }
+        var runs = store.listRuns(graph.id(), 10);
+        assertEquals(1, runs.size());
+        assertEquals(RunStatus.FAILED, runs.getFirst().status());
+        assertTrue(runs.getFirst().error().contains("任务提交失败"));
+    }
+
+    @Test
+    void 取消已暂停工作流同时释放持久协调轮次() {
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
+        var agents = new com.javaclaw.support.CapturingLifecycleClient();
+        var owner = agents.beginTurn(com.javaclaw.framework.api.RunRequest.builder()
+                .agent(com.javaclaw.framework.api.AgentDefinitionRef.latest("system.default"))
+                .profile(com.javaclaw.framework.api.RunProfileRef.latest("chat"))
+                .source(com.javaclaw.framework.api.InvocationSource.chat())
+                .input(com.javaclaw.framework.api.InputBlock.text("paused work"))
+                .scope(new com.javaclaw.framework.api.RunScope("ws", "local-user", "thread"))
+                .idempotencyKey("paused-owner").build());
+        owner.pause("checkpoint");
+        var graph = validGraph();
+        var state = new GraphState().apply(com.javaclaw.workflow.model.StatePatch.builder()
+                .set("_agent.turnId", owner.id().value()).build());
+        GraphRun paused = new GraphRun("paused-owned", graph.id(), graph.version(), "thread", graph,
+                state, RunStatus.PAUSED, null, graph.startNodeId(), 0, 0,
+                null, null, null, List.of(), System.currentTimeMillis(), System.currentTimeMillis());
+        registerDefinition(paused);
+        store.createRun(paused);
+        try (var executions = new GraphExecutionManager(PublicNodeCatalog.createRegistry(), store,
+                new RejectingExecutor())) {
+            executions.bindAgentClient(agents, "ws");
+            assertTrue(executions.cancel(paused.id()));
+            assertEquals(RunStatus.CANCELLED, store.loadRun(paused.id()).status());
+            assertEquals(com.javaclaw.framework.api.RunState.CANCELLED,
+                    owner.completion().toCompletableFuture().join().state());
+        }
+    }
+
+    private void registerDefinition(GraphRun run) {
+        new com.javaclaw.workflow.store.H2WorkflowDefinitionStore("ws", new FileDatabaseAccess(temp), JSON)
+                .createDraft(run.definition());
+    }
+
+    private static com.javaclaw.workflow.model.GraphDefinition validGraph() {
+        return WorkflowEditorModel.blank("生命周期测试");
+    }
+
+    private static GraphRun runWithStatus(String id, RunStatus status) {
+        var graph = validGraph();
+        long now = System.currentTimeMillis();
+        return new GraphRun(id, graph.id(), graph.version(), "thread", graph,
+                new GraphState(), status, null, graph.startNodeId(), 0, 0,
+                null, null, null, List.of(), now, now);
+    }
+
+    private static final class RejectingExecutor implements TaskSubmitter {
+        @Override
+        public <T> TaskHandle<T> submit(TaskSpec spec, ManagedTask<T> task) {
+            throw new RejectedExecutionException("test rejection");
+        }
+    }
+}

@@ -1,0 +1,122 @@
+syntax = "proto3";
+package javaclaw.plugin.v2;
+option java_package = "com.javaclaw.plugin.protocol.v2";
+option java_multiple_files = true;
+option java_outer_classname = "PluginProtocolV2";
+import "google/protobuf/empty.proto";
+
+// 身份绑定不可变工件、工作区与配置；每条连接只允许一个实例。
+message PluginIdentity {
+  string plugin_id = 1;
+  string workspace_id = 2;
+  string artifact_hash = 3;
+  int64 configuration_revision = 4;
+  string instance_id = 5;
+}
+message CallContext {
+  PluginIdentity identity = 1;
+  string request_id = 2;
+  string run_id = 3;
+  int64 deadline_epoch_millis = 4;
+}
+enum CapabilityKind {
+  CAPABILITY_UNSPECIFIED = 0;
+  TOOL = 1;
+  MODEL = 2;
+  SKILL = 3;
+  CONTEXT = 4;
+  WORKFLOW = 5;
+  HOOK = 6;
+}
+// 元数据由宿主校验与渲染，执行器只通过贡献标识调用。
+message Contribution {
+  string id = 1;
+  CapabilityKind kind = 2;
+  string name = 3;
+  string description = 4;
+  string input_schema_json = 5;
+  string output_schema_json = 6;
+  string metadata_json = 7;
+}
+message InitializeRequest {
+  PluginIdentity identity = 1;
+  int32 protocol_major = 2;
+  int32 protocol_minor = 3;
+  string manifest_json = 4;
+  string configuration_json = 5;
+}
+message PluginDescriptor {
+  PluginIdentity identity = 1;
+  int32 protocol_major = 2;
+  int32 protocol_minor = 3;
+  repeated Contribution contributions = 4;
+  string configuration_schema_json = 5;
+  string ui_schema_json = 6;
+}
+message ConfigurationRequest { PluginIdentity identity = 1; string configuration_json = 2; }
+message ValidationResult { bool valid = 1; repeated string errors = 2; }
+message HealthResponse { string state = 1; int32 active_requests = 2; string message = 3; }
+message DrainRequest { PluginIdentity identity = 1; int64 timeout_millis = 2; }
+message DrainResponse { bool drained = 1; int32 active_requests = 2; }
+message CancelRequest { PluginIdentity identity = 1; string request_id = 2; }
+message CallRequest {
+  CallContext context = 1;
+  string contribution_id = 2;
+  string operation = 3;
+  string payload_json = 4;
+}
+enum EventType { EVENT_UNSPECIFIED = 0; DATA = 1; COMPLETE = 2; ERROR = 3; }
+message RpcEvent {
+  string request_id = 1;
+  EventType event_type = 2;
+  string payload_json = 3;
+  int64 sequence = 4;
+  string error_code = 5;
+  string message = 6;
+}
+message CallResult { string payload_json = 1; }
+// 后台租约由宿主分配运行标识与固定截止时间，插件不能自行续期。
+message BackgroundLeaseRequest { CallContext context = 1; int64 ttl_millis = 2; }
+message BackgroundLease { string lease_id = 1; string run_id = 2; int64 expires_at_epoch_millis = 3; }
+message BackgroundLeaseCloseRequest { PluginIdentity identity = 1; string lease_id = 2; }
+enum HookPoint {
+  HOOK_UNSPECIFIED = 0;
+  BEFORE_TURN = 1;
+  AFTER_MODEL = 2;
+  TOOL_RESULT = 3;
+  EVALUATE_POLICY = 4;
+}
+// 数据钩子只返回数据与收紧后的限制，不持有宿主运行态。
+message HookRequest {
+  CallContext context = 1;
+  HookPoint point = 2;
+  string input_json = 3;
+  repeated string allowed_permissions = 4;
+  int64 remainder_budget = 5;
+  string contribution_id = 6;
+}
+message HookResponse {
+  string output_json = 1;
+  repeated string allowed_permissions = 2;
+  int64 remainder_budget = 3;
+}
+
+service PluginControl {
+  rpc Initialize(InitializeRequest) returns (PluginDescriptor);
+  rpc ValidateConfiguration(ConfigurationRequest) returns (ValidationResult);
+  rpc Health(PluginIdentity) returns (HealthResponse);
+  rpc Drain(DrainRequest) returns (DrainResponse);
+  rpc Cancel(CancelRequest) returns (google.protobuf.Empty);
+  rpc Shutdown(PluginIdentity) returns (google.protobuf.Empty);
+}
+service ToolService { rpc Execute(CallRequest) returns (stream RpcEvent); }
+service InferenceService { rpc Invoke(CallRequest) returns (stream RpcEvent); }
+service ContextService { rpc Retrieve(CallRequest) returns (CallResult); }
+service WorkflowService { rpc Execute(CallRequest) returns (stream RpcEvent); }
+service HookService { rpc Invoke(HookRequest) returns (HookResponse); }
+// 反向调用使用独立凭据；权限、预算、授权与副作用审计最终由宿主裁定。
+service HostServices {
+  rpc OpenBackground(BackgroundLeaseRequest) returns (BackgroundLease);
+  rpc CloseBackground(BackgroundLeaseCloseRequest) returns (google.protobuf.Empty);
+  rpc Invoke(CallRequest) returns (stream RpcEvent);
+}

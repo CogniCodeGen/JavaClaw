@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<HBox fx:id="root" xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.mcp.McpCenterController"
+      styleClass="settings-root" accessibleText="MCP 服务器中心">
+    <children>
+        <VBox fx:id="sidebar" prefWidth="224.0" minWidth="204.0" visible="false" managed="false"
+              styleClass="modal-left-pane">
+            <children>
+                <VBox spacing="3.0">
+                    <padding><Insets top="18.0" right="16.0" bottom="12.0" left="16.0"/></padding>
+                    <children>
+                        <Label text="MCP 服务器" styleClass="modal-left-title"/>
+                        <Label text="外部工具与数据源" styleClass="mcp-sidebar-hint"/>
+                    </children>
+                </VBox>
+                <VBox spacing="2.0">
+                    <padding><Insets right="10.0" bottom="10.0" left="10.0"/></padding>
+                    <children>
+                        <Button fx:id="allFilter" text="全部服务器" maxWidth="Infinity"
+                                onAction="#allRequested"
+                                styleClass="button, modal-nav-btn, modal-nav-btn-selected"/>
+                        <Button fx:id="runningFilter" text="运行中" maxWidth="Infinity"
+                                onAction="#runningRequested" styleClass="button, modal-nav-btn"/>
+                        <Button fx:id="failedFilter" text="需要处理" maxWidth="Infinity"
+                                onAction="#failedRequested" styleClass="button, modal-nav-btn"/>
+                        <Button fx:id="stoppedFilter" text="已停止" maxWidth="Infinity"
+                                onAction="#stoppedRequested" styleClass="button, modal-nav-btn"/>
+                    </children>
+                </VBox>
+                <Region VBox.vgrow="ALWAYS"/>
+                <VBox spacing="8.0" styleClass="mcp-sidebar-bottom">
+                    <children>
+                        <Button text="＋ 添加服务器" maxWidth="Infinity" onAction="#addRequested"
+                                styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"/>
+                        <Button text="从模板添加" maxWidth="Infinity" onAction="#templateRequested"
+                                styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"/>
+                        <Button text="导入 JSON" maxWidth="Infinity" onAction="#importRequested"
+                                styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                        <Label text="配置位置" styleClass="mcp-sidebar-section"/>
+                        <Label fx:id="sidebarStorageLabel" wrapText="true" styleClass="mcp-sidebar-path"/>
+                        <Button text="复制路径" maxWidth="Infinity" onAction="#copyStorageRequested"
+                                styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                    </children>
+                </VBox>
+            </children>
+        </VBox>
+        <VBox HBox.hgrow="ALWAYS">
+            <children>
+                <StackPane VBox.vgrow="ALWAYS">
+                    <children>
+                        <ScrollPane fitToWidth="true" hbarPolicy="NEVER"
+                                    styleClass="settings-scroll-pane">
+                            <content>
+                                <VBox spacing="14.0" styleClass="mcp-content-panel">
+                                    <padding><Insets top="14.0" right="24.0" bottom="18.0" left="24.0"/></padding>
+                                    <children>
+                                        <Label fx:id="contentTitle" text="MCP 服务器" styleClass="sec-title"/>
+                                        <Label wrapText="true" styleClass="sec-hint"
+                                               text="管理 MCP (Model Context Protocol) 服务器，连接外部工具和数据源。"/>
+                                        <HBox fx:id="overviewBar" spacing="8.0" alignment="CENTER_LEFT"
+                                              styleClass="mcp-overview-bar">
+                                            <children>
+                                                <Label fx:id="overviewText" wrapText="true"
+                                                       styleClass="mcp-overview-text"/>
+                                                <Label fx:id="overviewFailure" wrapText="true" minWidth="0.0"
+                                                       maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                                       visible="false" managed="false"
+                                                       styleClass="mcp-overview-fail"/>
+                                            </children>
+                                        </HBox>
+                                        <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="mcp-toolbar">
+                                            <children>
+                                                <TextField fx:id="searchField" promptText="⌕  搜索名称、命令或 URL…"
+                                                           HBox.hgrow="ALWAYS"
+                                                           styleClass="settings-field, mcp-search-field"/>
+                                                <Label fx:id="resultCountLabel" styleClass="mcp-result-count"/>
+                                                <Button text="↻ 刷新" onAction="#refreshRequested"
+                                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm">
+                                                    <tooltip><Tooltip text="刷新服务器运行状态和工具数量"/></tooltip>
+                                                </Button>
+                                            </children>
+                                        </HBox>
+                                        <HBox fx:id="embeddedCreateBar" spacing="8.0" alignment="CENTER_LEFT">
+                                            <children>
+                                                <Button text="＋ 添加服务器" onAction="#addRequested"
+                                                        styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"/>
+                                                <Button text="从模板添加" onAction="#templateRequested"
+                                                        styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                                <Button text="导入 JSON" onAction="#importRequested"
+                                                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                            </children>
+                                        </HBox>
+                                        <VBox fx:id="serverList" spacing="10.0"/>
+                                        <VBox fx:id="emptyState" spacing="10.0" alignment="CENTER"
+                                              visible="false" managed="false" styleClass="mcp-empty-state">
+                                            <children>
+                                                <Label text="⌁" styleClass="empty-state-icon"/>
+                                                <Label fx:id="emptyTitle" styleClass="empty-state-text"/>
+                                                <Label fx:id="emptyHint" maxWidth="420.0" wrapText="true"
+                                                       styleClass="sec-hint, empty-state-hint"/>
+                                                <Button fx:id="emptyAddButton" text="＋ 添加服务器"
+                                                        onAction="#addRequested"
+                                                        styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"/>
+                                                <Button fx:id="clearSearchButton" text="清空搜索"
+                                                        visible="false" managed="false"
+                                                        onAction="#clearSearchRequested"
+                                                        styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                            </children>
+                                        </VBox>
+                                        <Label fx:id="embeddedStorageLabel" wrapText="true"
+                                               styleClass="mcp-path-hint"/>
+                                        <Label fx:id="embeddedStatusLabel" wrapText="true" maxWidth="Infinity"
+                                               styleClass="settings-status, mcp-status-label"/>
+                                    </children>
+                                </VBox>
+                            </content>
+                        </ScrollPane>
+                        <StackPane fx:id="loadingOverlay" visible="false" managed="false"
+                                   styleClass="loading-overlay" accessibleText="正在处理 MCP 服务器">
+                            <children><ProgressIndicator maxWidth="40.0" maxHeight="40.0"/></children>
+                        </StackPane>
+                    </children>
+                </StackPane>
+                <HBox fx:id="footer" spacing="10.0" alignment="CENTER_LEFT"
+                      visible="false" managed="false" styleClass="modal-foot">
+                    <children>
+                        <Label fx:id="footerStatusLabel" wrapText="true" maxWidth="Infinity"
+                               HBox.hgrow="ALWAYS" styleClass="settings-status, mcp-status-label"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <Button text="关闭" onAction="#closeRequested"
+                                styleClass="button, jc-btn, jc-btn-ghost"/>
+                    </children>
+                </HBox>
+            </children>
+        </VBox>
+    </children>
+</HBox>

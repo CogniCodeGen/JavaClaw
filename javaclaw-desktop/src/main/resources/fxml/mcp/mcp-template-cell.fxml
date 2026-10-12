@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.mcp.McpTemplateCellController" spacing="2.0">
+    <children>
+        <Label fx:id="nameLabel" styleClass="mcp-template-name"/>
+        <Label fx:id="descriptionLabel" wrapText="true" styleClass="settings-hint"/>
+        <Label fx:id="toolsLabel" wrapText="true" styleClass="settings-hint, mcp-template-tools"/>
+    </children>
+</VBox>

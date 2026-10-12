@@ -1,0 +1,44 @@
+{
+  "summary": "LM Studio 的 My Models 页面，主内容区以表格形式列出 10 个本地模型（含 Embedding Model 和 LLM 两个分组），右侧面板显示选中模型 UI-TARS-7B-DPO-8bit 的详细信息，底部显示总占用 58.96 GB。",
+  "visibleText": "Models My Models View All LLMs Text Embedding Drafters My Models 筛选模型... (⌘F) 架构 参数量 发布者 Embedding Model 量化规格 操作 qwen3 0.6B Qwen text-embedding-qwen3-em... Q8_0 bert 335M Ralriki text-embedding-multilingual... Q8_0 qwen3 8B Qwen text-embedding-qwen3-em... Q4_K_M 架构 参数量 发布者 LLM 量化规格 操作 qwen2_vl 7B mlx-community ui-tars-7b-dpo 8bit qwen3_5 27B orcarouter qwen3.8-27b-uncens... 4bit qwen35 MTP 27B lmstudio-community qwen/qwen3.8-2... Q4_K_M qwen3 0.6B mlx-community qwen3-embedding-0.6b-dwq 4bit qwen35 9B HauhauCS qwen3.5-9b-unc... Q4_K_M qwen3vl 2B DevQuasar qwen.qwen3-vl-embe... Q5_K_S qwen3 0.6B lmstudio-community qwen3-0.6b Q8_0 您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。 [models directory] UI-TARS-7B-DPO-8bit Use in New Chat Load Model Info Load Inference Model Information Model mlx-community/UI-TARS-7B-DPO-8... Format MLX Quantization 8bit Arch qwen2_vl Capabilities Vision Domain llm Size on disk 9.46 GB",
+  "targets": [],
+  "activeView": {
+    "label": "My Models",
+    "heading": {
+      "label": "My Models",
+      "role": "heading",
+      "x": 670,
+      "y": 100,
+      "width": 160,
+      "height": 35,
+      "confidence": 0.97
+    },
+    "content": {
+      "label": "qwen3 0.6B Qwen text-embedding-qwen3-em... Q8_0 bert 335M Ralriki text-embedding-multilingual... Q8_0 qwen3 8B Qwen text-embedding-qwen3-em... Q4_K_M qwen2_vl 7B mlx-community ui-tars-7b-dpo 8bit qwen3_5 27B orcarouter qwen3.8-27b-uncens... 4bit qwen35 MTP 27B lmstudio-community qwen/qwen3.8-2... Q4_K_M qwen3 0.6B mlx-community qwen3-embedding-0.6b-dwq 4bit qwen35 9B HauhauCS qwen3.5-9b-unc... Q4_K_M qwen3vl 2B DevQuasar qwen.qwen3-vl-embe... Q5_K_S qwen3 0.6B lmstudio-community qwen3-0.6b Q8_0 您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。",
+      "role": "table",
+      "x": 660,
+      "y": 175,
+      "width": 1650,
+      "height": 1520,
+      "confidence": 0.93
+    },
+    "confidence": 0.95
+  },
+  "conditionEvidence": [
+    {
+      "criterionId": "observe_local_models",
+      "subject": "本地模型列表",
+      "region": "main-content",
+      "content": {
+        "label": "qwen3 0.6B Qwen text-embedding-qwen3-em... Q8_0 bert 335M Ralriki text-embedding-multilingual... Q8_0 qwen3 8B Qwen text-embedding-qwen3-em... Q4_K_M qwen2_vl 7B mlx-community ui-tars-7b-dpo 8bit qwen3_5 27B orcarouter qwen3.8-27b-uncens... 4bit qwen35 MTP 27B lmstudio-community qwen/qwen3.8-2... Q4_K_M qwen3 0.6B mlx-community qwen3-embedding-0.6b-dwq 4bit qwen35 9B HauhauCS qwen3.5-9b-unc... Q4_K_M qwen3vl 2B DevQuasar qwen.qwen3-vl-embe... Q5_K_S qwen3 0.6B lmstudio-community qwen3-0.6b Q8_0 您有 10 个本地模型，占用了 58.96 GB 的磁盘空间。",
+        "role": "table",
+        "x": 660,
+        "y": 175,
+        "width": 1650,
+        "height": 1520,
+        "confidence": 0.95
+      },
+      "confidence": 0.95
+    }
+  ]
+}

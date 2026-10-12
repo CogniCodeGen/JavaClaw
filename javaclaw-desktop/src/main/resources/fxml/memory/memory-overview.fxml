@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.memory.MemoryOverviewController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="modal-content-area">
+    <content>
+        <VBox spacing="20.0">
+            <padding><Insets top="24.0" right="24.0" bottom="24.0" left="24.0"/></padding>
+            <children>
+                <VBox spacing="3.0">
+                    <children>
+                        <Label text="记忆总览" styleClass="sec-title"/>
+                        <Label text="长期记忆的规模、使用效果与最近变更。" styleClass="sec-hint"/>
+                    </children>
+                </VBox>
+                <GridPane hgap="12.0">
+                    <columnConstraints>
+                        <ColumnConstraints percentWidth="25.0"/>
+                        <ColumnConstraints percentWidth="25.0"/>
+                        <ColumnConstraints percentWidth="25.0"/>
+                        <ColumnConstraints percentWidth="25.0"/>
+                    </columnConstraints>
+                    <children>
+                        <VBox spacing="6.0" maxWidth="Infinity" styleClass="mc-stat-card"
+                              GridPane.columnIndex="0">
+                            <children><Label text="累计召回" styleClass="mc-stat-cap"/>
+                                <Label fx:id="recalls" styleClass="mc-stat-num"/>
+                                <Label text="检索注入次数" styleClass="mc-stat-note"/></children>
+                        </VBox>
+                        <VBox spacing="6.0" maxWidth="Infinity" styleClass="mc-stat-card"
+                              GridPane.columnIndex="1">
+                            <children><Label text="命中注入事实" styleClass="mc-stat-cap"/>
+                                <Label fx:id="hits" styleClass="mc-stat-num"/>
+                                <Label fx:id="hitRate" styleClass="mc-stat-delta"/></children>
+                        </VBox>
+                        <VBox spacing="6.0" maxWidth="Infinity" styleClass="mc-stat-card"
+                              GridPane.columnIndex="2">
+                            <children><Label text="蒸馏新增" styleClass="mc-stat-cap"/>
+                                <Label fx:id="distilled" styleClass="mc-stat-num"/>
+                                <Label text="自动从对话沉淀" styleClass="mc-stat-note"/></children>
+                        </VBox>
+                        <VBox spacing="6.0" maxWidth="Infinity" styleClass="mc-stat-card"
+                              GridPane.columnIndex="3">
+                            <children><Label text="去重合并" styleClass="mc-stat-cap"/>
+                                <Label fx:id="merged" styleClass="mc-stat-num"/>
+                                <Label text="向量去重 upsert" styleClass="mc-stat-note"/></children>
+                        </VBox>
+                    </children>
+                </GridPane>
+                <HBox spacing="14.0">
+                    <children>
+                        <VBox spacing="15.0" HBox.hgrow="ALWAYS" styleClass="jc-card">
+                            <padding><Insets top="18.0" right="19.0" bottom="18.0" left="19.0"/></padding>
+                            <children>
+                                <Label text="记忆构成" styleClass="mc-card-title"/>
+                                <VBox spacing="13.0">
+                                    <children>
+                                        <VBox spacing="5.0"><children>
+                                            <HBox><children><Label text="事实"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="factCount"/></children></HBox>
+                                            <StackPane fx:id="factTrack" alignment="CENTER_LEFT" styleClass="mc-bar-track"><children>
+                                                <Region fx:id="factFill" style="-fx-background-color: -jc-success;" styleClass="mc-bar-fill" StackPane.alignment="CENTER_LEFT"/>
+                                            </children></StackPane>
+                                        </children></VBox>
+                                        <VBox spacing="5.0"><children>
+                                            <HBox><children><Label text="情景"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="episodeCount"/></children></HBox>
+                                            <StackPane fx:id="episodeTrack" alignment="CENTER_LEFT" styleClass="mc-bar-track"><children>
+                                                <Region fx:id="episodeFill" style="-fx-background-color: -jc-warning;" styleClass="mc-bar-fill" StackPane.alignment="CENTER_LEFT"/>
+                                            </children></StackPane>
+                                        </children></VBox>
+                                        <VBox spacing="5.0"><children>
+                                            <HBox><children><Label text="实体"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="entityCount"/></children></HBox>
+                                            <StackPane fx:id="entityTrack" alignment="CENTER_LEFT" styleClass="mc-bar-track"><children>
+                                                <Region fx:id="entityFill" style="-fx-background-color: -jc-primary-400;" styleClass="mc-bar-fill" StackPane.alignment="CENTER_LEFT"/>
+                                            </children></StackPane>
+                                        </children></VBox>
+                                        <VBox spacing="5.0"><children>
+                                            <HBox><children><Label text="知识分块"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="documentCount"/></children></HBox>
+                                            <StackPane fx:id="documentTrack" alignment="CENTER_LEFT" styleClass="mc-bar-track"><children>
+                                                <Region fx:id="documentFill" style="-fx-background-color: -jc-accent-400;" styleClass="mc-bar-fill" StackPane.alignment="CENTER_LEFT"/>
+                                            </children></StackPane>
+                                        </children></VBox>
+                                    </children>
+                                </VBox>
+                            </children>
+                        </VBox>
+                        <VBox spacing="13.0" HBox.hgrow="ALWAYS" styleClass="jc-card">
+                            <padding><Insets top="18.0" right="19.0" bottom="18.0" left="19.0"/></padding>
+                            <children>
+                                <Label text="近期变更" styleClass="mc-card-title"/>
+                                <Label fx:id="noChanges" text="暂无变更记录" styleClass="sec-hint"/>
+                                <VBox fx:id="recentChanges" spacing="11.0"/>
+                            </children>
+                        </VBox>
+                    </children>
+                </HBox>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

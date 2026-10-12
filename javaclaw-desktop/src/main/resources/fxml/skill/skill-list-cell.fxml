@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+
+<HBox fx:id="root" spacing="8.0" alignment="CENTER_LEFT" maxWidth="Infinity"
+      styleClass="modal-nav-btn, skill-nav-row"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <Label fx:id="statusDot"/>
+        <Label fx:id="nameLabel" maxWidth="170.0" styleClass="skill-nav-name"/>
+    </children>
+</HBox>

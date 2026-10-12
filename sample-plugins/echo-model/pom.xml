@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.javaclaw.plugins</groupId><artifactId>echo-model-plugin</artifactId><version>2.0.0</version>
+  <properties><maven.compiler.release>25</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <plugin.runner.jar>${project.basedir}/../../plugin-runner-java/target/plugin-runner-java-4.0.0-SNAPSHOT-all.jar</plugin.runner.jar>
+  </properties>
+  <dependencies>
+    <dependency><groupId>com.javaclaw</groupId><artifactId>plugin-sdk-java</artifactId><version>4.0.0-SNAPSHOT</version><scope>provided</scope></dependency>
+    <dependency><groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.13.1</version></dependency>
+    <dependency><groupId>io.grpc</groupId><artifactId>grpc-netty-shaded</artifactId><version>1.75.0</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.13.4</version><scope>test</scope></dependency>
+  </dependencies>
+  <build><finalName>plugin</finalName><plugins>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.0</version><executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration><createDependencyReducedPom>false</createDependencyReducedPom></configuration></execution></executions></plugin>
+    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId><version>3.5.2</version><configuration><systemPropertyVariables><plugin.runner.jar>${plugin.runner.jar}</plugin.runner.jar></systemPropertyVariables></configuration><executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions></plugin>
+  </plugins></build>
+</project>

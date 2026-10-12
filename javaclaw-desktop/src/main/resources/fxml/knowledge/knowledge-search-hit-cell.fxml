@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.text.TextFlow?>
+
+<VBox fx:id="root" spacing="10.0" styleClass="kc-result-card"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <HBox alignment="CENTER_LEFT" spacing="8.0">
+            <children>
+                <Label fx:id="documentLabel" styleClass="kc-result-doc"/>
+                <Label fx:id="scopeLabel" text="工作区"
+                       styleClass="kc-scope-tag, kc-scope-workspace"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="scoreLabel" text="0%" styleClass="kc-result-score"/>
+            </children>
+        </HBox>
+        <TextFlow fx:id="snippetFlow" lineSpacing="4.0" styleClass="kc-result-snippet"/>
+        <ProgressBar fx:id="scoreBar" progress="0.0" maxWidth="Infinity"
+                     styleClass="kc-score-bar"/>
+    </children>
+</VBox>

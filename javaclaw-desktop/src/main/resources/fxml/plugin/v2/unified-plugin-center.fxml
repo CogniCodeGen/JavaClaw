@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<VBox fx:id="root" spacing="0" styleClass="settings-root"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.plugin.v2.UnifiedPluginCenterController">
+    <HBox spacing="12" alignment="CENTER_LEFT" styleClass="modal-head">
+        <padding><Insets top="18" right="22" bottom="14" left="22"/></padding>
+        <VBox spacing="4" HBox.hgrow="ALWAYS">
+            <Label text="插件中心" styleClass="plugin-page-title"/>
+            <Label fx:id="workspaceLabel" styleClass="sec-hint"/>
+        </VBox>
+        <Button fx:id="refreshButton" text="刷新" onAction="#refreshRequested" styleClass="jc-btn,jc-btn-ghost"/>
+        <Button fx:id="addLocalButton" text="添加本地 ZIP…" onAction="#addLocalRequested" styleClass="jc-btn,jc-btn-primary"/>
+    </HBox>
+    <HBox spacing="10" alignment="CENTER_LEFT">
+        <padding><Insets top="0" right="22" bottom="14" left="22"/></padding>
+        <TextField fx:id="downloadUrl" promptText="HTTPS 插件包下载链接" HBox.hgrow="ALWAYS" onAction="#addUrlRequested"/>
+        <Button fx:id="addUrlButton" text="从链接添加…" onAction="#addUrlRequested" styleClass="jc-btn,jc-btn-ghost"/>
+    </HBox>
+    <SplitPane dividerPositions="0.32" VBox.vgrow="ALWAYS">
+        <VBox spacing="10" minWidth="260" prefWidth="310" styleClass="modal-left-pane">
+            <padding><Insets top="14" right="12" bottom="12" left="18"/></padding>
+            <TextField fx:id="searchField" promptText="搜索名称、描述或能力"/>
+            <ComboBox fx:id="capabilityFilter" maxWidth="Infinity" promptText="全部能力"/>
+            <Label fx:id="countLabel" styleClass="sec-hint"/>
+            <ListView fx:id="pluginList" VBox.vgrow="ALWAYS"/>
+            <Label text="安装后默认停用；启用状态与进程状态分别展示。" wrapText="true" styleClass="sec-hint"/>
+        </VBox>
+        <StackPane minWidth="480">
+            <VBox fx:id="emptyDetail" alignment="CENTER" spacing="8">
+                <Label text="选择插件查看详情" styleClass="empty-state-text"/>
+                <Label text="从本地 ZIP 或 HTTPS 链接添加能力" styleClass="sec-hint"/>
+            </VBox>
+            <VBox fx:id="detailPane" visible="false" managed="false" spacing="12">
+                <padding><Insets top="16" right="20" bottom="14" left="20"/></padding>
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label fx:id="pluginName" styleClass="plugin-page-title"/>
+                        <Label fx:id="pluginIdentity" wrapText="true" styleClass="sec-hint"/>
+                    </VBox>
+                    <Button fx:id="upgradeButton" text="升级…" onAction="#upgradeRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                    <Button fx:id="uninstallButton" text="卸载…" onAction="#uninstallRequested" styleClass="jc-btn,jc-btn-danger"/>
+                </HBox>
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Label fx:id="enabledLabel" styleClass="jc-badge,jc-badge-soft"/>
+                    <Label fx:id="processLabel" styleClass="jc-badge,jc-badge-soft"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Button fx:id="enabledButton" text="启用" onAction="#enabledRequested" styleClass="jc-btn,jc-btn-primary"/>
+                </HBox>
+                <VBox fx:id="versionsHost" spacing="6"/>
+                <TabPane fx:id="detailTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
+                    <Tab text="概览">
+                        <ScrollPane fitToWidth="true" hbarPolicy="NEVER">
+                            <VBox fx:id="overviewBox" spacing="10">
+                                <padding><Insets top="16" right="8" bottom="12" left="8"/></padding>
+                                <Label fx:id="descriptionLabel" wrapText="true"/>
+                                <Label fx:id="capabilitiesLabel" wrapText="true" styleClass="sec-hint"/>
+                                <Label fx:id="artifactLabel" wrapText="true" styleClass="sec-hint"/>
+                                <Label fx:id="instanceLabel" wrapText="true" styleClass="sec-hint"/>
+                            </VBox>
+                        </ScrollPane>
+                    </Tab>
+                    <Tab text="配置">
+                        <VBox spacing="10">
+                            <padding><Insets top="12" right="6" bottom="8" left="6"/></padding>
+                            <Label fx:id="revisionLabel" wrapText="true" styleClass="sec-hint"/>
+                            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS">
+                                <VBox spacing="14">
+                                    <VBox fx:id="configurationHost" spacing="10"/>
+                                    <VBox fx:id="modelPanelHost" spacing="10"/>
+                                </VBox>
+                            </ScrollPane>
+                            <HBox spacing="10" alignment="CENTER_LEFT">
+                                <Label fx:id="dirtyLabel" text="有未保存的修改" visible="false" managed="false" styleClass="sec-hint"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Button fx:id="discardButton" text="放弃修改" onAction="#discardRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                                <Button fx:id="saveButton" text="保存并应用" onAction="#saveRequested" styleClass="jc-btn,jc-btn-primary"/>
+                            </HBox>
+                        </VBox>
+                    </Tab>
+                    <Tab text="权限">
+                        <VBox spacing="12">
+                            <padding><Insets top="14" right="8" bottom="10" left="8"/></padding>
+                            <Label text="授权仅授予当前工作区实例；撤销后立即停止相关调用。" wrapText="true" styleClass="sec-hint"/>
+                            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS">
+                                <VBox fx:id="permissionsBox" spacing="10"/>
+                            </ScrollPane>
+                            <Button fx:id="grantButton" text="确认授权所选权限" onAction="#grantRequested" styleClass="jc-btn,jc-btn-primary"/>
+                        </VBox>
+                    </Tab>
+                    <Tab text="运行与日志">
+                        <VBox spacing="10">
+                            <padding><Insets top="14" right="8" bottom="10" left="8"/></padding>
+                            <HBox spacing="8" alignment="CENTER_LEFT">
+                                <Button fx:id="startButton" text="启动" onAction="#startRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                                <Button fx:id="stopButton" text="停止" onAction="#stopRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                                <Button fx:id="restartButton" text="重启" onAction="#restartRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                                <Button fx:id="forceStopButton" text="强制结束…" onAction="#forceStopRequested" styleClass="jc-btn,jc-btn-danger"/>
+                                <CheckBox fx:id="autoStart" text="启用后自动启动" onAction="#startupPolicyRequested"/>
+                            </HBox>
+                            <Label fx:id="healthLabel" wrapText="true" styleClass="sec-hint"/>
+                            <Label fx:id="lastErrorLabel" wrapText="true" styleClass="sec-hint"/>
+                            <TextArea fx:id="logsArea" editable="false" wrapText="false" VBox.vgrow="ALWAYS" styleClass="service-plugin-log"/>
+                            <Button fx:id="unquarantineButton" text="解除隔离" onAction="#unquarantineRequested" styleClass="jc-btn,jc-btn-ghost"/>
+                        </VBox>
+                    </Tab>
+                </TabPane>
+            </VBox>
+        </StackPane>
+    </SplitPane>
+    <VBox spacing="6" styleClass="modal-foot">
+        <padding><Insets top="10" right="22" bottom="12" left="22"/></padding>
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <ProgressBar fx:id="progressBar" progress="-1" visible="false" managed="false" prefWidth="150"/>
+            <Label fx:id="statusLabel" wrapText="true" HBox.hgrow="ALWAYS"/>
+            <Button fx:id="cancelButton" text="取消" visible="false" managed="false" onAction="#cancelRequested" styleClass="jc-btn,jc-btn-ghost"/>
+            <Button text="关闭" onAction="#closeRequested" styleClass="jc-btn,jc-btn-ghost"/>
+        </HBox>
+        <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true" styleClass="sec-hint"/>
+    </VBox>
+</VBox>

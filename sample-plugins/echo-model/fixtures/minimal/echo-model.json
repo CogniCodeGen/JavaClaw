@@ -1,0 +1,7 @@
+{
+  "format": "javaclaw.echo.v1",
+  "name": "Echo 协议验证模型",
+  "prefix": "回声：",
+  "contextLength": 4096,
+  "embeddingDimensions": 8
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.TitledPane?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.interaction.ConfirmDialogController"
+      spacing="10.0" style="-fx-padding: 8 4 4 4;">
+    <children>
+        <Label fx:id="descriptionLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
+        <Label fx:id="hintLabel" wrapText="true" maxWidth="1.7976931348623157E308"
+               styleClass="settings-hint"/>
+        <TextField fx:id="keywordField" visible="false" managed="false"
+                   maxWidth="1.7976931348623157E308" styleClass="settings-field"/>
+        <TitledPane text="查看详情" expanded="false" animated="false"
+                    maxWidth="1.7976931348623157E308">
+            <content>
+                <TextArea fx:id="detailsArea" editable="false" wrapText="true"
+                          prefRowCount="8" maxWidth="1.7976931348623157E308"
+                          maxHeight="1.7976931348623157E308"/>
+            </content>
+        </TitledPane>
+    </children>
+</VBox>

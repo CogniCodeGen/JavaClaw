@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:javaclaw:plugin-manifest:2",
+  "title": "JavaClaw 插件清单 v2",
+  "type": "object",
+  "required": ["id", "version", "protocol", "entrypoint", "artifact", "contributions"],
+  "properties": {
+    "manifestVersion": {"const": 2},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "name": {"type": "string"},
+    "description": {"type": "string"},
+    "publisher": {"type": "string"},
+    "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+\\-]{0,79}$"},
+    "entrypoint": {"type": "string", "minLength": 1},
+    "artifact": {"type": "string", "minLength": 1},
+    "protocol": {
+      "type": "object", "required": ["major"],
+      "properties": {"major": {"const": 2}, "minor": {"type": "integer", "minimum": 0}},
+      "additionalProperties": false
+    },
+    "permissions": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "capabilities": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capability"}},
+    "contributions": {
+      "type": "array", "items": {
+        "type": "object", "required": ["id"],
+        "anyOf": [{"required": ["capability"]}, {"required": ["kind"]}],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "capability": {"$ref": "#/$defs/capability"},
+          "kind": {"$ref": "#/$defs/capability"},
+          "contractVersion": {"const": "2.0"},
+          "name": {"type": "string"}, "description": {"type": "string"},
+          "inputSchema": {"type": "object"}, "outputSchema": {"type": "object"},
+          "metadata": {"$ref": "#/$defs/contributionMetadata"}
+        }
+      }
+    },
+    "configurationSchema": {"type": "object"},
+    "inference": {"$ref": "#/$defs/contributionMetadata"},
+    "uiSchema": {"type": "object"},
+    "platform": {
+      "type": "object",
+      "properties": {
+        "os": {"type": "array", "uniqueItems": true, "items": {"enum": ["macos", "windows", "linux"]}},
+        "architectures": {"type": "array", "uniqueItems": true, "items": {"enum": ["aarch64", "x86_64"]}}
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "minimumJavaVersion": {"type": "integer", "minimum": 25},
+        "javaModules": {
+          "type": "array", "uniqueItems": true,
+          "items": {"type": "string", "maxLength": 113, "pattern": "^(java|jdk)(\\.[A-Za-z][A-Za-z0-9_]*)+$"}
+        },
+        "nativeAccess": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "exclusive": {"type": "boolean"},
+        "heapMiB": {"type": "integer", "minimum": 128, "maximum": 16384}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "capability": {"enum": ["TOOL", "MODEL", "SKILL", "CONTEXT", "WORKFLOW", "HOOK"]},
+    "contributionMetadata": {
+      "type": "object",
+      "properties": {
+        "endpointCapabilities": {"$ref": "#/$defs/endpointCapabilities"},
+        "inference": {"type": "object", "properties": {
+          "endpointCapabilities": {"$ref": "#/$defs/endpointCapabilities"}
+        }}
+      }
+    },
+    "endpointCapabilities": {
+      "type": "object",
+      "description": "仅声明插件实际实现的监听端点；缺省为空，不由模型推理能力推断。",
+      "properties": {
+        "openai": {"type": "array", "uniqueItems": true,
+          "items": {"enum": ["models", "chat", "embeddings", "sse", "openapi"]}}
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" spacing="6.0" styleClass="schedule-list-row"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <HBox spacing="7.0" alignment="CENTER_LEFT">
+            <children>
+                <Label fx:id="stateDot"/>
+                <Label fx:id="nameLabel" maxWidth="150.0" styleClass="skill-list-name"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="tagLabel" visible="false" managed="false"
+                       styleClass="jc-badge, schedule-cell-badge"/>
+            </children>
+        </HBox>
+        <Label fx:id="triggerLabel" styleClass="schedule-row-meta"/>
+        <Label fx:id="nextLabel" maxWidth="220.0" styleClass="schedule-row-sub"/>
+    </children>
+</VBox>

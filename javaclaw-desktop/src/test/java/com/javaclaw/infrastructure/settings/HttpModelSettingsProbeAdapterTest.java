@@ -1,0 +1,313 @@
+package com.javaclaw.infrastructure.settings;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.application.settings.EmbeddingRuntimeProbePort;
+import com.javaclaw.application.settings.ModelSettingsApplicationService.EmbeddingSettings;
+import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.http.HttpGateway;
+import com.javaclaw.platform.http.HttpResult;
+import com.javaclaw.platform.json.JsonCodec;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.net.URI;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpRequest;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class HttpModelSettingsProbeAdapterTest {
+
+    private ManagedTaskExecutor tasks;
+    private FakeRuntimeEmbedding runtime;
+    private HttpModelSettingsProbeAdapter adapter;
+    private AtomicReference<String> embeddingBody;
+    private AtomicReference<String> embeddingAuthorization;
+    private AtomicReference<URI> embeddingUri;
+    private AtomicReference<String> modelAuthorization;
+    private AtomicReference<String> modelMethod;
+    private AtomicReference<URI> modelUri;
+    private AtomicInteger embeddingRequests;
+    private int modelStatus;
+    private String modelResponse;
+
+    @BeforeEach
+    void setUp() {
+        embeddingBody = new AtomicReference<>();
+        embeddingAuthorization = new AtomicReference<>();
+        embeddingUri = new AtomicReference<>();
+        modelAuthorization = new AtomicReference<>();
+        modelMethod = new AtomicReference<>();
+        modelUri = new AtomicReference<>();
+        embeddingRequests = new AtomicInteger();
+        modelStatus = 200;
+        modelResponse = "{\"object\":\"list\",\"data\":[{\"id\":\"chat-model\"}]}";
+        tasks = new ManagedTaskExecutor();
+        runtime = new FakeRuntimeEmbedding();
+        adapter = new HttpModelSettingsProbeAdapter(
+                new HttpGateway(tasks, this::send),
+                new JsonCodec(new ObjectMapper()), runtime);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (tasks != null) tasks.close();
+    }
+
+    @Test
+    void modelProbeUsesTheConfiguredEndpointAndBearerCredential() throws Exception {
+        var result = adapter.probeModel(model("model-key"));
+
+        assertTrue(result.succeeded());
+        assertTrue(result.message().contains("模型列表接口可达"));
+        assertTrue(result.message().contains("尚未验证聊天调用"));
+        assertEquals("GET", modelMethod.get());
+        assertEquals("Bearer model-key", modelAuthorization.get());
+        assertEquals(URI.create(baseUrl() + "/models"), modelUri.get());
+    }
+
+    @Test
+    void modelProbeAcceptsOfficialDashscopeSuccessWithNullCode() throws Exception {
+        modelResponse = """
+                {"code":null,"message":null,"success":true,
+                 "output":{"total":1,"models":[{"model":"qwen-turbo"}]}}
+                """;
+        var settings = new ModelSettings("dashscope",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-turbo", "model-key",
+                false, 4096, "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2);
+
+        var result = adapter.probeModel(settings);
+
+        assertTrue(result.succeeded());
+        assertTrue(result.message().contains("模型列表接口可达"));
+        assertEquals(URI.create("https://dashscope.aliyuncs.com/api/v1/models?page_no=1&page_size=100"),
+                modelUri.get());
+    }
+
+    @Test
+    void modelProbeRejectsUnreadableCiphertextWithoutSendingIt() throws Exception {
+        var result = adapter.probeModel(model("ENC(YmFk)"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.message().contains("API 密钥无法解密"));
+        assertFalse(result.message().contains("ENC(YmFk)"));
+        assertNull(modelUri.get());
+    }
+
+    @Test
+    void modelProbeRejectsErrorsEvenWhenTheServerReturnsHttp200() throws Exception {
+        for (String response : new String[] {
+                "{\"error\":\"Unexpected endpoint; secret-response-marker\"}",
+                "{\"error\":{\"message\":\"secret-response-marker\"},\"data\":[]}"}) {
+            modelResponse = response;
+
+            var result = adapter.probeModel(model("secret-api-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("模型接口返回错误"));
+            assertTrue(result.message().contains("/v1"));
+            assertFalse(result.message().contains("secret-response-marker"));
+            assertFalse(result.message().contains("secret-api-key"));
+        }
+    }
+
+    @Test
+    void openAiCompatibleModelProbesRequireADataArray() throws Exception {
+        for (String provider : new String[] {"OpenAI", "dashscope"}) {
+            for (String response : new String[] {"{}", "{\"data\":{}}", "{\"data\":null}"}) {
+                modelResponse = response;
+
+                var result = adapter.probeModel(model(provider, "model-key"));
+
+                assertFalse(result.succeeded());
+                assertTrue(result.message().contains("data 模型列表"));
+            }
+        }
+    }
+
+    @Test
+    void modelProbeRejectsHtmlAndInvalidJsonWithoutExposingTheBody() throws Exception {
+        for (String response : new String[] {"<html>secret-response-marker</html>",
+                "{\"data\":[]", "{\"data\":[]} secret-response-marker"}) {
+            modelResponse = response;
+
+            var result = adapter.probeModel(model("model-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("有效 JSON"));
+            assertFalse(result.message().contains("secret-response-marker"));
+        }
+    }
+
+    @Test
+    void modelProbeRejectsRedirectsAndOtherNonSuccessStatuses() throws Exception {
+        for (int status : new int[] {301, 302, 401, 500}) {
+            modelStatus = status;
+
+            var result = adapter.probeModel(model("model-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("HTTP " + status));
+        }
+    }
+
+    @Test
+    void nonOpenAiProvidersKeepTheirOwnJsonResponseShape() throws Exception {
+        modelResponse = "{\"models\":[]}";
+
+        var result = adapter.probeModel(model("ollama", "not-needed"));
+
+        assertTrue(result.succeeded());
+        assertNull(modelAuthorization.get());
+        assertEquals(URI.create("https://example.test/api/tags"), modelUri.get());
+    }
+
+    @Test
+    void unchangedEmbeddingUsesRuntimeButChangedFormProbesTheExactForm() throws Exception {
+        EmbeddingSettings persisted = embedding("persisted-key", 3);
+
+        var runtimeResult = adapter.probeEmbedding(persisted, persisted);
+        assertTrue(runtimeResult.succeeded());
+        assertEquals(1, runtime.probes);
+        assertEquals(0, embeddingRequests.get());
+
+        EmbeddingSettings changed = embedding("new-key", 3);
+        var formResult = adapter.probeEmbedding(changed, persisted);
+
+        assertTrue(formResult.succeeded());
+        assertTrue(formResult.message().contains("尚未保存"));
+        assertEquals(1, embeddingRequests.get());
+        assertEquals("Bearer new-key", embeddingAuthorization.get());
+        assertTrue(embeddingBody.get().contains("\"model\":\"embedding-model\""));
+    }
+
+    @Test
+    void ollamaEmbeddingProbeUsesRuntimeCompatibleV1Endpoint() throws Exception {
+        EmbeddingSettings persisted = embedding("persisted-key", 3);
+        for (String base : new String[] {"http://127.0.0.1:11434",
+                "http://127.0.0.1:11434/v1"}) {
+            var form = new EmbeddingSettings(true, "ollama", base, "not-needed",
+                    "nomic-embed-text", 3, 5, 0.35);
+
+            var result = adapter.probeEmbedding(form, persisted);
+
+            assertTrue(result.succeeded());
+            assertEquals(URI.create("http://127.0.0.1:11434/v1/embeddings"),
+                    embeddingUri.get());
+            assertNull(embeddingAuthorization.get());
+        }
+    }
+
+    @Test
+    void embeddingProbeRejectsUnreadableCiphertextBeforeRuntimeOrHttp() throws Exception {
+        EmbeddingSettings unreadable = embedding("ENC(YmFk)", 3);
+
+        var result = adapter.probeEmbedding(unreadable, unreadable);
+
+        assertFalse(result.succeeded());
+        assertTrue(result.message().contains("API 密钥无法解密"));
+        assertEquals(0, runtime.probes);
+        assertEquals(0, embeddingRequests.get());
+    }
+
+    @Test
+    void dimensionMismatchIsReportedBeforeTheConfigurationCanBeSaved() throws Exception {
+        EmbeddingSettings persisted = embedding("persisted-key", 1024);
+        runtime.dimensions = 768;
+
+        var result = adapter.probeEmbedding(persisted, persisted);
+
+        assertFalse(result.succeeded());
+        assertTrue(result.message().contains("实际维度 768"));
+        assertTrue(result.message().contains("配置 1024"));
+    }
+
+    private ModelSettings model(String key) {
+        return model("OpenAI", key);
+    }
+
+    private ModelSettings model(String provider, String key) {
+        return new ModelSettings(provider, baseUrl(), "chat-model", key, false, 4096,
+                "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2);
+    }
+
+    private EmbeddingSettings embedding(String key, int dimensions) {
+        return new EmbeddingSettings(true, "OpenAI", baseUrl(), key,
+                "embedding-model", dimensions, 5, 0.35);
+    }
+
+    private String baseUrl() {
+        return "https://example.test/v1";
+    }
+
+    private HttpResult send(HttpRequest request) throws java.io.IOException {
+        if (request.uri().getPath().endsWith("/models")
+                || request.uri().getPath().endsWith("/api/tags")) {
+            modelMethod.set(request.method());
+            modelUri.set(request.uri());
+            modelAuthorization.set(request.headers().firstValue("Authorization").orElse(null));
+            return response(request.uri(), modelStatus, modelResponse);
+        }
+        embeddingRequests.incrementAndGet();
+        embeddingUri.set(request.uri());
+        embeddingAuthorization.set(
+                request.headers().firstValue("Authorization").orElse(null));
+        var subscriber = HttpRequest.BodyPublishers.ofString("");
+        var publisher = request.bodyPublisher().orElse(subscriber);
+        embeddingBody.set(readBody(publisher));
+        return response(request.uri(), 200,
+                "{\"data\":[{\"embedding\":[0.1,0.2,0.3]}]}");
+    }
+
+    private static String readBody(HttpRequest.BodyPublisher publisher)
+            throws java.io.IOException {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        java.util.concurrent.CompletableFuture<Void> completed = new java.util.concurrent.CompletableFuture<>();
+        publisher.subscribe(new java.util.concurrent.Flow.Subscriber<>() {
+            @Override public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) {
+                subscription.request(Long.MAX_VALUE);
+            }
+            @Override public void onNext(java.nio.ByteBuffer item) {
+                byte[] bytes = new byte[item.remaining()];
+                item.get(bytes);
+                output.writeBytes(bytes);
+            }
+            @Override public void onError(Throwable failure) {
+                completed.completeExceptionally(failure);
+            }
+            @Override public void onComplete() { completed.complete(null); }
+        });
+        try {
+            completed.join();
+        } catch (java.util.concurrent.CompletionException failure) {
+            throw new java.io.IOException("读取请求正文失败", failure.getCause());
+        }
+        return output.toString(StandardCharsets.UTF_8);
+    }
+
+    private static HttpResult response(URI uri, int status, String body) {
+        return new HttpResult(uri, status,
+                HttpHeaders.of(Map.of(), (name, value) -> true),
+                body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final class FakeRuntimeEmbedding implements EmbeddingRuntimeProbePort {
+        private int dimensions = 3;
+        private int probes;
+
+        @Override public boolean isReady() { return true; }
+        @Override public Result probe() {
+            probes++;
+            return new Result(true, dimensions, "");
+        }
+    }
+}
