@@ -14,7 +14,7 @@ class InferenceProtocolSourceTest {
     @Test
     void servicePluginDtosDeclareTheExactCanonicalProtocolRevision() throws Exception {
         byte[] bytes = Files.readAllBytes(Path.of(
-                "../../src/main/resources/protocol/inference-runtime.yaml"));
+                "src/main/resources/protocol/inference-runtime.yaml"));
         String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         assertEquals(Protocol.SOURCE_SHA256, hash,
                 "协议变更后必须重新生成服务插件 DTO 并更新 source hash");

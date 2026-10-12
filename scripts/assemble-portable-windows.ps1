@@ -1,9 +1,11 @@
 param(
     [string]$OutputDirectory = "",
     [string]$HostJar = "",
+    [string]$DistributionRuntime = $env:JAVACLAW_DISTRIBUTION_RUNTIME,
     [string]$CertificateThumbprint = $env:JAVACLAW_CODESIGN_THUMBPRINT,
     [string]$SignToolPath = "signtool.exe",
     [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$DevelopmentUnsigned,
     [switch]$Offline
 )
 
@@ -32,28 +34,32 @@ function Assert-BundledJava([string]$PortableHome) {
     if (-not (Test-Path -LiteralPath $java -PathType Leaf)) {
         throw "Missing regular bundled Java executable: $java"
     }
-    # 使用服务插件的固定模块与访问参数检查内置 Java。
-    Invoke-Checked $java @("--add-modules", "jdk.httpserver,jdk.incubator.vector",
-        "--enable-native-access=ALL-UNNAMED", "--add-opens=java.base/java.nio=ALL-UNNAMED", "-version")
+    # 进程运行参数由插件清单与批准权限控制。
+    Invoke-Checked $java @("-version")
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $target = Join-Path $projectRoot "target"
 if ($OutputDirectory -eq "") { $OutputDirectory = Join-Path $target "portable/JavaClaw" }
-if ($HostJar -eq "") {
-    $candidateJars = @(Get-ChildItem -LiteralPath $target -Filter "javaclaw-*.jar" -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notmatch '-(service-plugin-api|sources|javadoc|tests)\.jar$' })
-    if ($candidateJars.Count -ne 1) {
-        throw "Expected one Maven host JAR in target; run 'mvn -DskipTests package' first or pass -HostJar"
-    }
-    $HostJar = $candidateJars[0].FullName
+if ([string]::IsNullOrEmpty($DistributionRuntime)) {
+    $DistributionRuntime = Join-Path $projectRoot "distribution/target/runtime"
 }
+if ($HostJar -eq "") { $HostJar = Join-Path $DistributionRuntime "desktop.jar" }
+$runnerJar = Join-Path $DistributionRuntime "plugin-runner.jar"
+$desktopLibraries = Join-Path $DistributionRuntime "lib"
+# 链接完整 JDK 模块，避免遗漏反射或服务发现依赖；插件启用模块仍须单独声明并批准。
+$runtimeModules = "ALL-MODULE-PATH"
+if (-not (Test-Path -LiteralPath $runnerJar -PathType Leaf)) { throw "Run mvn package to assemble Runner" }
 if (-not (Test-Path -LiteralPath $HostJar -PathType Leaf)) { throw "Missing regular host JAR: $HostJar" }
 if (Test-Path -LiteralPath $OutputDirectory) { throw "Output already exists: $OutputDirectory" }
-if ($CertificateThumbprint -notmatch '^[0-9a-fA-F]{40}$') {
-    throw "Set a 40-character JAVACLAW_CODESIGN_THUMBPRINT for the release signing certificate"
+if ($DevelopmentUnsigned) {
+    if ($CertificateThumbprint -ne "") { throw "DevelopmentUnsigned cannot be combined with a signing certificate" }
+} else {
+    if ($CertificateThumbprint -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Set a 40-character JAVACLAW_CODESIGN_THUMBPRINT for the release signing certificate"
+    }
+    $CertificateThumbprint = $CertificateThumbprint.ToUpperInvariant()
 }
-$CertificateThumbprint = $CertificateThumbprint.ToUpperInvariant()
 
 Invoke-Checked "jpackage.exe" @("--version")
 if ($LASTEXITCODE -ne 0) { throw "JDK 25 jpackage is required" }
@@ -69,18 +75,17 @@ try {
     $inputDirectory = Join-Path $stage "input"
     $portableHome = Join-Path $stage "home"
     $runtime = Join-Path $portableHome "runtime"
-    $plugins = Join-Path $portableHome "plugins"
-    $data = Join-Path $portableHome "data"
+    $plugins = Join-Path $portableHome "plugins-v2"
+    $data = Join-Path $portableHome "data-v5"
     New-Item -ItemType Directory -Path $inputDirectory, $runtime, $plugins, $data -Force | Out-Null
     Copy-Item -LiteralPath $HostJar -Destination (Join-Path $inputDirectory "javaclaw.jar")
-    $mavenArgs = @("--batch-mode", "--no-transfer-progress", "-q", "-f", (Join-Path $projectRoot "pom.xml"))
-    if ($Offline) { $mavenArgs += "-o" }
-    $mavenArgs += @("dependency:copy-dependencies", "-DincludeScope=runtime", "-DoutputDirectory=$inputDirectory")
-    Invoke-Checked "mvn.cmd" $mavenArgs
+    # Runner 单独保存，绝不进入 jpackage 为 Desktop 生成的 classpath。
+    Copy-Item -Path (Join-Path $desktopLibraries "*.jar") -Destination $inputDirectory
+    Copy-Item -LiteralPath $runnerJar -Destination (Join-Path $runtime "plugin-runner.jar")
 
     $imageDirectory = Join-Path $stage "image"
     Invoke-Checked "jpackage.exe" @("--type", "app-image", "--dest", $imageDirectory,
-        "--name", "JavaClaw", "--input", $inputDirectory, "--main-jar", "javaclaw.jar",
+        "--name", "JavaClaw", "--add-modules", $runtimeModules, "--input", $inputDirectory, "--main-jar", "javaclaw.jar",
         "--main-class", "com.javaclaw.app.Launcher",
         # 保留服务插件需要的 bin/java.exe，继续使用其他默认裁剪选项。
         "--jlink-options", "--strip-debug --no-man-pages --no-header-files",
@@ -95,23 +100,28 @@ try {
 
     $launcher = Join-Path $runtime "JavaClaw/JavaClaw.exe"
     $bundledJava = Join-Path $runtime "JavaClaw/runtime/bin/java.exe"
-    foreach ($file in @($launcher, $bundledJava)) {
-        Invoke-Checked $SignToolPath @("sign", "/fd", "SHA256", "/sha1", $CertificateThumbprint,
-            "/tr", $TimestampUrl, "/td", "SHA256", $file)
-        Invoke-Checked $SignToolPath @("verify", "/pa", "/v", $file)
-        $signature = Get-AuthenticodeSignature -LiteralPath $file
-        if ($signature.Status -ne "Valid" -or
-                $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $CertificateThumbprint) {
-            throw "Unexpected or invalid Authenticode signature: $file"
+    # 开发镜像只用于验证内置 Java；默认发行路径仍必须签名并核验指定证书。
+    if (-not $DevelopmentUnsigned) {
+        foreach ($file in @($launcher, $bundledJava)) {
+            Invoke-Checked $SignToolPath @("sign", "/fd", "SHA256", "/sha1", $CertificateThumbprint,
+                "/tr", $TimestampUrl, "/td", "SHA256", $file)
+            Invoke-Checked $SignToolPath @("verify", "/pa", "/v", $file)
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne "Valid" -or
+                    $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $CertificateThumbprint) {
+                throw "Unexpected or invalid Authenticode signature: $file"
+            }
         }
     }
 
-    $stagedPlugins = Join-Path $target "distribution/plugins"
-    if (Test-Path -LiteralPath $stagedPlugins -PathType Container) {
-        Assert-NoReparsePoints $stagedPlugins
-        Get-ChildItem -LiteralPath $stagedPlugins -Force | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $plugins -Recurse -Force
-        }
+    $stagedPackages = Join-Path $DistributionRuntime "plugin-packages"
+    if (Test-Path -LiteralPath $stagedPackages -PathType Container) {
+        Assert-NoReparsePoints $stagedPackages
+        Copy-Item -LiteralPath $stagedPackages -Destination $runtime -Recurse
+    }
+    $distributionManifest = Join-Path $DistributionRuntime "plugin-distribution.json"
+    if (Test-Path -LiteralPath $distributionManifest -PathType Leaf) {
+        Copy-Item -LiteralPath $distributionManifest -Destination $runtime
     }
     Assert-BundledJava $portableHome
     Get-ChildItem -LiteralPath $runtime -Recurse -File -Force | ForEach-Object { $_.IsReadOnly = $true }

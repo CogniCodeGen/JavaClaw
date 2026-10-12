@@ -4,7 +4,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.service.api.CancellationToken;
+import com.javaclaw.plugins.deliverance.internal.CancellationToken;
 import io.teknek.deliverance.DType;
 import io.teknek.deliverance.embedding.PoolingType;
 import io.teknek.deliverance.generator.GeneratorParameters;
@@ -60,7 +60,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-/** Deliverance 0.0.12 adapter. No class in the JavaClaw Host imports this package or dependency. */
+/** Deliverance 0.0.12 私有适配器，宿主不导入本包或引擎依赖。 */
 final class DeliveranceEngine implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveranceEngine.class);

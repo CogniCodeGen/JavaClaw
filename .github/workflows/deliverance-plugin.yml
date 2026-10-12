@@ -1,113 +1,95 @@
-name: Deliverance service plugin
-
+name: Plugin v2 isolation
 on:
   push:
-    paths:
-      - ".github/workflows/deliverance-plugin.yml"
-      - "pom.xml"
-      - "src/main/java/com/javaclaw/service/**"
-      - "src/main/java/com/javaclaw/plugin/**"
-      - "src/main/java/com/javaclaw/infrastructure/serviceplugin/**"
-      - "src/main/java/com/javaclaw/infrastructure/inference/**"
-      - "src/main/resources/protocol/**"
-      - "sample-plugins/deliverance/**"
   pull_request:
-    paths:
-      - ".github/workflows/deliverance-plugin.yml"
-      - "pom.xml"
-      - "src/main/java/com/javaclaw/service/**"
-      - "src/main/java/com/javaclaw/plugin/**"
-      - "src/main/java/com/javaclaw/infrastructure/serviceplugin/**"
-      - "src/main/java/com/javaclaw/infrastructure/inference/**"
-      - "src/main/resources/protocol/**"
-      - "sample-plugins/deliverance/**"
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  plugin:
-    name: ${{ matrix.platform }}-${{ matrix.arch }}
+  isolation:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            platform: macos
-            arch: arm64
-          - runner: macos-15-intel
-            platform: macos
-            arch: x64
-          - runner: windows-2025
-            platform: windows
-            arch: x64
-          - runner: ubuntu-24.04
-            platform: linux
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: '25'
           cache: maven
-          cache-dependency-path: |
-            pom.xml
-            sample-plugins/deliverance/pom.xml
-      - name: Build Host API and built-in isolated runtime
+      - name: Build independent protocol, SDK and Runner
         shell: bash
-        run: mvn --batch-mode --no-transfer-progress -DskipTests install
-      - name: Build and test Deliverance sample plugin
+        run: mvn --batch-mode --no-transfer-progress -pl plugin-runner-java -am clean install
+      - name: Verify host and real subprocess lifecycle
         shell: bash
         run: >-
-          mvn --batch-mode --no-transfer-progress
-          -f sample-plugins/deliverance/pom.xml clean verify
-      - name: Verify one-JAR plugin boundary
-        shell: bash
-        run: |
-          test ! -e runtime
-          test ! -e service-plugins
-          jar tf sample-plugins/deliverance/target/deliverance.jar > "$RUNNER_TEMP/plugin-entries.txt"
-          test "$(grep -c '^plugin.json$' "$RUNNER_TEMP/plugin-entries.txt")" = 1
-          grep -q '^com/javaclaw/plugins/deliverance/DeliveranceServicePlugin.class$' "$RUNNER_TEMP/plugin-entries.txt"
-          if grep -Eq '(^|/).+\.(fxml|css)$|^META-INF/jpms\.args$|^(com/javaclaw/service/(api|runner)/|com/javaclaw/(app|ui|platform)/|org/springframework/|javafx/|org/h2/)' "$RUNNER_TEMP/plugin-entries.txt"; then
-            echo "Deliverance JAR contains forbidden custom UI or Host/Runner classes" >&2
-            exit 1
-          fi
-      - name: Upload unsigned staging plugin
-        uses: actions/upload-artifact@v7
-        with:
-          name: deliverance-plugin-${{ matrix.platform }}-${{ matrix.arch }}
-          path: sample-plugins/deliverance/target/deliverance.jar
-          if-no-files-found: error
-
-  host-isolation:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-      - name: Verify Host architecture and static plugin discovery
-        run: >-
-          mvn --batch-mode --no-transfer-progress
-          "-Dtest=ArchitectureRulesTest,PluginDescriptorLoaderTest,ServicePluginRegistrarTest,DeliveranceRuntimeManagerTest,ServicePluginProtocolSourceTest"
+          mvn --batch-mode --no-transfer-progress -pl javaclaw-desktop -am
+          -Dtest=ArchitectureRulesTest#externalPluginModulesOnlyDependOnVersionedProtocol,ApplicationHomeTest,RootApplicationContextTest#rootContextProvidesDataExecutionFxAndFxmlInfrastructure+rootContextsOwnIndependentPluginHosts,PluginManifestTest,PluginPackageVerifierTest,PluginStateStoreTest,DefaultPluginManagementServiceTest,RemotePluginHostAdaptersTest,PluginHostServicesTest,ExternalModelConfigurationSnapshotTest,RemoteInferenceGatewayTest,RemoteInferenceEndpointTest,RemoteInferenceRuntimeCatalogTest,RunModelSnapshotBindingTest,PluginScopedInferenceManagementTest,AgentEnginePlanCleanupTest,RunRecoveryCoordinatorPluginFailureTest
           test
-      - name: Verify API artifact and built-in Runner entry
+      - name: Build standalone sample plugins
         shell: bash
         run: |
-          mvn --batch-mode --no-transfer-progress -DskipTests package
-          HOST_FINAL_NAME="$(mvn --batch-mode --no-transfer-progress -q -Dstyle.color=never help:evaluate -Dexpression=project.build.finalName -DforceStdout)"
-          test -f "target/$HOST_FINAL_NAME-service-plugin-api.jar"
-          test ! -e "target/$HOST_FINAL_NAME-service-plugin-runner.jar"
-          jar tf "target/$HOST_FINAL_NAME.jar" > "$RUNNER_TEMP/host-entries.txt"
-          grep -qx 'com/javaclaw/service/runner/ServicePluginProcessMain.class' "$RUNNER_TEMP/host-entries.txt"
-          grep -qx 'com/javaclaw/service/api/ServicePlugin.class' "$RUNNER_TEMP/host-entries.txt"
-          ! grep -q 'service-plugin/javaclaw-service-plugin-runner.jar' "$RUNNER_TEMP/host-entries.txt"
+          for plugin in hello feishu deliverance echo-model; do
+            mvn --batch-mode --no-transfer-progress -f "sample-plugins/$plugin/pom.xml" clean verify
+          done
+      - name: Assemble isolated distribution
+        shell: bash
+        run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - name: Verify assembled classpaths and sample ZIP isolation
+        shell: bash
+        run: |
+          for plugin in hello feishu deliverance echo-model; do
+            manifest="sample-plugins/$plugin/plugin.json"
+            if [[ ! -f "$manifest" ]]; then manifest="sample-plugins/$plugin/src/main/resources/plugin.json"; fi
+            java -cp plugin-runner-java/target/plugin-runner-java-4.0.0-SNAPSHOT-all.jar \
+              com.javaclaw.plugin.sdk.packaging.PluginPackageMain \
+              --manifest "$manifest" --artifact "sample-plugins/$plugin/target/plugin.jar" \
+              --output "sample-plugins/$plugin/target/isolation-check.zip"
+          done
+          python -I scripts/stage-plugin-packages.py \
+            sample-plugins/hello/target/isolation-check.zip \
+            sample-plugins/feishu/target/isolation-check.zip \
+            sample-plugins/deliverance/target/isolation-check.zip \
+            sample-plugins/echo-model/target/isolation-check.zip
+          mvn --batch-mode --no-transfer-progress -pl distribution -am -DskipTests package
+          python -I scripts/verify-plugin-isolation.py \
+            sample-plugins/hello/target/isolation-check.zip \
+            sample-plugins/feishu/target/isolation-check.zip \
+            sample-plugins/deliverance/target/isolation-check.zip \
+            sample-plugins/echo-model/target/isolation-check.zip
+      - name: Verify bundled Java with a real model plugin
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          portable_home="$PWD/target/portable/isolation-home"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            bash scripts/assemble-portable-macos.sh --development-unsigned --offline --output "$portable_home"
+            bundled_java="$portable_home/runtime/JavaClaw.app/Contents/runtime/Contents/Home/bin/java"
+          else
+            bash scripts/assemble-portable-linux.sh --offline --output "$portable_home"
+            bundled_java="$portable_home/runtime/JavaClaw/lib/runtime/bin/java"
+          fi
+          mvn --batch-mode --no-transfer-progress -f sample-plugins/echo-model/pom.xml \
+            "-Djvm=$bundled_java" "-Dplugin.runner.jar=$portable_home/runtime/plugin-runner.jar" \
+            failsafe:integration-test failsafe:verify
+          tar -czf "target/portable/javaclaw-$RUNNER_OS-native.tar.gz" -C target/portable isolation-home
+      - name: Verify Windows bundled Java with a real model plugin
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $portableHome = Join-Path $PWD 'target/portable/isolation-home'
+          & ./scripts/assemble-portable-windows.ps1 -DevelopmentUnsigned -Offline -OutputDirectory $portableHome
+          $bundledJava = Join-Path $portableHome 'runtime/JavaClaw/runtime/bin/java.exe'
+          $runner = Join-Path $portableHome 'runtime/plugin-runner.jar'
+          & mvn --batch-mode --no-transfer-progress -f sample-plugins/echo-model/pom.xml "-Djvm=$bundledJava" "-Dplugin.runner.jar=$runner" failsafe:integration-test failsafe:verify
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Java model integration failed' }
+          Compress-Archive -LiteralPath $portableHome -DestinationPath 'target/portable/javaclaw-Windows-native.zip'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: javaclaw-development-${{ matrix.os }}
+          path: |
+            distribution/target/*-portable.zip
+            target/portable/*-native.*
+          if-no-files-found: error

@@ -1,12 +1,12 @@
 package com.javaclaw.plugins.deliverance;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.service.api.CancellationToken;
-import com.javaclaw.service.api.DesktopServiceClient;
-import com.javaclaw.service.api.ExternalInvocation;
-import com.javaclaw.service.api.ExternalResponse;
-import com.javaclaw.service.api.PluginConfig;
-import com.javaclaw.service.api.PluginLogger;
+import com.javaclaw.plugins.deliverance.internal.CancellationToken;
+import com.javaclaw.plugins.deliverance.internal.DesktopServiceClient;
+import com.javaclaw.plugins.deliverance.internal.ExternalInvocation;
+import com.javaclaw.plugins.deliverance.internal.ExternalResponse;
+import com.javaclaw.plugins.deliverance.internal.PluginConfig;
+import com.javaclaw.plugins.deliverance.internal.PluginLogger;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;

@@ -3,7 +3,7 @@ package com.javaclaw.plugins.deliverance;
 import java.util.Map;
 import java.util.List;
 
-/** Deliverance logical-service payloads carried inside the generic service-plugin protocol. */
+/** 插件内部推理服务的数据结构，由新协议入口映射调用。 */
 final class DeliveranceServiceProtocol {
     private DeliveranceServiceProtocol() { }
 

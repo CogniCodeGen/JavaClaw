@@ -3,9 +3,9 @@ package com.javaclaw.plugins.deliverance;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.javaclaw.service.api.DesktopServiceClient;
-import com.javaclaw.service.api.PluginConfig;
-import com.javaclaw.service.api.PluginLogger;
+import com.javaclaw.plugins.deliverance.internal.DesktopServiceClient;
+import com.javaclaw.plugins.deliverance.internal.PluginConfig;
+import com.javaclaw.plugins.deliverance.internal.PluginLogger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

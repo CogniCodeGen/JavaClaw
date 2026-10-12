@@ -2,10 +2,10 @@ package com.javaclaw.plugins.deliverance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.service.api.DesktopServiceClient;
-import com.javaclaw.service.api.ExternalInvocation;
-import com.javaclaw.service.api.PluginConfig;
-import com.javaclaw.service.api.PluginLogger;
+import com.javaclaw.plugins.deliverance.internal.DesktopServiceClient;
+import com.javaclaw.plugins.deliverance.internal.ExternalInvocation;
+import com.javaclaw.plugins.deliverance.internal.PluginConfig;
+import com.javaclaw.plugins.deliverance.internal.PluginLogger;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -17,7 +17,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Per-key scopes and quotas enforced inside the isolated endpoint process. */
+/** 在独立接口进程中执行每个密钥的权限与配额。 */
 final class ExternalApiKeyPolicies {
     private final Map<String, PolicyState> policies;
     private final DesktopServiceClient desktop;

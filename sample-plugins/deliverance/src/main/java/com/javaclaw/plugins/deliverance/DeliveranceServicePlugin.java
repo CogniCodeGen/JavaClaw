@@ -2,14 +2,14 @@ package com.javaclaw.plugins.deliverance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.service.api.ExternalEndpointDescriptor;
-import com.javaclaw.service.api.CancellationToken;
-import com.javaclaw.service.api.Registration;
-import com.javaclaw.service.api.ServiceDescriptor;
-import com.javaclaw.service.api.ServiceInvocation;
-import com.javaclaw.service.api.ServicePlugin;
-import com.javaclaw.service.api.ServicePluginContext;
-import com.javaclaw.service.api.PluginLogger;
+import com.javaclaw.plugins.deliverance.internal.ExternalEndpointDescriptor;
+import com.javaclaw.plugins.deliverance.internal.CancellationToken;
+import com.javaclaw.plugins.deliverance.internal.Registration;
+import com.javaclaw.plugins.deliverance.internal.ServiceDescriptor;
+import com.javaclaw.plugins.deliverance.internal.ServiceInvocation;
+import com.javaclaw.plugins.deliverance.internal.ServicePlugin;
+import com.javaclaw.plugins.deliverance.internal.ServicePluginContext;
+import com.javaclaw.plugins.deliverance.internal.PluginLogger;
 
 import java.time.Instant;
 import java.nio.file.Files;
@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Semaphore;
 
-/** One isolated JVM that owns all loaded Deliverance generation and embedding profiles. */
+/** 单个独立 JVM 拥有全部已加载的 Deliverance 生成与嵌入档案。 */
 public final class DeliveranceServicePlugin implements ServicePlugin {
     private final Object lifecycle = new Object();
     private final Map<String, EngineSlot> engines = new LinkedHashMap<>();
@@ -537,7 +537,7 @@ public final class DeliveranceServicePlugin implements ServicePlugin {
             EngineSlot slot = new EngineSlot(profileId, startup, created,
                     new AtomicInteger(), Instant.now(), reservedBytes);
             installResident(slot, cancellation);
-            created = null; // ownership moved into the resident slot
+            created = null; // 资源所有权已转交给常驻模型槽。
             status(slot);
             degradedReason = "";
             return slot;
@@ -617,7 +617,7 @@ public final class DeliveranceServicePlugin implements ServicePlugin {
             try {
                 return future.get(100, TimeUnit.MILLISECONDS);
             } catch (TimeoutException waiting) {
-                // Polling keeps a queued waiter responsive to its own cancellation token.
+                // 定期等待可让队列中的请求及时响应自身取消令牌。
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw new CancellationException("model load wait cancelled");

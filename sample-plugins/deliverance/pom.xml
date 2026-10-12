@@ -5,15 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.javaclaw.plugins</groupId>
     <artifactId>javaclaw-deliverance-plugin</artifactId>
-    <version>0.0.12-7</version>
+    <version>0.0.12-8</version>
     <name>JavaClaw Deliverance Service Plugin</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
         <deliverance.version>0.0.12</deliverance.version>
-        <!-- Match Deliverance/Jinjava's Jackson line; mixed minors in one shaded JVM can fail
-             with NoSuchMethodError before the plugin handshake completes. -->
+        <!-- 保持 Deliverance 与 Jinjava 的 Jackson 版本一致，避免插件私有运行时出现方法缺失。 -->
         <jackson.version>2.20.1</jackson.version>
     </properties>
 
@@ -27,16 +26,8 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.javaclaw</groupId>
-            <artifactId>javaclaw</artifactId>
-            <version>4.0.0-SNAPSHOT</version>
-            <classifier>service-plugin-api</classifier>
-            <scope>provided</scope>
-            <exclusions>
-                <!-- An attached classifier shares the Host POM; exclude every Host transitive
-                     dependency so the sample compiles against the narrow API JAR only. -->
-                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
-            </exclusions>
+            <groupId>com.javaclaw</groupId><artifactId>plugin-sdk-java</artifactId>
+            <version>4.0.0-SNAPSHOT</version><scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>io.teknek.deliverance</groupId>
@@ -51,6 +42,10 @@
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jdk8</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId><artifactId>jackson-datatype-jsr310</artifactId>
             <version>${jackson.version}</version>
         </dependency>
         <dependency>
@@ -73,7 +68,7 @@
     </dependencies>
 
     <build>
-        <finalName>deliverance</finalName>
+        <finalName>plugin</finalName>
         <extensions>
             <extension>
                 <groupId>kr.motd.maven</groupId>
@@ -120,8 +115,6 @@
                                         <exclude>META-INF/*.RSA</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/jpms.args</exclude>
-                                        <exclude>com/javaclaw/service/api/**</exclude>
-                                        <exclude>com/javaclaw/service/runner/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
@@ -132,8 +125,7 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- Shade preserves the pre-shade artifact as original-deliverance.jar. It is not a
-                 distributable plugin and is removed so a normal build exposes one JAR only. -->
+            <!-- 移除 Shade 中间工件，只保留可发行插件 JAR。 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
@@ -145,7 +137,7 @@
                         <goals><goal>run</goal></goals>
                         <configuration>
                             <target>
-                                <delete file="${project.build.directory}/original-deliverance.jar"/>
+                                <delete file="${project.build.directory}/original-plugin.jar"/>
                             </target>
                         </configuration>
                     </execution>
@@ -173,8 +165,7 @@
             </dependencies>
         </profile>
         <!--
-            Opt-in real-model gate. CI or a release operator must supply content-addressed
-            generation and embedding fixtures; absent fixtures are a hard failure, never a skip.
+            真实模型验收需显式启用，并提供内容寻址的生成与嵌入模型；缺少模型时应失败。
         -->
         <profile>
             <id>deliverance-it</id>

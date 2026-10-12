@@ -1,9 +1,8 @@
 {
   "id": "builtin-deliverance",
   "name": "Deliverance 本地推理",
-  "version": "0.0.12-7",
+  "version": "0.0.12-8",
   "description": "在独立 JVM 中提供本地对话、流式输出、推理内容、工具调用和嵌入服务。",
-  "pluginType": "SERVICE_PLUGIN",
   "configurationSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -25,7 +24,10 @@
         "default": "[]",
         "x-javaclaw-hidden": true,
         "x-javaclaw-host-managed": true,
-        "title": "宿主鉴权策略"
+        "title": "宿主鉴权策略",
+        "x-secret": true,
+        "writeOnly": true,
+        "x-javaclaw-secret": true
       },
       "inference.publishedCatalog": {
         "type": "string",
@@ -44,7 +46,246 @@
     },
     "additionalProperties": false
   },
-  "configurationUi": {
+  "inference": {
+    "engine": "deliverance",
+    "engineVersion": "0.0.12",
+    "adapterVersion": "3",
+    "endpointCapabilities": {
+      "openai": ["models", "chat", "embeddings", "sse", "openapi"]
+    },
+    "protocol": {
+      "major": 1,
+      "minor": 2
+    },
+    "capabilities": [
+      "chat",
+      "streaming",
+      "reasoning",
+      "tools",
+      "embeddings",
+      "exact_usage",
+      "terminal_usage",
+      "cancellation",
+      "simd",
+      "jvector",
+      "model-type:generation:llama",
+      "model-type:generation:qwen2",
+      "model-type:generation:qwen3",
+      "model-type:generation:qwen3_moe",
+      "model-type:generation:gemma2",
+      "model-type:generation:gemma3_text",
+      "model-type:generation:gemma4",
+      "model-type:generation:mistral",
+      "model-type:generation:mixtral",
+      "model-type:generation:gpt2",
+      "model-type:generation:granitemoehybrid",
+      "model-type:embedding:bert",
+      "model-type:embedding:qwen3"
+    ],
+    "parameterSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "load": {
+          "type": "object",
+          "properties": {
+            "workerThreads": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024,
+              "default": 4,
+              "title": "推理线程"
+            },
+            "tensorBackend": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "simd",
+                "jvector"
+              ],
+              "default": "auto",
+              "title": "计算后端"
+            },
+            "workingMemoryType": {
+              "type": "string",
+              "enum": [
+                "F32",
+                "BF16",
+                "F16"
+              ],
+              "default": "F32",
+              "title": "工作内存精度"
+            },
+            "workingQuantType": {
+              "type": "string",
+              "enum": [
+                "I8",
+                "Q4",
+                "F32"
+              ],
+              "default": "I8",
+              "title": "工作量化精度"
+            },
+            "outputHeadQuantization": {
+              "type": "string",
+              "enum": [
+                "I8",
+                "Q4",
+                "F32"
+              ],
+              "title": "输出头量化"
+            },
+            "maxBatchSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64,
+              "default": 1,
+              "title": "最大批量"
+            },
+            "pooling": {
+              "type": "string",
+              "enum": [
+                "AUTO",
+                "LAST",
+                "AVG",
+                "MAX",
+                "SUM",
+                "MODEL"
+              ],
+              "default": "AUTO",
+              "title": "嵌入池化"
+            },
+            "kvCacheMaxEntries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 10000,
+              "title": "KV Cache 条目上限"
+            }
+          },
+          "additionalProperties": false
+        },
+        "generation": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2,
+              "default": 0
+            },
+            "maxTokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 131072,
+              "default": 1024
+            },
+            "seed": {
+              "type": "integer",
+              "default": 42
+            },
+            "stop": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16
+            },
+            "includeStopString": {
+              "type": "boolean",
+              "default": false
+            },
+            "guidedChoice": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "guidedRegex": {
+              "type": "string"
+            },
+            "guidedJson": {
+              "type": "string"
+            },
+            "logprobs": {
+              "type": "boolean",
+              "default": false
+            },
+            "topLogprobs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "xtcThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "xtcProbability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "topK": {
+              "type": "number",
+              "minimum": 0
+            },
+            "topP": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "uniformTopP": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "cacheSalt": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "enableThinking": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "model-types": [
+      "bert",
+      "gemma2",
+      "gemma3_text",
+      "gemma4",
+      "gpt2",
+      "granitemoehybrid",
+      "llama",
+      "mistral",
+      "mixtral",
+      "qwen2",
+      "qwen3",
+      "qwen3_moe"
+    ]
+  },
+  "publisher": "JavaClaw",
+  "protocol": {
+    "major": 2,
+    "minor": 0
+  },
+  "entrypoint": "com.javaclaw.plugins.deliverance.DeliverancePlugin",
+  "artifact": "plugin.jar",
+  "permissions": [
+    "host.inference.api-usage",
+    "runtime.module:jdk.incubator.vector",
+    "runtime.module:jdk.httpserver",
+    "runtime.native-access"
+  ],
+  "capabilities": [
+    "MODEL"
+  ],
+  "uiSchema": {
     "schemaVersion": 1,
     "pages": [
       {
@@ -81,86 +322,250 @@
       }
     ]
   },
-  "inference": {
-    "engine": "deliverance",
-    "engineVersion": "0.0.12",
-    "adapterVersion": "2",
-    "protocol": {"major": 1, "minor": 2},
-    "capabilities": [
-      "chat", "streaming", "reasoning", "tools", "embeddings", "exact_usage",
-      "terminal_usage", "cancellation", "simd", "jvector", "service_plugin",
-      "model-type:generation:llama", "model-type:generation:qwen2",
-      "model-type:generation:qwen3", "model-type:generation:qwen3_moe",
-      "model-type:generation:gemma2", "model-type:generation:gemma3_text",
-      "model-type:generation:gemma4", "model-type:generation:mistral",
-      "model-type:generation:mixtral", "model-type:generation:gpt2",
-      "model-type:generation:granitemoehybrid", "model-type:embedding:bert",
-      "model-type:embedding:qwen3"
-    ],
-    "parameterSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "load": {
+  "contributions": [
+    {
+      "id": "inference",
+      "capability": "MODEL",
+      "contractVersion": "2.0",
+      "name": "Deliverance 本地推理",
+      "description": "在独立 JVM 中提供本地对话、流式输出、推理内容、工具调用和嵌入服务。",
+      "inputSchema": {
+        "type": "object"
+      },
+      "metadata": {
+        "engine": "deliverance",
+        "engineVersion": "0.0.12",
+        "adapterVersion": "3",
+        "endpointCapabilities": {
+          "openai": ["models", "chat", "embeddings", "sse", "openapi"]
+        },
+        "protocol": {
+          "major": 1,
+          "minor": 2
+        },
+        "capabilities": [
+          "chat",
+          "streaming",
+          "reasoning",
+          "tools",
+          "embeddings",
+          "exact_usage",
+          "terminal_usage",
+          "cancellation",
+          "simd",
+          "jvector",
+          "model-type:generation:llama",
+          "model-type:generation:qwen2",
+          "model-type:generation:qwen3",
+          "model-type:generation:qwen3_moe",
+          "model-type:generation:gemma2",
+          "model-type:generation:gemma3_text",
+          "model-type:generation:gemma4",
+          "model-type:generation:mistral",
+          "model-type:generation:mixtral",
+          "model-type:generation:gpt2",
+          "model-type:generation:granitemoehybrid",
+          "model-type:embedding:bert",
+          "model-type:embedding:qwen3"
+        ],
+        "parameterSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
-            "workerThreads": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 4, "title": "推理线程"},
-            "tensorBackend": {"type": "string", "enum": ["auto", "simd", "jvector"], "default": "auto", "title": "计算后端"},
-            "workingMemoryType": {"type": "string", "enum": ["F32", "BF16", "F16"], "default": "F32", "title": "工作内存精度"},
-            "workingQuantType": {"type": "string", "enum": ["I8", "Q4", "F32"], "default": "I8", "title": "工作量化精度"},
-            "outputHeadQuantization": {"type": "string", "enum": ["I8", "Q4", "F32"], "title": "输出头量化"},
-            "maxBatchSize": {"type": "integer", "minimum": 1, "maximum": 64, "default": 1, "title": "最大批量"},
-            "pooling": {"type": "string", "enum": ["AUTO", "LAST", "AVG", "MAX", "SUM", "MODEL"], "default": "AUTO", "title": "嵌入池化"},
-            "kvCacheMaxEntries": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 10000, "title": "KV Cache 条目上限"}
+            "load": {
+              "type": "object",
+              "properties": {
+                "workerThreads": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1024,
+                  "default": 4,
+                  "title": "推理线程"
+                },
+                "tensorBackend": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "simd",
+                    "jvector"
+                  ],
+                  "default": "auto",
+                  "title": "计算后端"
+                },
+                "workingMemoryType": {
+                  "type": "string",
+                  "enum": [
+                    "F32",
+                    "BF16",
+                    "F16"
+                  ],
+                  "default": "F32",
+                  "title": "工作内存精度"
+                },
+                "workingQuantType": {
+                  "type": "string",
+                  "enum": [
+                    "I8",
+                    "Q4",
+                    "F32"
+                  ],
+                  "default": "I8",
+                  "title": "工作量化精度"
+                },
+                "outputHeadQuantization": {
+                  "type": "string",
+                  "enum": [
+                    "I8",
+                    "Q4",
+                    "F32"
+                  ],
+                  "title": "输出头量化"
+                },
+                "maxBatchSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 64,
+                  "default": 1,
+                  "title": "最大批量"
+                },
+                "pooling": {
+                  "type": "string",
+                  "enum": [
+                    "AUTO",
+                    "LAST",
+                    "AVG",
+                    "MAX",
+                    "SUM",
+                    "MODEL"
+                  ],
+                  "default": "AUTO",
+                  "title": "嵌入池化"
+                },
+                "kvCacheMaxEntries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000,
+                  "default": 10000,
+                  "title": "KV Cache 条目上限"
+                }
+              },
+              "additionalProperties": false
+            },
+            "generation": {
+              "type": "object",
+              "properties": {
+                "temperature": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2,
+                  "default": 0
+                },
+                "maxTokens": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 131072,
+                  "default": 1024
+                },
+                "seed": {
+                  "type": "integer",
+                  "default": 42
+                },
+                "stop": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 16
+                },
+                "includeStopString": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "guidedChoice": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "guidedRegex": {
+                  "type": "string"
+                },
+                "guidedJson": {
+                  "type": "string"
+                },
+                "logprobs": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "topLogprobs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "xtcThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "xtcProbability": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "topK": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "topP": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "uniformTopP": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "cacheSalt": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "enableThinking": {
+                  "type": "boolean",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },
-        "generation": {
-          "type": "object",
-          "properties": {
-            "temperature": {"type": "number", "minimum": 0, "maximum": 2, "default": 0},
-            "maxTokens": {"type": "integer", "minimum": 1, "maximum": 131072, "default": 1024},
-            "seed": {"type": "integer", "default": 42},
-            "stop": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
-            "includeStopString": {"type": "boolean", "default": false},
-            "guidedChoice": {"type": "array", "items": {"type": "string"}},
-            "guidedRegex": {"type": "string"},
-            "guidedJson": {"type": "string"},
-            "logprobs": {"type": "boolean", "default": false},
-            "topLogprobs": {"type": "integer", "minimum": 0, "maximum": 20},
-            "xtcThreshold": {"type": "number", "minimum": 0, "maximum": 1},
-            "xtcProbability": {"type": "number", "minimum": 0, "maximum": 1},
-            "topK": {"type": "number", "minimum": 0},
-            "topP": {"type": "number", "minimum": 0, "maximum": 1},
-            "uniformTopP": {"type": "number", "minimum": 0, "maximum": 1},
-            "cacheSalt": {"type": "string", "maxLength": 256},
-            "enableThinking": {"type": "boolean", "default": true}
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    }
-  },
-  "service": {
-    "mainClass": "com.javaclaw.plugins.deliverance.DeliveranceServicePlugin",
-    "apiVersion": "1.0",
-    "startupPolicy": "MANUAL",
-    "desktopServices": ["inference.api-usage"],
-    "resourceHints": {
-      "heapMiB": 4096,
-      "nativeMemoryMiB": 4096,
-      "computeThreads": 6,
-      "ioConcurrency": 64,
-      "fileDescriptors": 256,
-      "usesNativeCode": true
-    },
-    "externalEndpoints": [
-      {
-        "id": "openai",
-        "protocol": "HTTP",
-        "capabilities": ["models", "chat", "embeddings", "sse"]
+        "model-types": [
+          "bert",
+          "gemma2",
+          "gemma3_text",
+          "gemma4",
+          "gpt2",
+          "granitemoehybrid",
+          "llama",
+          "mistral",
+          "mixtral",
+          "qwen2",
+          "qwen3",
+          "qwen3_moe"
+        ]
       }
-    ]
+    }
+  ],
+  "runtime": {
+    "javaModules": [
+      "jdk.incubator.vector",
+      "jdk.httpserver"
+    ],
+    "nativeAccess": true
+  },
+  "resources": {
+    "heapMiB": 4096,
+    "exclusive": false
   }
 }

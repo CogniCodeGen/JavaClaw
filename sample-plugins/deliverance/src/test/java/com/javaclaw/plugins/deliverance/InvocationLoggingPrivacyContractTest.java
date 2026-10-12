@@ -15,7 +15,8 @@ class InvocationLoggingPrivacyContractTest {
     @Test
     void manifestDeclaresHotLoggingProtocolAndKeepsItDisabledByDefault() throws Exception {
         var root = new ObjectMapper().readTree(Path.of("src/main/resources/plugin.json").toFile());
-        assertEquals("0.0.12-7", root.path("version").asText());
+        assertEquals("0.0.12-8", root.path("version").asText());
+        assertEquals(2, root.path("protocol").path("major").asInt());
         assertEquals(1, root.path("inference").path("protocol").path("major").asInt());
         assertEquals(2, root.path("inference").path("protocol").path("minor").asInt());
         var logging = root.path("configurationSchema").path("properties")
@@ -29,7 +30,7 @@ class InvocationLoggingPrivacyContractTest {
         }
         assertTrue(root.path("inference").path("parameterSchema").path("properties")
                 .path("load").path("properties").path("jvmHeapMiB").isMissingNode());
-        assertFalse(root.path("configurationUi").toString().contains("驻留数量"));
+        assertFalse(root.path("uiSchema").toString().contains("驻留数量"));
     }
 
     @Test

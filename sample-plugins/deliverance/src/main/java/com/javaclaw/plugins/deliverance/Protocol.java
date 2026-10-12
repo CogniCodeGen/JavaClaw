@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Generated-shape DTOs for JavaClaw's canonical protocol/inference-runtime.yaml.
- * Keep this package private to the service plugin; the Host owns independent DTOs.
+ * 对应插件内 protocol/inference-runtime.yaml 的私有数据结构。
+ * 宿主使用独立业务 DTO，通过 JSON 边界转换。
  */
 final class Protocol {
     static final String SOURCE_SHA256 = "f341a0a0793001248e8cfc95a1cf5a3149592012d549b9ffdbcf7a5701be5f01";

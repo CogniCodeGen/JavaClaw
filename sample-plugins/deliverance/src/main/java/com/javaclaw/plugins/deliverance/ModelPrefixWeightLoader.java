@@ -9,7 +9,7 @@ import io.teknek.deliverance.tensor.TensorInfo;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Adapts encoder checkpoints that omit the causal-model {@code model.} weight prefix. */
+/** 适配未使用因果模型 {@code model.} 权重前缀的编码器工件。 */
 final class ModelPrefixWeightLoader implements WeightLoader {
     private static final String MODEL_PREFIX = "model.";
 

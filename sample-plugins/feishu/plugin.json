@@ -1,14 +1,97 @@
 {
   "id": "feishu",
   "name": "飞书消息助手",
-  "version": "1.0.0",
-  "apiVersion": "4.0",
-  "pluginType": "IN_PROCESS",
-  "main": "com.javaclaw.plugins.feishu.FeishuPlugin",
-  "description": "通过飞书自建应用长连接(WebSocket)接收用户消息并调用 AI 对话回复；向聊天提供 feishu_send(主动发消息，区别单向通知)与 feishu_messages(查看收到的消息)两个工具；动态注册飞书回复规范/消息格式技能。需在飞书开放平台建自建应用、开通机器人、订阅 im.message.receive_v1(长连接模式)，并申请发消息权限。",
-  "capabilities": ["CHAT"],
-  "config": [
-    { "key": "appId", "label": "App ID", "secret": false },
-    { "key": "appSecret", "label": "App Secret", "secret": true }
-  ]
+  "version": "2.0.0",
+  "publisher": "JavaClaw 示例",
+  "description": "在独立进程接收飞书消息，通过受限宿主能力回复。",
+  "protocol": {
+    "major": 2,
+    "minor": 0
+  },
+  "entrypoint": "com.javaclaw.plugins.feishu.FeishuPlugin",
+  "artifact": "plugin.jar",
+  "permissions": [
+    "host.agent.chat"
+  ],
+  "capabilities": [
+    "TOOL",
+    "SKILL"
+  ],
+  "contributions": [
+    {
+      "id": "feishu_send",
+      "capability": "TOOL",
+      "contractVersion": "2.0",
+      "name": "发送飞书消息",
+      "description": "主动发送文本",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "receive_id",
+          "text"
+        ],
+        "properties": {
+          "receive_id": {
+            "type": "string"
+          },
+          "id_type": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "feishu_messages",
+      "capability": "TOOL",
+      "contractVersion": "2.0",
+      "name": "飞书消息历史",
+      "description": "查看最近收到的文本",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "feishu_reply_style",
+      "capability": "SKILL",
+      "contractVersion": "2.0",
+      "name": "飞书回复规范",
+      "description": "飞书纯文本回复风格",
+      "inputSchema": {}
+    }
+  ],
+  "configurationSchema": {
+    "type": "object",
+    "required": [
+      "appId",
+      "appSecret"
+    ],
+    "properties": {
+      "appId": {
+        "type": "string",
+        "title": "App ID",
+        "minLength": 1
+      },
+      "appSecret": {
+        "type": "string",
+        "title": "App Secret",
+        "minLength": 1,
+        "format": "password",
+        "x-secret": true,
+        "writeOnly": true,
+        "x-javaclaw-secret": true
+      }
+    }
+  },
+  "uiSchema": {
+    "pages": [
+      {
+        "id": "configuration",
+        "title": "飞书配置",
+        "type": "SCHEMA_FORM"
+      }
+    ]
+  }
 }

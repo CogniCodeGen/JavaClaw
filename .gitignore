@@ -4,8 +4,12 @@
 !/LICENSE
 !/README.md
 !/pom.xml
+!/plugin-protocol/
+!/plugin-sdk-java/
+!/plugin-runner-java/
+!/javaclaw-desktop/
+!/distribution/
 !/.github/
-!/src/
 !/sample-plugins/
 !/scripts/
 !/docs/
@@ -129,3 +133,8 @@ id_ed25519.*
 
 # 本机界面截图可能包含对话、用户名和账号信息，保留在本地。
 /docs/images/screenshots/
+
+# 聚合模块的构建产物。
+**/target/
+/data-v5/
+/plugins-v2/

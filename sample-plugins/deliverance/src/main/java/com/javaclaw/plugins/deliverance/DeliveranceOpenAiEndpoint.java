@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.javaclaw.service.api.ExternalInvocation;
-import com.javaclaw.service.api.ExternalRequestHandler;
-import com.javaclaw.service.api.DesktopServiceClient;
-import com.javaclaw.service.api.PluginConfig;
-import com.javaclaw.service.api.PluginLogger;
+import com.javaclaw.plugins.deliverance.internal.ExternalInvocation;
+import com.javaclaw.plugins.deliverance.internal.ExternalRequestHandler;
+import com.javaclaw.plugins.deliverance.internal.DesktopServiceClient;
+import com.javaclaw.plugins.deliverance.internal.PluginConfig;
+import com.javaclaw.plugins.deliverance.internal.PluginLogger;
 
 import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
@@ -22,7 +22,7 @@ import java.util.Iterator;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** OpenAI-compatible endpoint served directly by the Deliverance plugin process. */
+/** 由 Deliverance 插件进程直接提供 OpenAI 兼容接口。 */
 final class DeliveranceOpenAiEndpoint implements ExternalRequestHandler {
     private static final Set<String> ENVELOPE_FIELDS = Set.of(
             "model", "messages", "stream", "stream_options", "tools",
@@ -593,7 +593,7 @@ final class DeliveranceOpenAiEndpoint implements ExternalRequestHandler {
                     .getBytes(StandardCharsets.UTF_8));
             invocation.response().stream("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {
-            // A disconnected client is already represented by the Runner cancellation token.
+            // 客户端断连已由插件网关的取消令牌表达。
         } finally {
             try { invocation.response().closeStream(); } catch (RuntimeException ignored) { }
         }

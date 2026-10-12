@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-/** Shared failure-safe backend loader used by generation and embedding models. */
+/** 生成与嵌入模型共用的安全后端加载器，失败时释放部分资源。 */
 final class BackendFallbackLoader {
     private BackendFallbackLoader() { }
 

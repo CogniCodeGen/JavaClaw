@@ -9,8 +9,11 @@ JavaClaw/
   runtime/
     JavaClaw.app/                 macOS：包含 JDK 25 和应用依赖
     JavaClaw/                     Windows/Linux：包含 JDK 25 和应用依赖
-  plugins/
-  data/
+    plugin-runner.jar             独立插件进程入口
+    plugin-packages/              可选发行插件 ZIP
+    plugin-distribution.json      可选插件的完整性清单
+  plugins-v2/
+  data-v5/
 ```
 
 每个平台的发行包只包含该平台对应的应用镜像。桌面平台适配器使用 Java
@@ -18,28 +21,35 @@ JavaClaw/
 的 C／C++／Objective-C++ 桌面库。启动 macOS
 `runtime/JavaClaw.app` 或 Windows `runtime/JavaClaw/JavaClaw.exe`。
 应用从自身 JAR 的代码位置定位外层目录，因此不依赖当前工作目录。
-`data/` 保存应用管理的数据库、浏览器资产、截图、日志和临时文件；
-`plugins/` 保存可写扩展。操作系统管理的授权记录仍由操作系统保存。
-Linux 启动 `runtime/JavaClaw/bin/JavaClaw`；此包可运行主程序与服务插件，
+`data-v5/` 保存应用管理的数据库、浏览器资产、截图、日志和临时文件；
+`plugins-v2/` 保存不可变插件工件与恢复记录。操作系统管理的授权记录仍由操作系统保存。
+Linux 启动 `runtime/JavaClaw/bin/JavaClaw`；此包可运行主程序与隔离插件，
 当前版本不提供 Linux 桌面原生能力。
 
 ## 装配前置条件
 
-先用 JDK 25 和 Maven 构建主 JAR：
+先在仓库根用 JDK 25 和 Maven 构建模块并组装发行目录：
 
 ```bash
 mvn --batch-mode --no-transfer-progress -DskipTests package
 ```
 
-装配脚本默认读取 `target/javaclaw-<version>.jar`。macOS 和 Linux 可用
+宿主 Maven 工件位于 `javaclaw-desktop/target/`；发行模块自动将其复制为
+`distribution/target/runtime/desktop.jar`，将依赖复制到同目录的 `lib/`，并独立保存
+`plugin-runner.jar`。装配脚本默认读取这份组装结果。macOS 和 Linux 可用
 `JAVACLAW_HOST_JAR`、Windows 可用 `-HostJar` 指定其他已完成构建的主 JAR。
-如果发行版还包含现有的 Deliverance 插件，须先完成其签名与
-`target/distribution/plugins/` 暂存步骤；脚本会把已有的插件目录纳入外层
-`plugins/`，不会自行跳过插件签名验证流程。
-脚本调用 `mvn dependency:copy-dependencies`，把运行依赖放入应用镜像。
+可选插件先使用 SDK CLI 生成 ZIP，再使用 `scripts/stage-plugin-packages.py` 放入
+`distribution/target/runtime/plugin-packages/` 并生成完整性清单，随后重新打发行包。
+如需保留旧工件，可用 `-Djavaclaw.distribution.directory=/absolute/new/output` 指定发行模块的独立构建目录；
+插件 staging 与隔离检查的 `--runtime-dir` 指向该目录下的 `runtime/`。
+三平台装配均可通过 `JAVACLAW_DISTRIBUTION_RUNTIME` 指定这份完整输入，Windows 也支持
+`-DistributionRuntime`。此参数同时选择 Desktop、依赖、Runner 和插件清单，避免混用新旧工件；
+`JAVACLAW_HOST_JAR` / `-HostJar` 仍只覆盖主 JAR。
+装配脚本将这些静态工件复制到外层 `runtime/`；应用首次登记时执行统一校验，默认停用。
+装配脚本不调用 Maven，也不从根 `target/` 查找宿主 JAR；根 `target/portable/` 仅用于镜像输出和暂存。
 Java 源码及系统 FFM 绑定随主 JAR 构建，无单独原生编译步骤。
 已有输出目录会导致失败，
-避免覆盖用户的 `data/` 和 `plugins/`。
+避免覆盖用户的 `data-v5/` 和 `plugins-v2/`。
 
 macOS 发行机需要 JDK 25 `jpackage`、系统 `codesign`／`plutil`，以及有效的
 Developer ID Application 签名身份：
@@ -65,7 +75,7 @@ scripts/assemble-portable-macos.sh --development-unsigned --offline \
 开发模式跳过证书签名与正式验签；修改 `Info.plist` 后，脚本用临时
 ad-hoc 签名保持 `.app` 完整性，产物不能作为发行包。正式装配始终要求
 `CODESIGN_IDENTITY`，并验证 `.app` 与内置 Java 的 Developer ID Application 签名。
-`--offline` 仅在 Maven 所有运行依赖已缓存时使用。
+`--offline` 保留为装配入口的兼容参数；脚本仅使用已组装产物，Maven 的离线构建需要在此前显式使用 `mvn -o`。
 
 Windows 发行机需要 JDK 25、Maven、`signtool.exe` 和可用于代码签名的证书。
 无需 MSVC、CMake 或 C++/WinRT 头文件；签名工具可独立安装。
@@ -89,20 +99,24 @@ Linux 可在 JDK 25 和 Maven 环境中装配：
 bash scripts/assemble-portable-linux.sh --output /absolute/path/to/JavaClaw
 ```
 
-所有平台显式设置 `jlink` 选项，保留服务插件隔离进程使用的 `bin/java`
-（Windows 为 `bin/java.exe`），并在装配时使用插件的固定 JVM 参数执行
-`-version`；若运行时或必需模块缺失，装配失败。插件不会回退到系统 Java。
+所有平台显式设置 `jlink` 选项并保留完整 JDK 模块和插件隔离进程使用的 `bin/java`
+（Windows 为 `bin/java.exe`），装配时执行包内 Java 的 `-version` 检查。
+插件所需模块和原生访问由清单声明并逐项批准，启动时再校验；插件不会回退到系统 Java。
 
 ## GitHub 发行工作流
 
-`deliverance-release.yml` 从 Maven 的 `project.build.finalName` 读取主工件名，
-签署 Deliverance 插件并将签名者固定到主 JAR，再为五个平台目标生成完整便携目录。
-macOS 和 Windows 复用上述签名装配脚本，Linux 复用对应的 JDK 镜像装配脚本。
-ZIP 包含外层 `JavaClaw/runtime/`、`JavaClaw/plugins/` 与 `JavaClaw/data/`，
-macOS 和 Linux 归档保留可执行权限及运行时内部的符号链接。所有目标成功后才发布标签。
+`deliverance-release.yml` 独立构建 SDK、Runner 和 Deliverance，将示例自身的
+`sample-plugins/deliverance/target/plugin.jar` 签为 v2 ZIP；插件签名不写入宿主 JAR。
+`deliverance-plugin.yml` 在 macOS、Windows 和 Linux 配置模块、真实子进程及发行类路径验证，
+将四插件 ZIP 和完整性清单纳入通用 ZIP，并归档通用包与带 JDK 的开发镜像。
+三平台均配置包内 Java + Runner 的 echo-model 验证；Windows 开发镜像显式使用
+`-DevelopmentUnsigned`，不绕过默认正式签名要求。该工作流只跑插件隔离专项，
+不替代完整 `-Pui-test verify`。配置存在不等于目标平台已实际运行，最新执行结果见
+[2026-10-12 交付收尾记录](delivery-closure-20261012.md)。
 
-在 GitHub 的 `release` 环境中配置原有的四项
-`DELIVERANCE_JARSIGNER_*` 插件签名 secrets，并增加平台代码签名 secrets：
+插件签包在 GitHub 的 `release` 环境中使用 `PLUGIN_ED25519_PRIVATE_KEY_BASE64`
+和 `PLUGIN_ED25519_PUBLIC_KEY_BASE64`。平台镜像签名需在对应发行机准备证书；
+如接入 CI，可使用以下平台 secrets 传递：
 
 | 平台 | Secret | 内容 |
 | --- | --- | --- |
@@ -112,8 +126,8 @@ macOS 和 Linux 归档保留可执行权限及运行时内部的符号链接。�
 | Windows | `JAVACLAW_WINDOWS_CERTIFICATE_PFX_BASE64` | 含私钥的代码签名 PFX 文件的 Base64 |
 | Windows | `JAVACLAW_WINDOWS_CERTIFICATE_PASSWORD` | PFX 密码 |
 
-工作流只在对应平台导入签名证书，完成后清理临时私钥文件、macOS 临时钥匙串和
-Windows 导入的签名证书。缺少平台签名证书会阻止该平台归档，不生成开发签名发行物。
+平台签名自动化需在对应平台导入证书，并在完成后清理临时私钥、钥匙串或证书存储中的临时项。
+当前签名插件工作流只清理插件 Ed25519 临时密钥；不能把它当作平台镜像签名验收。
 
 ## 完整性与验收
 
@@ -121,8 +135,8 @@ Windows 导入的签名证书。缺少平台签名证书会阻止该平台归档
 只允许 `jpackage` JDK 在 `runtime/` 内部解析的符号链接。桌面 FFM 适配器
 加载操作系统管理的库，不从插件目录、应用数据目录、工作目录或历史开发
 产物加载桌面实现。`runtime/native/` 不再是发行布局的一部分。
-启动前检查目标目录可写与迁移数据格式，
-格式 3 升级会在独占启动锁下清空此应用目录内的旧 `data/` 与 `plugins/`，
+启动前检查目标目录可写与数据格式，
+当前格式 5 使用独立的 `data-v5/` 与 `plugins-v2/`，旧 `data/` 与 `plugins/` 不读取、不迁移、不删除，
 具体行为见 [4.0 升级说明](upgrade-4.0.md)。
 
 上述签名检查发生在**发行装配时**。发行物仍应通过可信渠道分发，并在

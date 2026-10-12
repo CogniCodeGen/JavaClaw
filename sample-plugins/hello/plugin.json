@@ -1,13 +1,109 @@
 {
   "id": "hello",
   "name": "示例插件 Hello",
-  "version": "1.0.0",
-  "apiVersion": "4.0",
-  "pluginType": "IN_PROCESS",
-  "main": "com.example.hello.HelloPlugin",
-  "description": "示例插件：在宿主托管的虚拟线程上跑心跳后台循环，演示同步调用、CHAT 能力与配置注入。",
-  "capabilities": ["CHAT"],
-  "config": [
-    { "key": "greeting", "label": "问候语", "secret": false }
-  ]
+  "version": "2.0.0",
+  "publisher": "JavaClaw 示例",
+  "description": "展示进程外工具、技能、上下文、工作流节点与只能收紧权限预算的钩子。",
+  "protocol": {
+    "major": 2,
+    "minor": 0
+  },
+  "entrypoint": "com.example.hello.HelloPlugin",
+  "artifact": "plugin.jar",
+  "permissions": [],
+  "capabilities": [
+    "TOOL",
+    "SKILL",
+    "CONTEXT",
+    "WORKFLOW",
+    "HOOK"
+  ],
+  "contributions": [
+    {
+      "id": "hello_shout",
+      "capability": "TOOL",
+      "contractVersion": "2.0",
+      "name": "大声问好",
+      "description": "把输入文本转为大写并加上问候语",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "hello_style",
+      "capability": "SKILL",
+      "contractVersion": "2.0",
+      "name": "问候回复规范",
+      "description": "问候回复规范",
+      "inputSchema": {},
+      "metadata": {
+        "content": "用简洁友好的中文回复问候。"
+      }
+    },
+    {
+      "id": "hello_context",
+      "capability": "CONTEXT",
+      "contractVersion": "2.0",
+      "name": "工作区问候上下文",
+      "description": "工作区问候上下文",
+      "inputSchema": {},
+      "metadata": {}
+    },
+    {
+      "id": "hello_workflow",
+      "capability": "WORKFLOW",
+      "contractVersion": "2.0",
+      "name": "生成问候语",
+      "description": "生成问候语",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "metadata": {}
+    },
+    {
+      "id": "hello_policy",
+      "capability": "HOOK",
+      "contractVersion": "2.0",
+      "name": "示例预算约束",
+      "description": "示例预算约束",
+      "inputSchema": {},
+      "metadata": {
+        "phase": "constraint",
+        "constraint": true,
+        "priority": 100
+      }
+    }
+  ],
+  "configurationSchema": {
+    "type": "object",
+    "properties": {
+      "greeting": {
+        "type": "string",
+        "title": "问候语",
+        "default": "你好"
+      }
+    }
+  },
+  "uiSchema": {
+    "pages": [
+      {
+        "id": "configuration",
+        "title": "插件配置",
+        "type": "SCHEMA_FORM"
+      }
+    ]
+  }
 }

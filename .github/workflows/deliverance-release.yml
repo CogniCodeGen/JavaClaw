@@ -1,225 +1,43 @@
-name: Signed Deliverance plugin release
-
+name: Signed plugin v2 release
 on:
   push:
-    tags: ["v*"]
+    tags: ['v*']
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
-  signed-plugin:
+  plugin:
+    runs-on: ubuntu-24.04
     environment: release
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - runner: macos-15
-            platform: macos
-            arch: arm64
-          - runner: macos-15-intel
-            platform: macos
-            arch: x64
-          - runner: windows-2025
-            platform: windows
-            arch: x64
-          - runner: ubuntu-24.04
-            platform: linux
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: '25'
           cache: maven
-          cache-dependency-path: |
-            pom.xml
-            sample-plugins/deliverance/pom.xml
-      - name: Build Host API, built-in runtime and Deliverance plugin
-        shell: bash
+      - name: Build SDK and standalone plugin
         run: |
-          mvn --batch-mode --no-transfer-progress clean install
+          mvn --batch-mode --no-transfer-progress -pl plugin-runner-java -am clean install
           mvn --batch-mode --no-transfer-progress -f sample-plugins/deliverance/pom.xml clean verify
-          jar tf sample-plugins/deliverance/target/deliverance.jar > "$RUNNER_TEMP/plugin-entries.txt"
-          test "$(grep -c '^plugin.json$' "$RUNNER_TEMP/plugin-entries.txt")" = 1
-          if grep -Eq '(^|/).+\.(fxml|css)$|^META-INF/jpms\.args$|^(com/javaclaw/service/(api|runner)/|com/javaclaw/(app|ui|platform)/|org/springframework/|javafx/|org/h2/)' "$RUNNER_TEMP/plugin-entries.txt"; then
-            echo "Deliverance JAR contains forbidden custom UI or Host/Runner classes" >&2
-            exit 1
-          fi
-      - name: Sign and strictly verify every plugin JAR entry
-        shell: bash
+      - name: Create signed immutable ZIP package
         env:
-          KEYSTORE_BASE64: ${{ secrets.DELIVERANCE_JARSIGNER_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.DELIVERANCE_JARSIGNER_STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.DELIVERANCE_JARSIGNER_KEY_PASSWORD }}
-          SIGNING_ALIAS: ${{ secrets.DELIVERANCE_JARSIGNER_ALIAS }}
+          PRIVATE_KEY: ${{ secrets.PLUGIN_ED25519_PRIVATE_KEY_BASE64 }}
+          PUBLIC_KEY: ${{ secrets.PLUGIN_ED25519_PUBLIC_KEY_BASE64 }}
         run: |
-          test -n "$KEYSTORE_BASE64"
-          test -n "$STORE_PASSWORD"
-          test -n "$KEY_PASSWORD"
-          test -n "$SIGNING_ALIAS"
-          printf '%s' "$KEYSTORE_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/deliverance-signing.p12"
-          "$JAVA_HOME/bin/jarsigner" -keystore "$RUNNER_TEMP/deliverance-signing.p12" \
-            -storetype PKCS12 -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
-            sample-plugins/deliverance/target/deliverance.jar "$SIGNING_ALIAS"
-          "$JAVA_HOME/bin/jarsigner" -verify -strict sample-plugins/deliverance/target/deliverance.jar
-          "$JAVA_HOME/bin/keytool" -exportcert -rfc \
-            -keystore "$RUNNER_TEMP/deliverance-signing.p12" -storetype PKCS12 \
-            -storepass "$STORE_PASSWORD" -alias "$SIGNING_ALIAS" \
-            -file "$RUNNER_TEMP/deliverance-cert.pem"
-          openssl x509 -in "$RUNNER_TEMP/deliverance-cert.pem" -pubkey -noout \
-            | openssl pkey -pubin -outform DER \
-            | openssl dgst -sha256 -r \
-            | awk '{print $1}' > "$RUNNER_TEMP/deliverance-signer.sha256"
-          test "$(wc -c < "$RUNNER_TEMP/deliverance-signer.sha256" | tr -d ' ')" = 65
-      - name: Build host with pinned signed plugin
-        shell: bash
-        run: |
-          SIGNER_SHA="$(tr -d '\r\n' < "$RUNNER_TEMP/deliverance-signer.sha256")"
-          PLUGIN_JAR="$(pwd)/sample-plugins/deliverance/target/deliverance.jar"
-          mvn --batch-mode --no-transfer-progress -DskipTests \
-            -Pbundle-deliverance-plugin \
-            -Ddeliverance.plugin.jar="$PLUGIN_JAR" \
-            -Ddeliverance.plugin.signer.sha256="$SIGNER_SHA" package
-          HOST_FINAL_NAME="$(mvn --batch-mode --no-transfer-progress -q -Dstyle.color=never help:evaluate -Dexpression=project.build.finalName -DforceStdout)"
-          HOST_JAR="$PWD/target/$HOST_FINAL_NAME.jar"
-          test -f "$HOST_JAR"
-          jar tf "$HOST_JAR" > "$RUNNER_TEMP/host-entries.txt"
-          grep -qx 'com/javaclaw/service/runner/ServicePluginProcessMain.class' "$RUNNER_TEMP/host-entries.txt"
-          grep -qx 'com/javaclaw/service/api/ServicePlugin.class' "$RUNNER_TEMP/host-entries.txt"
-          test ! -e "target/$HOST_FINAL_NAME-service-plugin-runner.jar"
-          ! grep -q 'service-plugin/javaclaw-service-plugin-runner.jar' "$RUNNER_TEMP/host-entries.txt"
-          grep -qx 'service-plugin/trusted-builtin-signers.txt' "$RUNNER_TEMP/host-entries.txt"
-          test -f target/distribution/plugins/builtin-deliverance/deliverance.jar
-          if [ "$RUNNER_OS" = Windows ]; then
-            HOST_JAR="$(cygpath -w "$HOST_JAR")"
-          fi
-          printf 'JAVACLAW_HOST_JAR=%s\n' "$HOST_JAR" >> "$GITHUB_ENV"
-      - name: Install macOS release signing identity
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.JAVACLAW_MACOS_CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.JAVACLAW_MACOS_CERTIFICATE_PASSWORD }}
-          CODESIGN_IDENTITY: ${{ secrets.JAVACLAW_MACOS_CODESIGN_IDENTITY }}
-        run: |
-          test -n "$CERTIFICATE_BASE64"
-          test -n "$CERTIFICATE_PASSWORD"
-          test -n "$CODESIGN_IDENTITY"
-          KEYCHAIN="$RUNNER_TEMP/javaclaw-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
-          printf '%s' "$CERTIFICATE_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/javaclaw-signing.p12"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/javaclaw-signing.p12" -k "$KEYCHAIN" \
-            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
-          DEFAULT_KEYCHAIN="$(security default-keychain -d user | xargs)"
-          security list-keychains -d user -s "$KEYCHAIN" "$DEFAULT_KEYCHAIN"
-      - name: Assemble signed macOS portable home
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          CODESIGN_IDENTITY: ${{ secrets.JAVACLAW_MACOS_CODESIGN_IDENTITY }}
-        run: bash scripts/assemble-portable-macos.sh --output "$PWD/target/portable/JavaClaw"
-      - name: Install Windows release signing certificate
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.JAVACLAW_WINDOWS_CERTIFICATE_PFX_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.JAVACLAW_WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) {
-            throw 'Configure the Windows release signing certificate and password secrets'
-          }
-          $pfx = Join-Path $env:RUNNER_TEMP 'javaclaw-signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
-          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
-          $certificates = @(Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password |
-            Where-Object { $_.HasPrivateKey })
-          if ($certificates.Count -ne 1) { throw 'Expected one private-key code signing certificate' }
-          "JAVACLAW_CODESIGN_THUMBPRINT=$($certificates[0].Thumbprint)" >> $env:GITHUB_ENV
-          $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
-          $signTools = @(Get-ChildItem -LiteralPath $sdk -Directory |
-            Where-Object { $_.Name -match '^10\.\d+\.\d+\.\d+$' } |
-            Sort-Object { [version]$_.Name } -Descending |
-            ForEach-Object { Join-Path $_.FullName 'x64/signtool.exe' } |
-            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
-          if ($signTools.Count -eq 0) { throw 'Windows SDK signtool.exe is required' }
-          "JAVACLAW_SIGNTOOL=$($signTools[0])" >> $env:GITHUB_ENV
-      - name: Assemble signed Windows portable home
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $assembly = @{
-            HostJar = $env:JAVACLAW_HOST_JAR
-            OutputDirectory = Join-Path $env:GITHUB_WORKSPACE 'target/portable/JavaClaw'
-            SignToolPath = $env:JAVACLAW_SIGNTOOL
-          }
-          ./scripts/assemble-portable-windows.ps1 @assembly
-      - name: Assemble Linux portable home
-        if: runner.os == 'Linux'
-        shell: bash
-        run: bash scripts/assemble-portable-linux.sh --output "$PWD/target/portable/JavaClaw"
-      - name: Archive macOS portable home preserving executables and links
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent target/portable/JavaClaw \
-            "target/javaclaw-${{ matrix.platform }}-${{ matrix.arch }}.zip"
-      - name: Archive Linux portable home preserving executables and links
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          ARCHIVE="$PWD/target/javaclaw-${{ matrix.platform }}-${{ matrix.arch }}.zip"
-          cd target/portable
-          zip -qry "$ARCHIVE" JavaClaw
-      - name: Archive Windows portable home
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $portableDirectory = Join-Path $env:GITHUB_WORKSPACE 'target/portable'
-          $archive = Join-Path $env:GITHUB_WORKSPACE 'target/javaclaw-${{ matrix.platform }}-${{ matrix.arch }}.zip'
-          [IO.Compression.ZipFile]::CreateFromDirectory($portableDirectory, $archive)
-      - name: Upload signed platform distribution
-        uses: actions/upload-artifact@v7
+          test -n "$PRIVATE_KEY"
+          test -n "$PUBLIC_KEY"
+          printf '%s' "$PRIVATE_KEY" | base64 --decode > "$RUNNER_TEMP/plugin-private.der"
+          printf '%s' "$PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/plugin-public.der"
+          java -cp plugin-runner-java/target/plugin-runner-java-4.0.0-SNAPSHOT-all.jar \
+            com.javaclaw.plugin.sdk.packaging.PluginPackageMain \
+            --manifest sample-plugins/deliverance/src/main/resources/plugin.json \
+            --artifact sample-plugins/deliverance/target/plugin.jar \
+            --output sample-plugins/deliverance/target/deliverance-plugin-v2.zip \
+            --private-key "$RUNNER_TEMP/plugin-private.der" --public-key "$RUNNER_TEMP/plugin-public.der"
+          rm "$RUNNER_TEMP/plugin-private.der" "$RUNNER_TEMP/plugin-public.der"
+      - uses: actions/upload-artifact@v7
         with:
-          name: javaclaw-deliverance-${{ matrix.platform }}-${{ matrix.arch }}
-          path: target/javaclaw-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          name: deliverance-plugin-v2
+          path: sample-plugins/deliverance/target/deliverance-plugin-v2.zip
           if-no-files-found: error
-      - name: Remove temporary signing keys
-        if: always()
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = macOS ] && [ -f "$RUNNER_TEMP/javaclaw-signing.keychain-db" ]; then
-            security delete-keychain "$RUNNER_TEMP/javaclaw-signing.keychain-db"
-          fi
-          rm -f "$RUNNER_TEMP/deliverance-signing.p12" "$RUNNER_TEMP/javaclaw-signing.p12" "$RUNNER_TEMP/javaclaw-signing.pfx"
-      - name: Remove imported Windows signing certificate
-        if: always() && runner.os == 'Windows' && env.JAVACLAW_CODESIGN_THUMBPRINT != ''
-        shell: pwsh
-        run: Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:JAVACLAW_CODESIGN_THUMBPRINT" -ErrorAction SilentlyContinue
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: signed-plugin
-    environment: release
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: javaclaw-deliverance-*
-          path: release-artifacts
-      - name: Publish only after all five signed distributions passed
-        uses: softprops/action-gh-release@v2
-        with:
-          fail_on_unmatched_files: true
-          files: release-artifacts/**/*.zip

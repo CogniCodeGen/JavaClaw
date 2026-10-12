@@ -5,7 +5,12 @@ set -euo pipefail
 # Existing output is deliberately never replaced.
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="$project_dir/target/portable/JavaClaw"
-host_jar="${JAVACLAW_HOST_JAR:-}"
+runtime_dir="${JAVACLAW_DISTRIBUTION_RUNTIME:-$project_dir/distribution/target/runtime}"
+host_jar="${JAVACLAW_HOST_JAR:-$runtime_dir/desktop.jar}"
+runner_jar="$runtime_dir/plugin-runner.jar"
+desktop_libs="$runtime_dir/lib"
+# 链接完整 JDK 模块，避免遗漏反射或服务发现依赖；插件启用模块仍须单独声明并批准。
+runtime_modules="ALL-MODULE-PATH"
 identity="${CODESIGN_IDENTITY:-}"
 development_unsigned=false
 offline=false
@@ -20,10 +25,9 @@ verify_bundled_java() {
   runtime_root="$(realpath "$portable_home/runtime")" || fail "cannot resolve runtime directory"
   resolved="$(realpath "$java")" || fail "cannot resolve bundled Java: $java"
   case "$resolved" in "$runtime_root/"*) ;; *) fail "bundled Java escapes runtime: $java" ;; esac
-  # 使用服务插件的固定模块与访问参数检查内置 Java。
-  "$java" --add-modules jdk.httpserver,jdk.incubator.vector \
-    --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED -version \
-    || fail "bundled Java cannot start with service-plugin JVM options"
+  # 检查内置 Java 可以启动；插件模块权限由各自清单声明。
+  "$java" -version \
+    || fail "bundled Java cannot start"
 }
 
 while (( $# > 0 )); do
@@ -37,16 +41,7 @@ while (( $# > 0 )); do
 done
 
 [[ "$(uname -s)" == Darwin ]] || fail "requires macOS"
-if [[ -z "$host_jar" ]]; then
-  for candidate in "$project_dir"/target/javaclaw-*.jar; do
-    [[ -f "$candidate" ]] || continue
-    case "$candidate" in
-      *-service-plugin-api.jar|*-sources.jar|*-javadoc.jar|*-tests.jar) ;;
-      *) [[ -z "$host_jar" ]] || fail "multiple host JARs found; set JAVACLAW_HOST_JAR"
-         host_jar="$candidate" ;;
-    esac
-  done
-fi
+
 if ! "$development_unsigned"; then
   [[ "$identity" == "Developer ID Application:"* ]] \
     || fail "set CODESIGN_IDENTITY to a Developer ID Application identity"
@@ -54,7 +49,7 @@ fi
 [[ -f "$host_jar" && ! -L "$host_jar" ]] \
   || fail "missing host JAR; run 'mvn -DskipTests package' first or set JAVACLAW_HOST_JAR"
 [[ ! -e "$output" && ! -L "$output" ]] || fail "output already exists: $output"
-command -v mvn >/dev/null || fail "Maven is required"
+[[ -f "$runner_jar" && -d "$desktop_libs" ]] || fail "run mvn package to assemble independent Desktop and Runner artifacts"
 command -v jpackage >/dev/null || fail "JDK 25 jpackage is required"
 command -v codesign >/dev/null || fail "codesign is required"
 command -v plutil >/dev/null || fail "plutil is required"
@@ -65,16 +60,15 @@ stage="$(mktemp -d "$project_dir/target/.portable-macos.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 input="$stage/input"
 portable_home="$stage/home"
-mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins" "$portable_home/data"
+mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins-v2" "$portable_home/data-v5"
 
 cp "$host_jar" "$input/javaclaw.jar"
-maven_args=(--batch-mode --no-transfer-progress -q -f "$project_dir/pom.xml")
-if "$offline"; then maven_args+=(-o); fi
-mvn "${maven_args[@]}" dependency:copy-dependencies \
-  -DincludeScope=runtime "-DoutputDirectory=$input"
+# Desktop 的输入只包含宿主与协议库；Runner 位于输入目录之外。
+cp "$desktop_libs"/*.jar "$input/"
+cp "$runner_jar" "$portable_home/runtime/plugin-runner.jar"
 
 jpackage_args=(--type app-image --dest "$stage/image" --name JavaClaw
-  --input "$input" --main-jar javaclaw.jar
+  --input "$input" --main-jar javaclaw.jar --add-modules "$runtime_modules"
   --main-class com.javaclaw.app.Launcher
   # 保留服务插件需要的 bin/java，继续使用其他默认裁剪选项。
   --jlink-options '--strip-debug --no-man-pages --no-header-files'
@@ -105,12 +99,12 @@ else
   codesign --force --options runtime --timestamp --sign "$identity" "$app"
 fi
 
-plugins="$project_dir/target/distribution/plugins"
-if [[ -d "$plugins" ]]; then
-  cp -R "$plugins/." "$portable_home/plugins/"
-fi
+packages="$runtime_dir/plugin-packages"
+if [[ -d "$packages" ]]; then cp -R "$packages" "$portable_home/runtime/plugin-packages"; fi
+manifest="$runtime_dir/plugin-distribution.json"
+if [[ -f "$manifest" ]]; then cp "$manifest" "$portable_home/runtime/plugin-distribution.json"; fi
 
-[[ -z "$(find "$portable_home/plugins" "$portable_home/data" -type l -print -quit)" ]] \
+[[ -z "$(find "$portable_home/plugins-v2" "$portable_home/data-v5" -type l -print -quit)" ]] \
   || fail "managed writable directories contain a symbolic link"
 # jpackage's bundled JDK has legitimate internal legal/ symlinks. Keep them
 # only if their canonical targets remain inside the signed runtime tree.
@@ -130,9 +124,9 @@ if ! "$development_unsigned"; then
 fi
 verify_bundled_java
 
-# Runtime artifacts are signed and read-only; only plugins/ and data/ remain writable.
+# 运行时保持只读；plugins-v2/ 与 data-v5/ 保存可写用户数据。
 chmod -R a-w "$portable_home/runtime"
 mv "$portable_home" "$output"
-[[ -w "$output" && -w "$output/plugins" && -w "$output/data" ]] \
+[[ -w "$output" && -w "$output/plugins-v2" && -w "$output/data-v5" ]] \
   || fail "the outer home must remain writable: $output"
 echo "$output"
