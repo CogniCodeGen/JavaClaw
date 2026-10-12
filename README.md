@@ -66,7 +66,7 @@ mvn -pl javaclaw-desktop javafx:run
 --add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED
 ```
 
-首次启动会引导配置模型提供商、服务地址、模型和 API Key。默认运行数据保存在 `data-v5/`，插件工件保存在 `plugins-v2/`，测试数据
+首次启动会引导配置模型提供商、服务地址、模型和 API Key。默认运行数据保存在 `data/`，插件工件保存在 `plugins/`，测试数据
 保存在 `javaclaw-desktop/target/`，不会写入真实数据目录。开发数据根仍是仓库根；从模块目录启动也不会另建一套主数据。
 
 已有旧数据或旧插件时，请先阅读 [JavaClaw 4.0 升级说明](docs/upgrade-4.0.md)。新桌面目标会话的授权、平台支持与限制见 [后台桌面会话](docs/background-desktop-sessions.md)，应用根与数据格式规则见 [便携应用目录](docs/portable-layout.md)。

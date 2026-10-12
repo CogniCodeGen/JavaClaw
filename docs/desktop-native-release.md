@@ -12,8 +12,8 @@ JavaClaw/
     plugin-runner.jar             独立插件进程入口
     plugin-packages/              可选发行插件 ZIP
     plugin-distribution.json      可选插件的完整性清单
-  plugins-v2/
-  data-v5/
+  plugins/
+  data/
 ```
 
 每个平台的发行包只包含该平台对应的应用镜像。桌面平台适配器使用 Java
@@ -21,8 +21,8 @@ JavaClaw/
 的 C／C++／Objective-C++ 桌面库。启动 macOS
 `runtime/JavaClaw.app` 或 Windows `runtime/JavaClaw/JavaClaw.exe`。
 应用从自身 JAR 的代码位置定位外层目录，因此不依赖当前工作目录。
-`data-v5/` 保存应用管理的数据库、浏览器资产、截图、日志和临时文件；
-`plugins-v2/` 保存不可变插件工件与恢复记录。操作系统管理的授权记录仍由操作系统保存。
+`data/` 保存应用管理的数据库、浏览器资产、截图、日志和临时文件；
+`plugins/` 保存不可变插件工件与恢复记录。操作系统管理的授权记录仍由操作系统保存。
 Linux 启动 `runtime/JavaClaw/bin/JavaClaw`；此包可运行主程序与隔离插件，
 当前版本不提供 Linux 桌面原生能力。
 
@@ -49,7 +49,7 @@ mvn --batch-mode --no-transfer-progress -DskipTests package
 装配脚本不调用 Maven，也不从根 `target/` 查找宿主 JAR；根 `target/portable/` 仅用于镜像输出和暂存。
 Java 源码及系统 FFM 绑定随主 JAR 构建，无单独原生编译步骤。
 已有输出目录会导致失败，
-避免覆盖用户的 `data-v5/` 和 `plugins-v2/`。
+避免覆盖用户的 `data/` 和 `plugins/`。
 
 macOS 发行机需要 JDK 25 `jpackage`、系统 `codesign`／`plutil`，以及有效的
 Developer ID Application 签名身份：
@@ -136,7 +136,8 @@ bash scripts/assemble-portable-linux.sh --output /absolute/path/to/JavaClaw
 加载操作系统管理的库，不从插件目录、应用数据目录、工作目录或历史开发
 产物加载桌面实现。`runtime/native/` 不再是发行布局的一部分。
 启动前检查目标目录可写与数据格式，
-当前格式 5 使用独立的 `data-v5/` 与 `plugins-v2/`，旧 `data/` 与 `plugins/` 不读取、不迁移、不删除，
+当前格式仍为 5，默认使用 `data/` 与 `plugins/`；新默认根为空时重新初始化，
+非空数据目录必须通过格式校验。旧版本目录和历史数据由用户手动处理，程序不自动迁移、覆盖或删除，
 具体行为见 [4.0 升级说明](upgrade-4.0.md)。
 
 上述签名检查发生在**发行装配时**。发行物仍应通过可信渠道分发，并在

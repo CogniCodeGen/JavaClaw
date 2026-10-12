@@ -156,8 +156,6 @@ class SettingsCoreFxmlStructureTest {
                 InferenceAssetSettingsController.class);
         values.put("/fxml/settings/local-inference-profiles.fxml",
                 InferenceProfileSettingsController.class);
-        values.put("/fxml/settings/local-inference-runtime.fxml",
-                InferenceRuntimeSettingsController.class);
         values.put("/fxml/settings/local-inference-api.fxml",
                 InferenceApiSettingsController.class);
         values.put("/fxml/settings/email-settings.fxml", EmailSettingsController.class);

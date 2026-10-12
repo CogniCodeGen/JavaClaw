@@ -93,7 +93,7 @@ java -cp plugin-runner-java/target/plugin-runner-java-4.0.0-SNAPSHOT-all.jar \
 
 ## 数据与发行
 
-使用 `data-v5/` 和 `plugins-v2/`，旧目录及旧重置标记不读取、不迁移、不删除。安装、升级和卸载使用统一锁、暂存区与恢复记录。未完成的事务在再次启动时恢复；遗留实例使用进程租约检查并回收。
+默认使用 `data/` 和 `plugins/`，数据格式仍为 `5`。新默认根为空时重新初始化；旧版本的 `data-v5/`、`plugins-v2/` 和历史数据由用户手动处理，程序不自动迁移、覆盖或删除，旧重置标记不执行。非空 `data/` 的格式标记必须精确匹配。安装、升级和卸载使用统一锁、暂存区与恢复记录，未完成的事务在再次启动时恢复。
 
 ```bash
 # 完整编译、测试、架构与覆盖率检查
@@ -115,7 +115,7 @@ mvn -pl distribution -am -DskipTests package
 
 发行目录中 `runtime/desktop.jar` 与 `runtime/lib/*` 是唯一 Desktop classpath；`runtime/plugin-runner.jar` 只用于子进程。`plugin-distribution.json` 中的可选插件经同一包校验流程登记，默认停用，不覆盖已安装的用户版本。没有任何插件时主程序也可启动。
 
-完成根目录的 `mvn -DskipTests install` 后，可从根运行 `mvn -pl javaclaw-desktop javafx:run`，也可从 `javaclaw-desktop/` 运行 `mvn javafx:run`。开发数据继续保存在聚合仓库根的 `data-v5/` 与 `plugins-v2/`。发行组装先将 `javaclaw-desktop/target/` 的 Maven 工件复制为 `distribution/target/runtime/desktop.jar`；装配脚本只读取这份组装结果。Python 校验与插件暂存脚本的默认发行目录从脚本位置确定，从模块目录调用也不改变默认目录；显式参数中的相对路径仍相对调用者的当前目录。
+完成根目录的 `mvn -DskipTests install` 后，可从根运行 `mvn -pl javaclaw-desktop javafx:run`，也可从 `javaclaw-desktop/` 运行 `mvn javafx:run`。开发数据保存在聚合仓库根的 `data/` 与 `plugins/`。发行组装先将 `javaclaw-desktop/target/` 的 Maven 工件复制为 `distribution/target/runtime/desktop.jar`；装配脚本只读取这份组装结果。Python 校验与插件暂存脚本的默认发行目录从脚本位置确定，从模块目录调用也不改变默认目录；显式参数中的相对路径仍相对调用者的当前目录。
 
 三平台原生打包在链接阶段使用 `ALL-MODULE-PATH` 保留发行 JDK 的完整模块，覆盖 JDBC、JShell、管理接口及反射、服务发现依赖；这不改变插件实例的权限和启动参数。显式 `--add-modules` 会替代 jpackage 的默认模块集合，参见 [JDK 25 jpackage 命令文档](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jpackage.html)。macOS 和 Linux CI 还会使用包内 Java、独立 Runner 重跑 echo-model 集成测试。
 

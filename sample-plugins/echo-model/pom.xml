@@ -11,7 +11,13 @@
     <dependency><groupId>io.grpc</groupId><artifactId>grpc-netty-shaded</artifactId><version>1.75.0</version><scope>test</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.13.4</version><scope>test</scope></dependency>
   </dependencies>
-  <build><finalName>plugin</finalName><plugins>
+  <build><finalName>plugin</finalName>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <!-- 根清单是打包 CLI、集成测试与运行时共用的唯一来源。 -->
+      <resource><directory>${project.basedir}</directory><includes><include>plugin.json</include></includes></resource>
+    </resources>
+    <plugins>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.0</version><executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration><createDependencyReducedPom>false</createDependencyReducedPom></configuration></execution></executions></plugin>

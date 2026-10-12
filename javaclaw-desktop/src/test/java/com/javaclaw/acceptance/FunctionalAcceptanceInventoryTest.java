@@ -128,7 +128,8 @@ class FunctionalAcceptanceInventoryTest {
 
         Path fxmlRoot = Path.of(System.getProperty("user.dir"), "src/main/resources/fxml");
         try (var files = Files.walk(fxmlRoot)) {
-            assertEquals(141, files.filter(Files::isRegularFile)
+            // 删除未接入生产入口的旧预览页和本地推理运行时页后，保留现行界面清单数量门禁。
+            assertEquals(139, files.filter(Files::isRegularFile)
                     .filter(path -> path.toString().endsWith(".fxml")).count());
         }
     }

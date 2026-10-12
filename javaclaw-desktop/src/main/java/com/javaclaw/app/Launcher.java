@@ -29,11 +29,9 @@ public class Launcher {
      * @param args 命令行参数，将透传给 JavaFX Application
      */
     public static void main(String[] args) {
-        // Resolve from the launcher's code location before SLF4J initializes file appenders.
-        // Otherwise the initial logs/ directory would be created in the caller's working directory.
+        // 在 SLF4J 初始化文件输出前，根据启动器所在位置解析应用目录，避免日志落到调用者目录。
         ApplicationHome home = ApplicationHome.resolve();
-        // Both locks are acquired before deleting any version-3 data. The data lock is
-        // transferred directly to the coordinator, so an old launcher never sees a gap.
+        // 初始化数据格式前先获取应用目录锁和数据锁，再将数据锁无缝移交给单实例协调器。
         ApplicationUpgradeGuard upgrade;
         try {
             upgrade = ApplicationUpgradeGuard.acquire(home);
@@ -65,7 +63,7 @@ public class Launcher {
             log.info("JDK 版本: {}", System.getProperty("java.version"));
             log.info("JavaFX 版本: {}", System.getProperty("javafx.version"));
             log.info("操作系统: {} {}", System.getProperty("os.name"), System.getProperty("os.arch"));
-            // macOS must join AppKit before JavaFX to publish a native tray icon.
+            // macOS 需要先接入 AppKit，再启动 JavaFX，以便发布原生托盘图标。
             DesktopToolkitBootstrap.prepareForJavaFxLaunch();
             JavaClawApp.main(args);
         }

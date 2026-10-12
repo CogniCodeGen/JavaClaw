@@ -10,12 +10,13 @@ runner_jar="$runtime_dir/plugin-runner.jar"
 desktop_libs="$runtime_dir/lib"
 # 链接完整 JDK 模块，避免遗漏反射或服务发现依赖；插件启用模块仍须单独声明并批准。
 runtime_modules="ALL-MODULE-PATH"
-offline=false
 fail() { echo "portable Linux assembly: $*" >&2; exit 1; }
 
 while (( $# > 0 )); do
   case "$1" in
-    --offline) offline=true ;;
+    --offline)
+      # 兼容历史参数；装配仅使用已有工件，无需执行额外操作。
+      : ;;
     --output) shift; (( $# > 0 )) || fail "--output needs a path"; output="$1" ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -35,7 +36,7 @@ stage="$(mktemp -d "$project_dir/target/.portable-linux.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 input="$stage/input"
 portable_home="$stage/home"
-mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins-v2" "$portable_home/data-v5"
+mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins" "$portable_home/data"
 cp "$host_jar" "$input/javaclaw.jar"
 # Desktop 的输入只包含宿主与协议库；Runner 位于输入目录之外。
 cp "$desktop_libs"/*.jar "$input/"
@@ -51,7 +52,7 @@ if [[ -d "$packages" ]]; then cp -R "$packages" "$portable_home/runtime/plugin-p
 manifest="$runtime_dir/plugin-distribution.json"
 if [[ -f "$manifest" ]]; then cp "$manifest" "$portable_home/runtime/plugin-distribution.json"; fi
 
-[[ -z "$(find "$portable_home/plugins-v2" "$portable_home/data-v5" -type l -print -quit)" ]] \
+[[ -z "$(find "$portable_home/plugins" "$portable_home/data" -type l -print -quit)" ]] \
   || fail "managed writable directories contain a symbolic link"
 runtime_root="$(realpath "$portable_home/runtime")"
 while IFS= read -r link; do
@@ -63,5 +64,5 @@ java="$portable_home/runtime/JavaClaw/lib/runtime/bin/java"
 "$java" -version
 chmod -R a-w "$portable_home/runtime"
 mv "$portable_home" "$output"
-[[ -w "$output" && -w "$output/plugins-v2" && -w "$output/data-v5" ]] || fail "the outer home must remain writable"
+[[ -w "$output" && -w "$output/plugins" && -w "$output/data" ]] || fail "the outer home must remain writable"
 echo "$output"

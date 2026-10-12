@@ -17,7 +17,7 @@
     <properties>
         <!-- 开发数据仍属于聚合项目根；测试数据只写入 Desktop 自身的 target。 -->
         <javaclaw.launch.home>${project.basedir}/..</javaclaw.launch.home>
-        <javaclaw.launch.data.dir>${javaclaw.launch.home}/data-v5</javaclaw.launch.data.dir>
+        <javaclaw.launch.data.dir>${javaclaw.launch.home}/data</javaclaw.launch.data.dir>
         <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
         <javaclaw.fx.tests>false</javaclaw.fx.tests>
     </properties>
@@ -283,7 +283,7 @@
                     <argLine>@{jacocoArgLine} --add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
                         <javaclaw.development.home>${project.build.directory}/test-home</javaclaw.development.home>
-                        <javaclaw.data.dir>${project.build.directory}/test-home/data-v5</javaclaw.data.dir>
+                        <javaclaw.data.dir>${project.build.directory}/test-home/data</javaclaw.data.dir>
                         <javaclaw.fx.tests>${javaclaw.fx.tests}</javaclaw.fx.tests>
                     </systemPropertyVariables>
                 </configuration>

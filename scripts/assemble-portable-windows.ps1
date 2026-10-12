@@ -75,8 +75,8 @@ try {
     $inputDirectory = Join-Path $stage "input"
     $portableHome = Join-Path $stage "home"
     $runtime = Join-Path $portableHome "runtime"
-    $plugins = Join-Path $portableHome "plugins-v2"
-    $data = Join-Path $portableHome "data-v5"
+    $plugins = Join-Path $portableHome "plugins"
+    $data = Join-Path $portableHome "data"
     New-Item -ItemType Directory -Path $inputDirectory, $runtime, $plugins, $data -Force | Out-Null
     Copy-Item -LiteralPath $HostJar -Destination (Join-Path $inputDirectory "javaclaw.jar")
     # Runner 单独保存，绝不进入 jpackage 为 Desktop 生成的 classpath。

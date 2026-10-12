@@ -13,7 +13,6 @@ desktop_libs="$runtime_dir/lib"
 runtime_modules="ALL-MODULE-PATH"
 identity="${CODESIGN_IDENTITY:-}"
 development_unsigned=false
-offline=false
 
 fail() { echo "portable macOS assembly: $*" >&2; exit 1; }
 
@@ -33,7 +32,9 @@ verify_bundled_java() {
 while (( $# > 0 )); do
   case "$1" in
     --development-unsigned) development_unsigned=true ;;
-    --offline) offline=true ;;
+    --offline)
+      # 兼容历史参数；装配仅使用已有工件，无需执行额外操作。
+      : ;;
     --output) shift; (( $# > 0 )) || fail "--output needs a path"; output="$1" ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -60,7 +61,7 @@ stage="$(mktemp -d "$project_dir/target/.portable-macos.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 input="$stage/input"
 portable_home="$stage/home"
-mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins-v2" "$portable_home/data-v5"
+mkdir -p "$input" "$portable_home/runtime" "$portable_home/plugins" "$portable_home/data"
 
 cp "$host_jar" "$input/javaclaw.jar"
 # Desktop 的输入只包含宿主与协议库；Runner 位于输入目录之外。
@@ -104,7 +105,7 @@ if [[ -d "$packages" ]]; then cp -R "$packages" "$portable_home/runtime/plugin-p
 manifest="$runtime_dir/plugin-distribution.json"
 if [[ -f "$manifest" ]]; then cp "$manifest" "$portable_home/runtime/plugin-distribution.json"; fi
 
-[[ -z "$(find "$portable_home/plugins-v2" "$portable_home/data-v5" -type l -print -quit)" ]] \
+[[ -z "$(find "$portable_home/plugins" "$portable_home/data" -type l -print -quit)" ]] \
   || fail "managed writable directories contain a symbolic link"
 # jpackage's bundled JDK has legitimate internal legal/ symlinks. Keep them
 # only if their canonical targets remain inside the signed runtime tree.
@@ -124,9 +125,9 @@ if ! "$development_unsigned"; then
 fi
 verify_bundled_java
 
-# 运行时保持只读；plugins-v2/ 与 data-v5/ 保存可写用户数据。
+# 运行时保持只读；plugins/ 与 data/ 保存可写用户数据。
 chmod -R a-w "$portable_home/runtime"
 mv "$portable_home" "$output"
-[[ -w "$output" && -w "$output/plugins-v2" && -w "$output/data-v5" ]] \
+[[ -w "$output" && -w "$output/plugins" && -w "$output/data" ]] \
   || fail "the outer home must remain writable: $output"
 echo "$output"

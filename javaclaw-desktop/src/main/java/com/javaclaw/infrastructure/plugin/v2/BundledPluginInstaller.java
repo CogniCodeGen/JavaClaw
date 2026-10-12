@@ -35,7 +35,7 @@ public final class BundledPluginInstaller {
             JsonNode root = json.readTree(Files.readAllBytes(manifest));
             JsonNode packages = root.path("packages");
             if (!root.isObject() || !packages.isArray() || packages.size() > 256) throw new IOException("发行插件清单格式无效");
-            Path stateRoot = importStateRoot == null ? home.resolve("plugins-v2") : importStateRoot;
+            Path stateRoot = importStateRoot == null ? home.resolve("plugins") : importStateRoot;
             Path ledger = PluginPaths.managed(stateRoot, stateRoot.resolve(".bundled-imports.json"));
             Set<String> imported = readImported(ledger);
             List<ImportResult> results = new ArrayList<>();

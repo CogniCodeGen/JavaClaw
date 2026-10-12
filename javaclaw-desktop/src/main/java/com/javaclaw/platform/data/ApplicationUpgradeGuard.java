@@ -9,7 +9,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
-/** Holds stable home and legacy data locks while the application format is prepared. */
+/** 在准备应用数据格式期间持有应用目录锁和数据锁。 */
 public final class ApplicationUpgradeGuard implements AutoCloseable {
     private static final String ROOT_LOCK = ".javaclaw-bootstrap.lock";
     public static final String DATA_LOCK = "javaclaw.instance.lock";
@@ -29,7 +29,7 @@ public final class ApplicationUpgradeGuard implements AutoCloseable {
         this.dataLock = dataLock;
     }
 
-    /** Null means another new-version process holds the home lock. */
+    /** 返回空值表示另一个启动进程已经持有应用目录锁。 */
     public static ApplicationUpgradeGuard acquire(ApplicationHome applicationHome)
             throws IOException {
         Path home = applicationHome.root();
@@ -82,7 +82,7 @@ public final class ApplicationUpgradeGuard implements AutoCloseable {
         }
     }
 
-    /** Transfer the data lock without releasing it; old launchers remain excluded. */
+    /** 无缝移交数据锁，确保初始化与单实例运行之间没有锁空隙。 */
     public DataLock takeDataLock() {
         if (dataLock == null || !dataLock.isValid()) {
             throw new IllegalStateException("应用数据锁已经转移");

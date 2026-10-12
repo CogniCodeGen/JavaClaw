@@ -15,7 +15,7 @@ import java.util.Objects;
  */
 public final class ApplicationHome {
 
-    /** 保留旧迁移参数名，使历史启动参数保持无效。 */
+    /** 保留历史参数名称；启动流程不读取此属性。 */
     public static final String MIGRATION_SOURCE_PROPERTY = "javaclaw.migration.source";
     public static final String DEVELOPMENT_HOME_PROPERTY = "javaclaw.development.home";
     private static final String DESKTOP_MODULE = "javaclaw-desktop";
@@ -103,8 +103,8 @@ public final class ApplicationHome {
     public boolean development() { return development; }
     public Path root() { return root; }
     public Path runtimeDirectory() { return root.resolve("runtime"); }
-    public Path pluginsDirectory() { return root.resolve("plugins-v2"); }
-    public Path dataDirectory() { return root.resolve("data-v5"); }
+    public Path pluginsDirectory() { return root.resolve("plugins"); }
+    public Path dataDirectory() { return root.resolve("data"); }
     public Path cacheDirectory() { return dataDirectory().resolve("cache"); }
     public Path temporaryDirectory() { return dataDirectory().resolve("tmp"); }
     public Path logsDirectory() { return dataDirectory().resolve("logs"); }
@@ -117,7 +117,7 @@ public final class ApplicationHome {
         return prepare(null);
     }
 
-    /** 初始化独立的格式 5 目录；旧目录不读取、不迁移、不删除。 */
+    /** 初始化默认目录并校验数据格式 5；带版本后缀的旧目录不读取、不迁移、不删除。 */
     public ApplicationHome prepare(ApplicationUpgradeGuard guard) throws IOException {
         if (Files.isSymbolicLink(root)) throw new IOException("应用目录不能是符号链接: " + root);
         requireDirectory(root);
@@ -125,7 +125,7 @@ public final class ApplicationHome {
         Files.delete(probe);
         requireDirectory(dataDirectory());
         if (guard != null) guard.requireHome(this);
-        // 在缓存和日志创建前写入新格式标记，始终保留历史目录。
+        // 在缓存和日志创建前验证数据格式，空目录才写入格式标记。
         new DataRoot(dataDirectory()).prepare();
         requireDirectory(pluginsDirectory());
         requireDirectory(cacheDirectory());

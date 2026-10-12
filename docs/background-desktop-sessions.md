@@ -100,7 +100,7 @@ Java 平台适配器通过 FFM 直接负责系统输入和公开控件派发，�
 
 ## 应用目录与发行
 
-便携应用根包含只读签名 `runtime/`、可写 `plugins/` 和 `data/`。数据、截图、日志、Playwright 资产及临时文件都在该根下；旧数据和插件经暂存、内容校验后复制迁移，原件保留。详情见 [便携应用目录](portable-layout.md)。
+便携应用根包含只读签名 `runtime/`、可写 `plugins/` 和 `data/`。数据、截图、日志、浏览器资产及临时文件都在该根下。新默认根为空时重新初始化；旧版本目录和历史数据由用户手动处理，程序不自动迁移、覆盖或删除，非空数据目录仍须通过格式 5 校验。详情见 [便携应用目录](portable-layout.md)。
 
 源码开发使用 JDK 25 和 Maven 构建 Java 应用，不需要 C／C++ 编译器、jextract、
 平台 SDK 头文件或单独桌面库。启动 JVM 需要 `--enable-native-access=ALL-UNNAMED`；
